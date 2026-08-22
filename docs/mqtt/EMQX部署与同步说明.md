@@ -1,7 +1,7 @@
-# EMQX 部署与同步说明
+﻿# EMQX 部署与同步说明
 
 > 本文件说明：MQTT 中间件（EMQX）是什么、怎么部署、怎么用控制台、以及组员需要同步哪些信息。
-> 配套：[MQTT主题与数据格式规范.md](./MQTT主题与数据格式规范.md)（主题 + JSON 字段约定）、[docker-compose.yml](./docker-compose.yml)（启动配置）。
+> 配套：[MQTT主题与数据格式规范](../../contracts/mqtt-topics.md)（主题 + JSON 字段约定）、[docker-compose.yml](../../infra/docker-compose.yml)（启动配置）。
 
 ---
 
@@ -16,7 +16,7 @@
 | 项       | 值                    |
 | ------- | -------------------- |
 | 部署方式    | Docker 容器，名称 `emqx`  |
-| 配置文件    | `docker-compose.yml` |
+| 配置文件    | `infra/docker-compose.yml` |
 | 版本      | EMQX 6.2.3           |
 | MQTT 端口 | `1883`               |
 | 控制台端口   | `18083`              |
@@ -48,8 +48,8 @@
 | 1   | MQTT 地址 + 端口 | `127.0.0.1:1883`                                          |
 | 2   | 控制台地址        | `http://localhost:18083`（账号 admin，密码自定）                   |
 | 3   | 认证方式         | 暂不配账号密码（匿名连接）                                             |
-| 4   | 主题 + JSON 规范 | 见《MQTT主题与数据格式规范.md》                                       |
-| 5   | 启动文件         | `docker-compose.yml`（clone 后 `docker compose up -d`）      |
+| 4   | 主题 + JSON 规范 | 见 `contracts/mqtt-topics.md`                                       |
+| 5   | 启动文件         | `infra/docker-compose.yml`（进入 `infra` 后执行 `docker compose up -d`）      |
 | 6   | 开发规则         | **需要用到的人本地各起一个 EMQX**，都连 `127.0.0.1:1883`，互不干扰；联调期再统一连同一台 |
 
 ---
@@ -58,9 +58,9 @@
 
 1. **启动 Docker Desktop**（等任务栏小鲸鱼图标变绿色）。
 
-2. **拿到项目代码**（clone 仓库，确保目录里有 `docker-compose.yml`）。
+2. **拿到项目代码**（clone 仓库，进入 `infra` 目录）。
 
-3. **在项目目录执行**：
+3. **在 `infra` 目录执行**：
    
    ```bash
    docker compose up -d
@@ -105,4 +105,4 @@
 
 ---
 
-*关联：[MQTT主题与数据格式规范.md](./MQTT主题与数据格式规范.md)、[docker-compose.yml](./docker-compose.yml)、[分工协作与接口对接.md](./分工协作与接口对接.md)、[E_任务指导书.md](./E_任务指导书.md)。*
+*关联：[MQTT主题与数据格式规范](../../contracts/mqtt-topics.md)、[docker-compose.yml](../../infra/docker-compose.yml)、[项目目录与文件说明](../architecture/项目目录与文件说明.md)。*
