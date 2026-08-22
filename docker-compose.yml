@@ -1,0 +1,9 @@
+# 智慧农业项目 —— Docker Compose（当前仅 EMQX，后续由 F 扩展 MySQL/后端/前端）
+services:
+  emqx:
+    image: emqx/emqx
+    container_name: emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # MQTT 端口（脚本/后端连这个）
+      - "18083:18083" # 控制台端口（浏览器看消息用）
