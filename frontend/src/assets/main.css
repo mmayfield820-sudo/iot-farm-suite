@@ -1,0 +1,71 @@
+:root {
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #17332b;
+  background: #f4f8f6;
+  font-synthesis: none;
+  --green-900: #133d32;
+  --green-700: #1c6b52;
+  --green-500: #35a273;
+  --green-100: #e8f5ef;
+  --muted: #71807b;
+  --line: #dce8e3;
+  --app-font-size: 14px;
+  --app-font-small: 12px;
+  --app-font-tiny: 11px;
+  --app-font-heading: 16px;
+  --app-font-title: 25px;
+  --app-font-metric: 25px;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { min-width: 320px; min-height: 100%; margin: 0; }
+body { min-height: 100vh; font-size: var(--app-font-size); }
+button, input { font: inherit; }
+.page-title { margin: 0; font-size: var(--app-font-title); font-weight: 700; }
+.page-subtitle { margin: 7px 0 22px; color: var(--muted); font-size: var(--app-font-size); }
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(20, 69, 53, .05); }
+.placeholder-page { min-height: 380px; padding: 48px; display: grid; place-items: center; text-align: center; }
+.placeholder-page h2 { margin: 16px 0 8px; }
+.placeholder-page p { max-width: 520px; color: var(--muted); line-height: 1.8; }
+
+.farmer-page { animation: page-in .28s ease; }
+@keyframes page-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 2px; }
+.page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.content-panel { padding: 20px; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(20, 69, 53, .05); }
+.section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.section-head h3 { margin: 0 0 5px; color: #29473d; font-size: var(--app-font-heading); }
+.section-head p { margin: 0; color: #87968f; font-size: var(--app-font-small); }
+.plot-select { width: 210px; }
+.filter-control { min-width: 280px; padding: 10px 12px; border: 1px solid #b9d9ca; border-radius: 14px; background: linear-gradient(135deg, #f5fbf8, #fff); box-shadow: 0 7px 18px rgba(31,122,91,.1); }
+.filter-control .filter-label { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; color: #287b5d; font-size: 12px; font-weight: 700; }
+.filter-control .plot-select { width: 100%; }
+.filter-control .plot-select .el-select__wrapper { min-height: 42px; border-radius: 10px; box-shadow: 0 0 0 1px #9ecdb8 inset !important; }
+.filter-control .plot-select .el-select__selected-item { color: #244b3d; font-weight: 700; }
+.data-freshness { display: inline-flex; align-items: center; gap: 6px; color: #2d8962; font-size: var(--app-font-small); }
+.data-freshness::before { width: 7px; height: 7px; content: ''; border-radius: 50%; background: #35a273; box-shadow: 0 0 0 4px #e4f5ec; }
+.farmer-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 18px; }
+.farmer-stat { display: flex; align-items: center; gap: 14px; min-height: 104px; padding: 18px; background: #fff; border: 1px solid var(--line); border-radius: 15px; box-shadow: 0 7px 22px rgba(20, 69, 53, .045); }
+.farmer-stat .stat-symbol { width: 46px; height: 46px; display: grid; place-items: center; flex: 0 0 46px; border-radius: 13px; color: #247b58; background: #e8f5ef; font-size: 22px; }
+.farmer-stat .stat-symbol.blue { color: #397eb0; background: #e8f2f9; }.farmer-stat .stat-symbol.orange { color: #c47b31; background: #fff1e3; }.farmer-stat .stat-symbol.red { color: #c45353; background: #fceaea; }
+.farmer-stat label, .farmer-stat strong, .farmer-stat small { display: block; }.farmer-stat label { color: #80908a; font-size: var(--app-font-small); }.farmer-stat strong { margin: 4px 0 2px; color: #234036; font-size: var(--app-font-metric); }.farmer-stat small { color: #9aa7a2; font-size: var(--app-font-tiny); }
+.two-column { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .8fr); gap: 18px; margin-bottom: 18px; }
+.three-column { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 18px; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 8px; color: #2a875f; background: #e9f7f0; font-size: var(--app-font-small); }.status-pill.warning { color: #a86b22; background: #fff2df; }.status-pill.danger { color: #b34f4f; background: #fceaea; }.status-pill.info { color: #537080; background: #edf3f5; }
+.compact-table { width: 100%; }.compact-table .el-table__header-wrapper th { color: #536a61; background: #f3f8f5 !important; }.compact-table.el-table { --el-table-row-hover-bg-color: #f5faf7; border-radius: 10px; }
+.evidence-list { display: grid; gap: 10px; margin: 14px 0; }.evidence-item { display: flex; align-items: flex-start; gap: 9px; color: #5e716a; font-size: var(--app-font-size); line-height: 1.6; }.evidence-item .el-icon { margin-top: 4px; color: #2c9065; }
+
+/* 字体无障碍调节：补齐页面中使用局部样式的常见文字组件。 */
+.content :where(p, label, button, input, textarea, td, th, a) { font-size: var(--app-font-size) !important; }
+.content :where(small) { font-size: var(--app-font-tiny) !important; }
+.content :where(h1, .page-title) { font-size: var(--app-font-title) !important; }
+.content :where(h2) { font-size: calc(var(--app-font-heading) + 4px) !important; }
+.content :where(h3) { font-size: var(--app-font-heading) !important; }
+.content :where(.el-tag, .el-select, .el-input, .el-date-editor, .el-pagination) { font-size: var(--app-font-small) !important; }
+
+@media (max-width: 1200px) { .farmer-stat-grid { grid-template-columns: repeat(2, 1fr); }.two-column { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .page-head { flex-direction: column; }.page-actions, .plot-select, .filter-control { width: 100%; min-width: 0; }.page-actions .el-select, .page-actions .el-date-editor { width: 100% !important; }.farmer-stat-grid, .three-column { grid-template-columns: 1fr; }.content-panel { padding: 16px; } }
+
+@media (max-width: 900px) {
+  .page-title { font-size: 21px; }
+}
