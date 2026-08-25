@@ -8,8 +8,8 @@
 | 农场 ID | `F` 加序号 | `F001` |
 | 地块 ID | `P` 加序号 | `P001` |
 | 数据库设备 ID | `D` 加序号 | `D001` |
-| 设备业务编号 | `SENSOR-` 加序号 | `SENSOR-001` |
-| MQTT 通信标识 | `device_` 加序号 | `device_001` |
+| 设备业务编号 | 地块 ID 加设备类型后缀 | `P001-TEMP` |
+| MQTT 通信标识 | UUID，对应 `device.device_uuid` | `3b8dcefd-3a51-4adc-b452-47c184c0951d` |
 
 ## 设备类型
 
@@ -26,4 +26,10 @@
 - 告警状态：`active`、`acknowledged`、`recovered`
 - 用户角色：`farmer`、`farm_admin`、`system_admin`
 
-所有时间统一使用 ISO 8601 格式，并尽量使用 UTC，例如 `2026-08-21T09:59:50Z`。遥测消息中的 `ts` 是设备采集时间，数据库另存后端收到消息的时间。
+## 时间约定
+
+- 数据库统一保存 UTC。MySQL `DATETIME` 没有时区元数据，但本项目约定其中的值均为 UTC。
+- MQTT 的 `ts`、`timestamp` 是 Unix 毫秒时间戳，按 UTC 解析。
+- API 返回的时间统一使用带 `Z` 的 ISO 8601 UTC 格式，例如 `2026-08-25T06:04:21Z`；不能返回没有时区标识的时间字符串。
+- 前端拿到 API 时间后，按 `Asia/Shanghai` 转换后展示给用户，不修改 API 原始值。
+- 遥测消息中的采集时间与后端收到消息的时间是两个概念，数据库分别按对应字段保存。
