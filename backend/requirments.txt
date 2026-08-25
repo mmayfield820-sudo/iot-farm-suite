@@ -1,0 +1,7 @@
+# This is a backend requirements file for a Python project. 
+# It lists the dependencies that need to be installed for the project to run correctly.
+# 可以用 pip install -r backend/requirements.txt 来安装这些依赖。
+
+SQLAlchemy
+PyMySQL
+python-dotenv
