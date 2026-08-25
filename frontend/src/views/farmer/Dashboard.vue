@@ -1,33 +1,13 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFarmerStore } from '@/stores/farmer'
 import * as Icons from '@element-plus/icons-vue'
 import TrendChart from '@/components/TrendChart.vue'
-import tomatoBg from '@/assets/crops/tomato.png'
-import pepperBg from '@/assets/crops/pepper.png'
-import waterSpinachBg from '@/assets/crops/water-spinach.png'
-import cucumberBg from '@/assets/crops/cucumber.png'
-import lettuceBg from '@/assets/crops/lettuce.png'
-import cornBg from '@/assets/crops/corn.png'
-import strawberryBg from '@/assets/crops/strawberry.png'
 import FarmWheel from '@/components/FarmWheel.vue'
 
 const router = useRouter()
 const store = useFarmerStore()
-const plotScroller = ref(null)
-const cropBackgrounds = {
-  番茄: tomatoBg,
-  辣椒: pepperBg,
-  空心菜: waterSpinachBg,
-  黄瓜: cucumberBg,
-  生菜: lettuceBg,
-  玉米: cornBg,
-  草莓: strawberryBg,
-}
-const plotBackgroundStyle = (cropName) => ({
-  '--plot-bg': `url(${cropBackgrounds[cropName] || tomatoBg})`,
-})
 const plot = computed(() => store.currentPlot)
 const weather = computed(() => store.weather || { rainProbability: 0 })
 const trend = computed(() => store.getTrend(plot.value?.plotId, '24h'))
@@ -60,9 +40,9 @@ const recommendation = computed(() => {
 })
 
 function openPlot(plotId) {
+  store.selectPlot(plotId)
   router.push({ path: '/farmer/management', query: { plotId } })
 }
-function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction * 620, behavior: 'smooth' }) }
 </script>
 
 <template>
@@ -88,14 +68,7 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
       </div>
     </section>
 
-    <FarmWheel />
-
-    <!--
-    !<section class="content-panel plot-overview">
-      <div class="section-head"><div><h3>我的地块</h3><p>共 {{ store.accessiblePlots.length }} 块，仅展示当前账号有权访问的地块</p></div><div class="plot-scroll-actions"><button type="button" aria-label="向左滚动地块" @click="scrollPlots(-1)"><el-icon><ArrowLeft /></el-icon></button><button type="button" aria-label="向右滚动地块" @click="scrollPlots(1)"><el-icon><ArrowRight /></el-icon></button></div></div>
-      <div ref="plotScroller" class="plot-card-track"><article v-for="item in store.accessiblePlots" :key="item.plotId" :style="plotBackgroundStyle(item.cropName)" @click="openPlot(item.plotId)"><div class="plot-card-head"><span><strong>{{ item.plotName }}</strong><small>{{ item.cropName }} · {{ item.cropStage }}</small></span><el-icon><ArrowRight /></el-icon></div><div class="mini-metrics"><span>湿度<b>{{ item.humidity }}%</b></span><span>温度<b>{{ item.temperature }}℃</b></span><span>设备<b>{{ item.deviceOnline ? '在线' : '离线' }}</b></span></div></article></div>
-    </section>
-    -->
+    <FarmWheel :plots="store.accessiblePlots" :selected-plot-id="store.selectedPlotId" @select="openPlot" />
 
     <section v-if="plot" class="dashboard-trend">
       <div class="content-panel"><div class="section-head"><div><h3>{{ plot.plotName }} 环境趋势</h3><p>湿度阈值和灌溉事件已叠加显示</p></div><el-button text type="success" @click="router.push('/farmer/management?tab=history')">查看历史</el-button></div><TrendChart :data="trend" /></div>
