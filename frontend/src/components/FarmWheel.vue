@@ -17,7 +17,8 @@
         :class="{
           active: index === currentIndex,
           danger: farm.status === 'danger',
-          watering: farm.status === 'watering'
+          watering: farm.status === 'watering',
+          offline: farm.status === 'offline'
         }"
         :style="cardStyle(index)"
         @click="openMonitor(farm)"
@@ -75,7 +76,8 @@
             :class="{
               normal: farm.status === 'normal',
               danger: farm.status === 'danger',
-              watering: farm.status === 'watering'
+              watering: farm.status === 'watering',
+              offline: farm.status === 'offline'
             }"
           ></span>
 
@@ -95,11 +97,11 @@
           <div class="farm-heading">
 
             <div class="farm-type">
-              ORCHARD MONITOR
+              {{ farm.farmName }}
             </div>
 
             <h2>
-              <span class="tree-icon">🌳</span>
+              <span class="tree-icon">{{ farm.cropIcon }}</span>
               {{ farm.name }}
             </h2>
 
@@ -165,7 +167,8 @@
                 :class="{
                   normal: farm.status === 'normal',
                   danger: farm.status === 'danger',
-                  watering: farm.status === 'watering'
+                  watering: farm.status === 'watering',
+                  offline: farm.status === 'offline'
                 }"
               ></span>
 
@@ -212,6 +215,11 @@
 
       </div>
 
+      <div v-if="!farms.length" class="wheel-empty">
+        <strong>暂无可访问地块</strong>
+        <span>请联系管理员检查当前账号的地块授权</span>
+      </div>
+
     </div>
 
 
@@ -219,9 +227,10 @@
          左箭头
     ========================== -->
     <button
+      v-if="farms.length > 1"
       class="wheel-arrow wheel-arrow-left"
       type="button"
-      aria-label="上一个果园"
+      aria-label="上一个地块"
       @click.stop="prev"
     >
       <span>‹</span>
@@ -232,9 +241,10 @@
          右箭头
     ========================== -->
     <button
+      v-if="farms.length > 1"
       class="wheel-arrow wheel-arrow-right"
       type="button"
-      aria-label="下一个果园"
+      aria-label="下一个地块"
       @click.stop="next"
     >
       <span>›</span>
@@ -254,7 +264,8 @@
         :class="{
           active: index === currentIndex,
           danger: farm.status === 'danger',
-          watering: farm.status === 'watering'
+          watering: farm.status === 'watering',
+          offline: farm.status === 'offline'
         }"
         :aria-label="`查看${farm.name}`"
         @click.stop="goTo(index)"
@@ -269,14 +280,12 @@
 <script setup>
 
 import {
+  computed,
   ref,
   onMounted,
-  onUnmounted
+  onUnmounted,
+  watch
 } from 'vue'
-
-import {
-  useRouter
-} from 'vue-router'
 
 
 /* =========================================================
@@ -292,83 +301,60 @@ import cornBg from '@/assets/crops/corn.png'
 import strawberryBg from '@/assets/crops/strawberry.png'
 
 
-/* =========================================================
-   Router
-========================================================= */
-
-const router = useRouter()
-
-
-/* =========================================================
-   当前测试数据
-========================================================= */
-
-const farms = ref([
-
-  {
-    id: 1,
-    name: '东区果园',
-    humidity: 45,
-    temperature: 26,
-    status: 'normal',
-    background: tomatoBg
+const props = defineProps({
+  plots: {
+    type: Array,
+    default: () => []
   },
-
-  {
-    id: 2,
-    name: '南区果园',
-    humidity: 21,
-    temperature: 34,
-    status: 'danger',
-    background: pepperBg
-  },
-
-  {
-    id: 3,
-    name: '北区果园',
-    humidity: 39,
-    temperature: 29,
-    status: 'watering',
-    background: waterSpinachBg
-  },
-
-  {
-    id: 4,
-    name: '西区果园',
-    humidity: 55,
-    temperature: 24,
-    status: 'normal',
-    background: cucumberBg
-  },
-
-  {
-    id: 5,
-    name: '中央果园',
-    humidity: 62,
-    temperature: 25,
-    status: 'normal',
-    background: lettuceBg
-  },
-
-  {
-    id: 6,
-    name: '北坡果园',
-    humidity: 48,
-    temperature: 27,
-    status: 'normal',
-    background: cornBg
-  },
-
-  {
-    id: 7,
-    name: '南坡果园',
-    humidity: 36,
-    temperature: 28,
-    status: 'watering',
-    background: strawberryBg
+  selectedPlotId: {
+    type: [String, Number],
+    default: ''
   }
+})
 
-])
+const emit = defineEmits(['select'])
+
+const cropBackgrounds = {
+  '番茄': tomatoBg,
+  '辣椒': pepperBg,
+  '空心菜': waterSpinachBg,
+  '黄瓜': cucumberBg,
+  '生菜': lettuceBg,
+  '玉米': cornBg,
+  '草莓': strawberryBg
+}
+
+const cropIcons = {
+  '番茄': '🍅',
+  '辣椒': '🌶️',
+  '空心菜': '🌿',
+  '黄瓜': '🥒',
+  '生菜': '🥬',
+  '玉米': '🌽',
+  '草莓': '🍓'
+}
+
+const fallbackBackgrounds = [tomatoBg, pepperBg, waterSpinachBg, cucumberBg, lettuceBg, cornBg, strawberryBg]
+
+function resolveStatus(plot) {
+  if (!plot.deviceOnline || plot.status === 'offline') return 'offline'
+  if (plot.irrigating || plot.status === 'irrigating') return 'watering'
+  if (['alert', 'dry', 'danger'].includes(plot.status) || Number(plot.humidity) < Number(plot.threshold) || Number(plot.unhandledAlerts) > 0) return 'danger'
+  return 'normal'
+}
+
+const farms = computed(() => props.plots.map((plot, index) => ({
+  id: String(plot.plotId ?? plot.id ?? index),
+  name: plot.plotName || plot.name || `地块 ${index + 1}`,
+  farmName: plot.farmName || '智慧农场',
+  cropName: plot.cropName || '暂未种植',
+  cropIcon: cropIcons[plot.cropName] || '🌱',
+  humidity: Number.isFinite(Number(plot.humidity)) ? Number(plot.humidity) : 0,
+  temperature: Number.isFinite(Number(plot.temperature)) ? Number(plot.temperature) : 0,
+  status: resolveStatus(plot),
+  background: cropBackgrounds[plot.cropName] || fallbackBackgrounds[index % fallbackBackgrounds.length],
+  source: plot
+})))
 
 
 /* =========================================================
@@ -395,7 +381,7 @@ const AUTO_TIME = 3200
 ========================================================= */
 
 const rainDrops = Array.from(
-  { length: 42 },
+  { length: 80 },
   (_, index) => {
 
     const left =
@@ -739,19 +725,7 @@ function cardStyle(index) {
 ========================================================= */
 
 function openMonitor(farm) {
-
-  router.push({
-
-    name: 'farmer-management',
-
-    query: {
-
-      plotId:
-        String(farm.id)
-
-    }
-
-  })
+  emit('select', String(farm.id))
 
 }
 
@@ -761,6 +735,14 @@ function openMonitor(farm) {
 ========================================================= */
 
 function statusText(farm) {
+
+  if (
+    farm.status === 'offline'
+  ) {
+
+    return '设备离线'
+
+  }
 
   if (
     farm.status === 'danger'
@@ -792,6 +774,18 @@ onMounted(() => {
   startAuto()
 
 })
+
+
+watch(
+  [() => props.selectedPlotId, () => farms.value.map((farm) => farm.id).join('|')],
+  ([plotId]) => {
+    const index = farms.value.findIndex((farm) => farm.id === String(plotId))
+    if (index >= 0) currentIndex.value = index
+    else if (currentIndex.value >= farms.value.length) currentIndex.value = 0
+    startAuto()
+  },
+  { immediate: true }
+)
 
 
 onUnmounted(() => {
@@ -850,6 +844,23 @@ onUnmounted(() => {
 
   transform-style: preserve-3d;
 
+}
+
+.wheel-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: #49675a;
+  text-align: center;
+}
+
+.wheel-empty strong {
+  font-size: 18px;
+}
+
+.wheel-empty span {
+  color: #82958c;
+  font-size: 13px;
 }
 
 
@@ -1120,6 +1131,11 @@ onUnmounted(() => {
     0 0 0 4px
     rgba(114,200,232,.14);
 
+}
+
+.status-indicator.offline {
+  background: #aab3af;
+  box-shadow: 0 0 0 4px rgba(170,179,175,.14);
 }
 
 
@@ -1419,6 +1435,10 @@ onUnmounted(() => {
 
 }
 
+.status-dot.offline {
+  background: #aab3af;
+}
+
 
 @keyframes wateringPulse {
 
@@ -1519,7 +1539,7 @@ onUnmounted(() => {
 
   top: -30px;
 
-  width: 1px;
+  width: 2px;
 
   min-width: 1px;
 
@@ -1529,7 +1549,7 @@ onUnmounted(() => {
     linear-gradient(
       180deg,
       rgba(225,246,255,0),
-      rgba(215,242,255,.72)
+      rgba(215,242,255,.95)
     );
 
   transform:
@@ -1605,14 +1625,14 @@ onUnmounted(() => {
 
   bottom: -30px;
 
-  width: 220px;
+  width: 300px;
 
-  height: 70px;
+  height: 90px;
 
   border-radius: 50%;
 
   background:
-    rgba(214,242,248,.12);
+    rgba(214,242,248,.28);
 
   filter:
     blur(15px);
@@ -1767,6 +1787,15 @@ onUnmounted(() => {
     0 0 8px
     rgba(114,189,216,.32);
 
+}
+
+.farm-card.offline .farm-background {
+  filter: grayscale(.55) brightness(.78);
+}
+
+.farm-card.offline .data-line span {
+  background: #9aa7a1;
+  box-shadow: none;
 }
 
 
@@ -1981,6 +2010,10 @@ onUnmounted(() => {
 
 }
 
+.indicator.offline {
+  background: rgba(148,160,154,.55);
+}
+
 
 .indicator.danger.active {
 
@@ -1995,6 +2028,10 @@ onUnmounted(() => {
   background:
     #5aa8c5;
 
+}
+
+.indicator.offline.active {
+  background: #89958f;
 }
 
 
