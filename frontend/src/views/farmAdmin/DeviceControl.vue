@@ -1,9 +1,9 @@
 <template>
-  <div class="farmer-page control-page">
+  <div class="farmer-page device-status-page">
     <div class="page-head">
       <div>
-        <h1 class="page-title">灌溉设备控制</h1>
-        <p class="page-subtitle">选择目标地块，核对实时数据后下发控制指令</p>
+        <h1 class="page-title">设备状态</h1>
+        <p class="page-subtitle">选择目标地块，查看温度、湿度与灌溉设备的实时运行状态</p>
       </div>
     </div>
     <el-row :gutter="20">
@@ -47,25 +47,25 @@
         </el-card>
       </el-col>
 
-      <!-- 右侧控制面板 -->
+      <!-- 右侧设备状态面板 -->
       <el-col :xs="24" :sm="24" :md="17" :lg="18">
-        <div v-if="currentPlot" class="control-panel">
+        <div v-if="currentPlot" class="status-panel">
           <el-card class="panel-header">
             <div class="header-content">
               <div class="plot-info">
                 <h2 class="plot-title">{{ currentPlot.plotName }}</h2>
                 <span class="plot-crop">{{ currentPlot.cropName }}</span>
               </div>
-              <div class="device-status">
+              <div class="device-status-summary">
                 <el-tag 
-                  :type="currentPlot.deviceOnline ? 'success' : 'danger'" 
+                  :type="onlineDeviceCount === deviceCount ? 'success' : onlineDeviceCount > 0 ? 'warning' : 'danger'"
                   size="large" effect="dark" class="status-tag"
                 >
-                  <el-icon v-if="currentPlot.deviceOnline"><CircleCheck /></el-icon>
-                  <el-icon v-else><CircleClose /></el-icon>
-                  {{ currentPlot.deviceOnline ? '设备在线' : '设备离线' }}
+                  <el-icon v-if="onlineDeviceCount === deviceCount"><CircleCheck /></el-icon>
+                  <el-icon v-else><Warning /></el-icon>
+                  {{ onlineDeviceCount }}/{{ deviceCount }} 台设备在线
                 </el-tag>
-                <div class="device-id">设备: {{ currentPlot.deviceId }}</div>
+                <div class="device-id">温度、湿度与灌溉设备</div>
               </div>
             </div>
           </el-card>
@@ -83,6 +83,14 @@
                   :stroke-width="10" class="humidity-progress"
                 />
                 <div class="metric-threshold">阈值: {{ currentPlot.threshold }}%</div>
+                <div class="metric-device-state">
+                  <el-tag :type="getDeviceState('humidity').online ? 'success' : 'danger'" size="small">
+                    <el-icon v-if="getDeviceState('humidity').online"><CircleCheck /></el-icon>
+                    <el-icon v-else><CircleClose /></el-icon>
+                    湿度设备{{ getDeviceState('humidity').online ? '在线' : '离线' }}
+                  </el-tag>
+                  <span>{{ getDeviceState('humidity').id }}</span>
+                </div>
               </el-card>
             </el-col>
             <el-col :xs="24" :sm="8">
@@ -92,6 +100,14 @@
                   {{ currentPlot.temperature }}<span class="unit">℃</span>
                 </div>
                 <div class="metric-desc">适宜作物生长</div>
+                <div class="metric-device-state">
+                  <el-tag :type="getDeviceState('temperature').online ? 'success' : 'danger'" size="small">
+                    <el-icon v-if="getDeviceState('temperature').online"><CircleCheck /></el-icon>
+                    <el-icon v-else><CircleClose /></el-icon>
+                    温度设备{{ getDeviceState('temperature').online ? '在线' : '离线' }}
+                  </el-tag>
+                  <span>{{ getDeviceState('temperature').id }}</span>
+                </div>
               </el-card>
             </el-col>
             <el-col :xs="24" :sm="8">
@@ -101,72 +117,17 @@
                   {{ currentPlot.maxDuration }}<span class="unit">分钟</span>
                 </div>
                 <div class="metric-desc">超过将自动提醒</div>
+                <div class="metric-device-state">
+                  <el-tag :type="getDeviceState('irrigation').online ? 'success' : 'danger'" size="small">
+                    <el-icon v-if="getDeviceState('irrigation').online"><CircleCheck /></el-icon>
+                    <el-icon v-else><CircleClose /></el-icon>
+                    灌溉设备{{ getDeviceState('irrigation').online ? '在线' : '离线' }}
+                  </el-tag>
+                  <span>{{ getDeviceState('irrigation').id }}</span>
+                </div>
               </el-card>
             </el-col>
           </el-row>
-
-          <el-card class="control-area">
-            <template #header>
-              <div class="control-header">
-                <span><el-icon><Operation /></el-icon> 灌溉控制</span>
-                <el-tag v-if="currentPlot.irrigating" type="primary" effect="dark" size="large">
-                  <el-icon class="is-loading"><Loading /></el-icon>
-                  灌溉进行中...
-                </el-tag>
-              </div>
-            </template>
-
-            <el-alert
-              v-if="!currentPlot.deviceOnline"
-              title="设备离线，禁止远程控制"
-              type="error"
-              description="该设备已超过规定时间未上报心跳，无法执行远程控制。请检查设备电源和网络连接。"
-              :closable="false" show-icon class="offline-alert"
-            />
-
-            <div class="control-buttons" v-else>
-              <div class="button-group">
-                <el-button
-                  type="primary" size="large" class="control-btn open-btn"
-                  :disabled="currentPlot.irrigating || controlLoading"
-                  @click="handleOpen"
-                >
-                  <el-icon size="24"><SwitchButton /></el-icon>
-                  <div class="btn-text">
-                    <div class="btn-title">开启灌溉</div>
-                    <div class="btn-desc">向设备发送开启指令</div>
-                  </div>
-                </el-button>
-                <el-button
-                  type="danger" size="large" class="control-btn close-btn"
-                  :disabled="!currentPlot.irrigating || controlLoading"
-                  @click="handleClose"
-                >
-                  <el-icon size="24"><CircleClose /></el-icon>
-                  <div class="btn-text">
-                    <div class="btn-title">关闭灌溉</div>
-                    <div class="btn-desc">向设备发送关闭指令</div>
-                  </div>
-                </el-button>
-              </div>
-
-              <div v-if="controlState.visible" class="control-state">
-                <el-alert
-                  :title="controlState.title"
-                  :type="controlState.type"
-                  :description="controlState.description"
-                  show-icon :closable="false" class="state-alert"
-                >
-                  <template #default>
-                    <div v-if="controlState.loading" class="state-loading">
-                      <el-progress :percentage="controlState.progress" :stroke-width="6" />
-                      <span class="loading-text">{{ controlState.loadingText }}</span>
-                    </div>
-                  </template>
-                </el-alert>
-              </div>
-            </div>
-          </el-card>
 
           <el-card class="records-card">
             <template #header>
@@ -214,26 +175,6 @@
       </el-col>
     </el-row>
 
-    <el-dialog v-model="confirmDialog.visible" :title="confirmDialog.title" width="420px" center destroy-on-close>
-      <div class="confirm-content">
-        <div class="confirm-icon">{{ confirmDialog.icon }}</div>
-        <div class="confirm-message">{{ confirmDialog.message }}</div>
-        <el-descriptions :column="1" border size="small" class="confirm-detail">
-          <el-descriptions-item label="目标地块">{{ confirmDialog.plotName }}</el-descriptions-item>
-          <el-descriptions-item label="当前湿度">{{ confirmDialog.humidity }}%</el-descriptions-item>
-          <el-descriptions-item label="湿度阈值">{{ confirmDialog.threshold }}%</el-descriptions-item>
-          <el-descriptions-item label="设备状态">
-            <el-tag :type="confirmDialog.deviceOnline ? 'success' : 'danger'" size="small">
-              {{ confirmDialog.deviceOnline ? '在线' : '离线' }}
-            </el-tag>
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-      <template #footer>
-        <el-button @click="confirmDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="executeControl" :loading="controlLoading">确认执行</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -246,8 +187,7 @@ import { getHumidityStatus, IRRIGATION_STATUS } from '@/utils/farmAdminStatus'
 import { mockPlots, mockIrrigationRecords } from '@/mock/farmAdminData'
 import { ElMessage } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
-import { getPlotDetail } from '@/api/plot'
-import { controlIrrigation, getIrrigationRecords } from '@/api/device'
+import { getIrrigationRecords } from '@/api/device'
 import { normalizeIrrigationRecord, normalizePlot, unwrapList } from '@/utils/dataAdapters'
 
 const route = useRoute()
@@ -256,32 +196,38 @@ const plotStore = usePlotStore()
 const userStore = useUserStore()
 const platformStore = usePlatformStore()
 const selectedPlotId = ref('')
-const controlLoading = ref(false)
 const records = ref([])
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
 
-const controlState = ref({ visible: false, title: '', type: 'info', description: '', loading: false, progress: 0, loadingText: '' })
-const confirmDialog = ref({ visible: false, title: '', icon: '', message: '', plotName: '', humidity: 0, threshold: 0, deviceOnline: true, action: '' })
-
 const currentPlot = computed(() => plotStore.getPlotById(selectedPlotId.value))
 const currentRecords = computed(() => records.value.filter(r => r.plotId === selectedPlotId.value))
+const deviceCount = computed(() => ['temperature', 'humidity', 'irrigation'].length)
+const onlineDeviceCount = computed(() => ['temperature', 'humidity', 'irrigation'].filter((type) => getDeviceState(type).online).length)
+
+const getDeviceState = (type) => {
+  const device = currentPlot.value?.devices?.[type]
+  return {
+    online: Boolean(device?.online ?? currentPlot.value?.deviceOnline),
+    id: device?.deviceNo || device?.deviceId || '未绑定设备',
+  }
+}
 
 onMounted(async () => {
-  const farmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+  const scopedFarmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
   let scopedPlots = []
   if (isMock) {
+    const farmIds = scopedFarmIds.length ? scopedFarmIds : [...new Set(mockPlots.map((plot) => String(plot.farmId)))]
     scopedPlots = mockPlots.filter((plot) => farmIds.includes(String(plot.farmId)))
   } else {
     try {
       await platformStore.loadData()
+      const farmIds = scopedFarmIds.length ? scopedFarmIds : platformStore.farms.map((farm) => String(farm.farmId))
       const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
-      const details = await Promise.allSettled(basePlots.map((plot) => getPlotDetail(plot.plotNo)))
-      scopedPlots = basePlots.map((base, index) => {
-        const detail = details[index].status === 'fulfilled' ? (details[index].value?.data || details[index].value) : {}
+      scopedPlots = basePlots.map((base) => {
         const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
         const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
         const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
-        return normalizePlot({ ...base, ...detail, plotId: base.plotNo }, { devices, alerts, farm })
+        return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
       })
       const recordResults = await Promise.allSettled(scopedPlots.map((plot) => getIrrigationRecords(plot.plotId)))
       records.value = recordResults.flatMap((result) => result.status === 'fulfilled' ? unwrapList(result.value).map(normalizeIrrigationRecord) : [])
@@ -302,7 +248,6 @@ onMounted(async () => {
 
 const handlePlotSelect = (plotId) => {
   selectedPlotId.value = plotId
-  controlState.value.visible = false
   router.replace({ query: { plotId } })
 }
 
@@ -317,71 +262,6 @@ const getProgressColor = (humidity, threshold) => {
   return '#67C23A'
 }
 
-const handleOpen = () => {
-  const plot = currentPlot.value
-  confirmDialog.value = { visible: true, title: '确认开启灌溉', icon: '🚿', message: '您即将对该地块开启灌溉，请确认以下信息：', plotName: plot.plotName, humidity: plot.humidity, threshold: plot.threshold, deviceOnline: plot.deviceOnline, action: 'open' }
-}
-const handleClose = () => {
-  const plot = currentPlot.value
-  confirmDialog.value = { visible: true, title: '确认关闭灌溉', icon: '⏹️', message: '您即将关闭该设备的灌溉，请确认：', plotName: plot.plotName, humidity: plot.humidity, threshold: plot.threshold, deviceOnline: plot.deviceOnline, action: 'close' }
-}
-
-const executeControl = async () => {
-  controlLoading.value = true
-  confirmDialog.value.visible = false
-  const plot = currentPlot.value
-  const action = confirmDialog.value.action
-  controlState.value = { visible: true, title: '指令下发中', type: 'info', description: `正在向 ${plot.plotName} 的 ${plot.deviceId} 发送${action === 'open' ? '开启' : '关闭'}指令...`, loading: true, progress: 30, loadingText: '正在连接设备...' }
-  await simulateProgress()
-  let isSuccess = true
-  let response = null
-  try {
-    if (!isMock) response = await controlIrrigation({ plot_id: plot.plotId, device_id: plot.devices?.irrigation?.deviceId || null, action_type: action === 'open' ? '开启' : '关闭', activation_type: '手动' })
-    isSuccess = isMock ? Math.random() > 0.1 : !['失败', '超时'].includes(response?.status || response?.data?.status)
-  } catch {
-    isSuccess = false
-  }
-  if (isSuccess) {
-    if (action === 'open') {
-      plotStore.updatePlot(plot.plotId, { irrigating: true, status: 'irrigating' })
-      records.value.unshift({ recordId: 'IR' + Date.now(), plotId: plot.plotId, deviceId: plot.deviceId, operator: userStore.user.displayName, operatorId: userStore.user.id, operationType: '开启', activationType: '手动', startTime: formatDateTime(new Date()), endTime: '', duration: '-', status: '进行中', source: '手动' })
-      controlState.value = { visible: true, title: '执行成功', type: 'success', description: `${plot.plotName} 的灌溉设备已成功开启，设备正在运行中。`, loading: false, progress: 100, loadingText: '' }
-      ElMessage.success('灌溉开启成功')
-    } else {
-      plotStore.updatePlot(plot.plotId, { irrigating: false, status: getHumidityStatus(plot.humidity, plot.threshold) })
-      const activeRecord = records.value.find(r => r.plotId === plot.plotId && r.status === '进行中')
-      if (activeRecord) {
-        const endTime = new Date()
-        const start = new Date(activeRecord.startTime)
-        activeRecord.endTime = formatDateTime(endTime)
-        activeRecord.duration = Math.round((endTime - start) / 60000)
-        activeRecord.status = '成功'
-      }
-      controlState.value = { visible: true, title: '执行成功', type: 'success', description: `${plot.plotName} 的灌溉设备已成功关闭。`, loading: false, progress: 100, loadingText: '' }
-      ElMessage.success('灌溉关闭成功')
-    }
-  } else {
-    if (action === 'open') {
-      records.value.unshift({ recordId: 'IR' + Date.now(), plotId: plot.plotId, deviceId: plot.deviceId, operator: userStore.user.displayName, operatorId: userStore.user.id, operationType: '开启', startTime: formatDateTime(new Date()), endTime: formatDateTime(new Date()), duration: 0, status: '失败', source: '页面' })
-    }
-    controlState.value = { visible: true, title: '执行失败', type: 'error', description: '设备响应超时或网络异常，指令未能成功下发。请检查设备状态后重试。', loading: false, progress: 100, loadingText: '' }
-    ElMessage.error('指令执行失败')
-  }
-  controlLoading.value = false
-}
-
-const simulateProgress = () => {
-  return new Promise((resolve) => {
-    let progress = 30
-    const timer = setInterval(() => {
-      progress += Math.random() * 20
-      if (progress >= 90) { progress = 90; clearInterval(timer); setTimeout(resolve, 500) }
-      controlState.value.progress = Math.min(progress, 90)
-      if (progress > 50) controlState.value.loadingText = '等待设备响应...'
-      if (progress > 70) controlState.value.loadingText = '接收设备确认...'
-    }, 400)
-  })
-}
 const refreshRecords = async () => {
   if (isMock) return ElMessage.success('记录已刷新')
   try {
@@ -390,23 +270,19 @@ const refreshRecords = async () => {
     ElMessage.success('记录已刷新')
   } catch (error) { ElMessage.error(error.message || '记录刷新失败') }
 }
-const formatDateTime = (date) => {
-  const pad = (n) => n.toString().padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
 </script>
 
 <style scoped>
-.control-page { animation: fadeIn .3s ease; }
+.device-status-page { animation: fadeIn .3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .page-head { display: flex; justify-content: space-between; }
-.plot-list-card, .panel-header, .metric-card, .control-area, .records-card { border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(20, 69, 53, .05); }
+.plot-list-card, .panel-header, .metric-card, .records-card { border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(20, 69, 53, .05); }
 .plot-list-card { margin-bottom: 20px; overflow: hidden; }
-.plot-list-card :deep(.el-card__header), .control-area :deep(.el-card__header), .records-card :deep(.el-card__header) { padding: 17px 20px; border-bottom-color: #edf2ef; }
+.plot-list-card :deep(.el-card__header), .records-card :deep(.el-card__header) { padding: 17px 20px; border-bottom-color: #edf2ef; }
 .plot-list-card :deep(.el-card__body) { padding: 8px; }
-.list-header, .control-header, .records-header { display: flex; justify-content: space-between; align-items: center; color: #28483d; font-size: 15px; font-weight: 700; }
-.list-header > span, .control-header > span, .records-header > span { display: flex; align-items: center; gap: 8px; }
-.list-header .el-icon, .control-header .el-icon, .records-header .el-icon { color: var(--accent); }
+.list-header, .records-header { display: flex; justify-content: space-between; align-items: center; color: #28483d; font-size: 15px; font-weight: 700; }
+.list-header > span, .records-header > span { display: flex; align-items: center; gap: 8px; }
+.list-header .el-icon, .records-header .el-icon { color: var(--accent); }
 .plot-menu { border: none; }
 .plot-menu :deep(.el-menu-item) { height: auto; min-height: 66px; margin: 4px 0; padding: 11px 13px !important; border-radius: 10px; color: #516860; line-height: 1.4; }
 .plot-menu :deep(.el-menu-item:hover) { background: #f3f8f5; }
@@ -422,7 +298,7 @@ const formatDateTime = (date) => {
 .header-content { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
 .plot-title { margin: 0; color: #203c33; font-size: 22px; }
 .plot-crop { display: inline-block; margin-top: 5px; color: #82928c; font-size: 13px; }
-.device-status { text-align: right; }
+.device-status-summary { text-align: right; }
 .status-tag { border: 0; border-radius: 9px; font-size: 13px; }
 .device-id { margin-top: 7px; color: #8b9994; font-size: 12px; }
 .metrics-row { margin-bottom: 20px; }
@@ -433,31 +309,13 @@ const formatDateTime = (date) => {
 .irrigation-limit { color: var(--accent); }
 .unit { margin-left: 4px; font-size: 14px; font-weight: 600; }
 .metric-desc, .metric-threshold { margin-top: 9px; color: #93a19c; font-size: 12px; }
+.metric-device-state { display: flex; min-height: 28px; align-items: center; justify-content: center; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #edf2ef; }
+.metric-device-state .el-tag { display: inline-flex; align-items: center; gap: 3px; border-radius: 8px; }
+.metric-device-state > span { color: #92a19b; font-size: 11px; }
 .humidity-progress { margin: 13px 0 7px; }
-.control-area { margin-bottom: 20px; }
-.control-area :deep(.el-card__body) { padding: 22px; }
-.offline-alert { margin: 2px 0; border-radius: 11px; }
-.control-buttons { padding: 8px 0 2px; }
-.button-group { display: flex; justify-content: center; gap: 18px; margin-bottom: 18px; }
-.control-btn { width: 210px; height: 78px; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 12px; border-radius: 13px; }
-.open-btn { border-color: var(--accent); background: var(--accent); }
-.open-btn:hover { border-color: color-mix(in srgb, var(--accent) 84%, black); background: color-mix(in srgb, var(--accent) 84%, black); }
-.control-btn :deep(.el-icon) { margin: 0 !important; }
-.btn-text { text-align: left; }
-.btn-title { font-size: 15px; font-weight: 700; }
-.btn-desc { margin-top: 3px; font-size: 11px; opacity: .82; }
-.control-state { margin-top: 18px; }
-.state-alert { border-radius: 11px; }
-.state-alert :deep(.el-alert__content) { width: 100%; }
-.state-loading { margin-top: 10px; }
-.loading-text { display: block; margin-top: 6px; color: #81918b; font-size: 12px; }
 .records-card { margin-bottom: 20px; overflow: hidden; }
 .records-card :deep(.el-card__body) { padding: 0 20px 20px; }
 .records-card :deep(.el-table) { --el-table-header-bg-color: #f3f8f5; --el-table-row-hover-bg-color: #f5faf7; border-radius: 10px; }
-.confirm-content { padding: 8px 0; text-align: center; }
-.confirm-icon { width: 66px; height: 66px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 20px; background: #eef7f2; font-size: 34px; }
-.confirm-message { margin-bottom: 20px; color: #345046; font-size: 15px; font-weight: 600; }
-.confirm-detail { margin-top: 15px; text-align: left; }
-@media (max-width: 900px) { .button-group { gap: 12px; }.control-btn { width: 48%; }.plot-list-card { margin-bottom: 20px; } }
-@media (max-width: 560px) { .header-content { align-items: flex-start; flex-direction: column; }.device-status { text-align: left; }.button-group { flex-direction: column; }.control-btn { width: 100%; }.records-card :deep(.el-card__body) { padding: 0 12px 14px; } }
+@media (max-width: 900px) { .plot-list-card { margin-bottom: 20px; } }
+@media (max-width: 560px) { .header-content { align-items: flex-start; flex-direction: column; }.device-status-summary { text-align: left; }.records-card :deep(.el-card__body) { padding: 0 12px 14px; } }
 </style>

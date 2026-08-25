@@ -20,7 +20,7 @@ export const platformDevices = [
   { id: 'D006', deviceNo: 'SENSOR-006', mqttId: 'device_006', type: '灌溉设备', farmId: 'F001', plotNo: 'P002', status: '在线', lastHeartbeat: '2026-08-22 10:24:58', lastDataAt: '-', latestValue: '运行中', msgId: '-' },
   { id: 'D007', deviceNo: 'SENSOR-007', mqttId: 'device_007', type: '温度传感器', farmId: 'F001', plotNo: 'P003', status: '在线', lastHeartbeat: '2026-08-22 10:20:00', lastDataAt: '2026-08-22 10:02:00', latestValue: '30.1℃', msgId: 'M00680' },
   { id: 'D008', deviceNo: 'SENSOR-008', mqttId: 'device_008', type: '湿度传感器', farmId: 'F001', plotNo: 'P003', status: '异常', lastHeartbeat: '2026-08-22 10:20:00', lastDataAt: '2026-08-22 10:02:00', latestValue: '22%', msgId: 'M00677' },
-  { id: 'D009', deviceNo: 'SENSOR-009', mqttId: 'device_009', type: '灌溉设备', farmId: 'F001', plotNo: '', status: '停用', lastHeartbeat: '2026-08-20 16:30:00', lastDataAt: '-', latestValue: '-', msgId: '-' },
+  { id: 'D009', deviceNo: 'SENSOR-009', mqttId: 'device_009', type: '灌溉设备', farmId: 'F001', plotNo: '', status: '离线', lastHeartbeat: '2026-08-20 16:30:00', lastDataAt: '-', latestValue: '-', msgId: '-' },
 ]
 
 export const platformUsers = [
@@ -42,7 +42,7 @@ export const platformAuditLogs = [
   { id: 'LOG002', time: '2026-08-22 09:40:06', user: '张三(U001)', module: '阈值配置', action: 'P001 湿度阈值 32% → 35%', result: '成功', ip: '192.168.1.18' },
   { id: 'LOG003', time: '2026-08-22 09:10:22', user: '王五(U003)', module: '设备管理', action: '查看 D008 异常信息', result: '成功', ip: '192.168.1.33' },
   { id: 'LOG004', time: '2026-08-21 16:42:35', user: 'admin(U001)', module: '用户管理', action: '禁用账号 U004', result: '成功', ip: '192.168.1.10' },
-  { id: 'LOG005', time: '2026-08-21 15:20:10', user: '王五(U003)', module: '设备绑定', action: 'D009 从 P003 解绑并停用', result: '成功', ip: '192.168.1.33' },
+  { id: 'LOG005', time: '2026-08-21 15:20:10', user: '王五(U003)', module: '设备绑定', action: 'D009 从 P003 解绑', result: '成功', ip: '192.168.1.33' },
 ]
 
 export const initialSystemParams = {

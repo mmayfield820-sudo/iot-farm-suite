@@ -31,8 +31,7 @@ export function formatDateTime(value, fallback = '-') {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-export function isHeartbeatOnline(active, lastHeartbeat, offlineMinutes = 30) {
-  if (active === false || active === 0) return false
+export function isHeartbeatOnline(lastHeartbeat, offlineMinutes = 30) {
   const heartbeat = parseDate(lastHeartbeat)
   if (!heartbeat) return false
   return Date.now() - heartbeat.getTime() <= offlineMinutes * 60 * 1000
@@ -52,11 +51,12 @@ export function normalizeFarm(row = {}) {
 }
 
 export function normalizeDevice(row = {}, options = {}) {
-  const active = Boolean(firstDefined(row.active, row.Active, row.status !== '停用', true))
-  const lastHeartbeat = firstDefined(row.lastHeartbeat, row.last_heartbeat, '')
-  const statusOnline = row.status === undefined || row.status === null ? undefined : row.status === '在线'
-  const online = firstDefined(row.online, row.deviceOnline, statusOnline, isHeartbeatOnline(active, lastHeartbeat, options.offlineMinutes))
-  const type = firstDefined(row.type, row.deviceType, row.device_type, '未知设备')
+  const typeMap = { temperature: '温度传感器', humidity: '湿度传感器', irrigation: '灌溉设备' }
+  const lastHeartbeat = firstDefined(row.lastHeartbeat, row.last_heartbeat, row.lastSeenAt, row.last_seen_at, '')
+  const statusOnline = row.status === undefined || row.status === null ? undefined : ['online', '在线'].includes(row.status)
+  const online = firstDefined(row.online, row.deviceOnline, statusOnline, isHeartbeatOnline(lastHeartbeat, options.offlineMinutes))
+  const rawType = firstDefined(row.type, row.deviceType, row.device_type, '未知设备')
+  const type = typeMap[rawType] || rawType
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo))
   return {
     ...row,
@@ -65,10 +65,10 @@ export function normalizeDevice(row = {}, options = {}) {
     plotId,
     plotNo: plotId,
     deviceNo: firstDefined(row.deviceNo, row.deviceCode, row.device_code, ''),
+    mqttDeviceId: firstDefined(row.mqttDeviceId, row.mqtt_device_id, row.mqttId, ''),
     type,
-    active,
     online: Boolean(online),
-    status: !active ? '停用' : online ? '在线' : '离线',
+    status: online ? '在线' : '离线',
     lastHeartbeat,
     createdAt: firstDefined(row.createdAt, row.created_at, ''),
     latestValue: firstDefined(row.latestValue, row.latest_value, row.value, '-'),
@@ -121,17 +121,19 @@ export function normalizeIrrigationRecord(row = {}) {
 }
 
 export function normalizeAlert(row = {}) {
-  const statusMap = { 已确认: '处理中', 已恢复: '已处理' }
+  const statusMap = { active: '未处理', acknowledged: '处理中', recovered: '已处理', 已确认: '处理中', 已恢复: '已处理' }
+  const rawType = firstDefined(row.type, row.metricType, row.metric_type, row.alertType, row.alert_type, '未知告警')
+  const typeMap = { humidity: '湿度过低', temperature: '温度异常' }
   return {
     ...row,
     alertId: normalizeId(firstDefined(row.alertId, row.alert_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
-    type: firstDefined(row.type, row.alertType, row.alert_type, '未知告警'),
+    type: typeMap[rawType] || rawType,
     reason: firstDefined(row.reason, row.alertDescription, row.alert_description, '暂无告警说明'),
     value: firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-'),
     threshold: firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-'),
-    occurTime: firstDefined(row.occurTime, row.alertDatetime, row.alert_datetime, ''),
+    occurTime: firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, ''),
     status: statusMap[row.status] || statusMap[row.alert_status] || firstDefined(row.status, row.alert_status, '未处理'),
     handledBy: normalizeId(firstDefined(row.handledBy, row.handled_by)),
     handledAt: firstDefined(row.handledAt, row.handled_at, ''),
@@ -152,8 +154,7 @@ export function normalizePlot(row = {}, related = {}) {
   }
   const activeIrrigation = irrigationRecords.find((item) => item.operationType === '开启' && item.status === '进行中')
   const lastIrrigation = irrigationRecords.find((item) => item.operationType === '开启')
-  const activeDevices = devices.filter((item) => item.active)
-  const allOnline = activeDevices.length > 0 && activeDevices.every((item) => item.online)
+  const allOnline = devices.length > 0 && devices.every((item) => item.online)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.id))
   const humidity = Number(firstDefined(row.humidity, report.humidity, 0))
   const status = !allOnline ? 'offline' : activeIrrigation ? 'irrigating' : humidity < threshold.threshold ? 'alert' : 'normal'
@@ -179,7 +180,7 @@ export function normalizePlot(row = {}, related = {}) {
     deviceOnline: allOnline,
     onlineDeviceCount: devices.filter((item) => item.online).length,
     deviceCount: devices.length,
-    dataState: row.dataState || (report.createdAt && isHeartbeatOnline(true, report.createdAt, related.staleDataMinutes || 15) ? 'realtime' : 'delayed'),
+    dataState: row.dataState || (report.createdAt && isHeartbeatOnline(report.createdAt, related.staleDataMinutes || 15) ? 'realtime' : 'delayed'),
     irrigating: Boolean(activeIrrigation || row.irrigating),
     status: row.status || status,
     lastHeartbeat: heartbeatTimes[0] ? formatDateTime(heartbeatTimes[0]) : '',
@@ -200,6 +201,33 @@ export function reportsToTrend(rows = [], threshold) {
     times: reports.map((item) => formatDateTime(item.createdAt).slice(5, 16)),
     temperature: reports.map((item) => item.temperature),
     soilHumidity: reports.map((item) => item.humidity),
+    events: [],
+    threshold,
+  }
+}
+
+export function overviewMetricsToReport(metrics = [], plotId = '') {
+  const temperature = metrics.find((item) => item.type === 'temperature')
+  const humidity = metrics.find((item) => item.type === 'humidity')
+  const timestamps = metrics.map((item) => parseDate(item.ts)).filter(Boolean).sort((a, b) => b - a)
+  return {
+    plotId,
+    temperature: Number(temperature?.value ?? 0),
+    humidity: Number(humidity?.value ?? 0),
+    createdAt: timestamps[0]?.toISOString() || '',
+  }
+}
+
+export function metricSeriesToTrend(temperatureRows = [], humidityRows = [], threshold = 35) {
+  const temperatureByTime = new Map(temperatureRows.map((item) => [item.ts, Number(item.value)]))
+  const humidityByTime = new Map(humidityRows.map((item) => [item.ts, Number(item.value)]))
+  const timestamps = [...new Set([...temperatureByTime.keys(), ...humidityByTime.keys()])]
+    .filter((value) => parseDate(value))
+    .sort((a, b) => parseDate(a) - parseDate(b))
+  return {
+    times: timestamps.map((value) => formatDateTime(value).slice(5, 16)),
+    temperature: timestamps.map((value) => temperatureByTime.get(value) ?? null),
+    soilHumidity: timestamps.map((value) => humidityByTime.get(value) ?? null),
     events: [],
     threshold,
   }

@@ -40,5 +40,5 @@ watch(
 </template>
 
 <style scoped>
-.management-head{margin-bottom:20px}.management-page>:deep(.farmer-page){padding:0}.filter-control{min-width:280px;padding:10px 12px;border:1px solid #b9d9ca;border-radius:14px;background:linear-gradient(135deg,#f5fbf8,#fff);box-shadow:0 7px 18px rgba(31,122,91,.1)}.filter-label{display:flex;align-items:center;gap:6px;margin-bottom:7px;color:#287b5d;font-size:12px;font-weight:700}.plot-select{width:100%}.plot-select:deep(.el-select__wrapper){min-height:42px;border-radius:10px;box-shadow:0 0 0 1px #9ecdb8 inset!important}.plot-select:deep(.el-select__selected-item){color:#244b3d;font-weight:700}@media(max-width:760px){.filter-control{width:100%;min-width:0}}
+.management-head{margin-bottom:20px}.management-page>:deep(.farmer-page){padding:0}
 </style>

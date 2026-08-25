@@ -19,6 +19,11 @@ export const mockPlots = [
     unhandledAlerts: 2,
     updateTime: '2026-08-22 09:15:00',
     deviceId: 'D001',
+    devices: {
+      temperature: { deviceId: 'D001', deviceNo: 'SENSOR-001', online: true },
+      humidity: { deviceId: 'D002', deviceNo: 'SENSOR-002', online: true },
+      irrigation: { deviceId: 'D003', deviceNo: 'SENSOR-003', online: true }
+    },
     cropName: '番茄'
   },
   {
@@ -36,6 +41,11 @@ export const mockPlots = [
     unhandledAlerts: 0,
     updateTime: '2026-08-22 09:14:30',
     deviceId: 'D002',
+    devices: {
+      temperature: { deviceId: 'D004', deviceNo: 'SENSOR-004', online: true },
+      humidity: { deviceId: 'D005', deviceNo: 'SENSOR-005', online: true },
+      irrigation: { deviceId: 'D006', deviceNo: 'SENSOR-006', online: true }
+    },
     cropName: '辣椒'
   },
   {
@@ -53,6 +63,11 @@ export const mockPlots = [
     unhandledAlerts: 1,
     updateTime: '2026-08-22 09:13:00',
     deviceId: 'D003',
+    devices: {
+      temperature: { deviceId: 'D007', deviceNo: 'SENSOR-007', online: true },
+      humidity: { deviceId: 'D008', deviceNo: 'SENSOR-008', online: true },
+      irrigation: { deviceId: 'D009', deviceNo: 'SENSOR-009', online: true }
+    },
     cropName: '空心菜'
   },
   {
@@ -70,6 +85,11 @@ export const mockPlots = [
     unhandledAlerts: 0,
     updateTime: '2026-08-22 09:15:00',
     deviceId: 'D004',
+    devices: {
+      temperature: { deviceId: 'D010', deviceNo: 'SENSOR-010', online: true },
+      humidity: { deviceId: 'D011', deviceNo: 'SENSOR-011', online: true },
+      irrigation: { deviceId: 'D012', deviceNo: 'SENSOR-012', online: true }
+    },
     cropName: '番茄幼苗'
   },
   {
@@ -87,6 +107,11 @@ export const mockPlots = [
     unhandledAlerts: 1,
     updateTime: '2026-08-22 08:00:00',
     deviceId: 'D005',
+    devices: {
+      temperature: { deviceId: 'D013', deviceNo: 'SENSOR-013', online: false },
+      humidity: { deviceId: 'D014', deviceNo: 'SENSOR-014', online: false },
+      irrigation: { deviceId: 'D015', deviceNo: 'SENSOR-015', online: false }
+    },
     cropName: '试验作物'
   }
 ]

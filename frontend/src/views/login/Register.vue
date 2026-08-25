@@ -5,8 +5,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, CircleCheck, Collection, OfficeBuilding, UserFilled } from '@element-plus/icons-vue'
 import { platformFarms, platformPlots } from '@/mock/platformData'
 import { useRegistrationStore } from '@/stores/registration'
-import { getFarmList } from '@/api/platform'
-import { getPlotList } from '@/api/plot'
+import { getFarmList, getFarmOverview } from '@/api/platform'
 import { normalizeFarm, unwrapList } from '@/utils/dataAdapters'
 
 const router = useRouter()
@@ -48,16 +47,20 @@ const roleSummary = computed(() => form.roles.map((role) => role === 'farmer' ? 
 onMounted(async () => {
   if (isMock) return
   try {
-    const [farmResponse, plotResponse] = await Promise.all([getFarmList(), getPlotList({ registrable: true })])
+    const farmResponse = await getFarmList()
     availableFarms.value = unwrapList(farmResponse).map(normalizeFarm).filter((item) => item.active)
-    availablePlots.value = unwrapList(plotResponse).map((row) => ({
+    const overviewResults = await Promise.allSettled(availableFarms.value.map((farm) => getFarmOverview(farm.farmId)))
+    availablePlots.value = overviewResults.flatMap((result) => result.status === 'fulfilled' ? unwrapList(result.value) : []).map((overview) => {
+      const row = overview.plot || {}
+      return {
       ...row,
       plotNo: String(row.plotNo ?? row.plotId ?? row.plot_id ?? row.id),
       farmId: String(row.farmId ?? row.farm_id ?? ''),
       name: row.name || row.plotName || row.plot_name || '未命名地块',
       crop: row.crop || row.cropName || row.crop_name || '暂未种植',
       note: row.note || row.description || '',
-    })).filter((item) => item.active !== false && item.Active !== false)
+      }
+    })
   } catch (error) {
     ElMessage.error(error.message || '可申请的农场和地块加载失败')
   }

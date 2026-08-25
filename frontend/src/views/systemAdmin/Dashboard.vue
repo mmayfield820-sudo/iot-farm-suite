@@ -21,7 +21,7 @@ const services = computed(() => [
       <div class="page-actions"><span :class="['data-freshness', store.loadError ? 'danger' : '']">{{ store.loading ? '数据加载中' : store.loadError ? '数据加载异常' : '业务数据已同步' }}</span></div>
     </div>
     <section class="farmer-stat-grid">
-      <div class="farmer-stat"><div class="stat-symbol"><el-icon><Connection /></el-icon></div><div><label>在线设备</label><strong>{{ store.onlineDevices }}</strong><small>根据启用状态和最近心跳判断</small></div></div>
+<div class="farmer-stat"><div class="stat-symbol"><el-icon><Connection /></el-icon></div><div><label>在线设备</label><strong>{{ store.onlineDevices }}</strong><small>根据设备状态和最近心跳判断</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol red"><el-icon><CircleClose /></el-icon></div><div><label>异常/离线设备</label><strong>{{ store.offlineDevices }}</strong><small>需要排查</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol orange"><el-icon><Warning /></el-icon></div><div><label>未处理告警</label><strong>{{ store.unhandledAlerts }}</strong><small>全系统</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol blue"><el-icon><User /></el-icon></div><div><label>启用用户</label><strong>{{ activeUsers }}</strong><small>账号 active 状态</small></div></div>

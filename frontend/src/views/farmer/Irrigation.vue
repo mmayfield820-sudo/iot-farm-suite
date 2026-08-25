@@ -88,7 +88,7 @@ async function execute(action) {
     await new Promise((resolve) => setTimeout(resolve, 650))
     control.state = 'executing'
     control.message = '等待后端与设备返回执行结果…'
-    const response = await store.sendControl(activeCommand.value, plannedDuration.value)
+      const response = await store.sendControl(activeCommand.value)
     const result = ['success', '成功', 'accepted'].includes(response?.result || response?.status || 'success') ? 'success' : 'failed'
     store.completeCommand(activeCommand.value.commandId, result, '手动')
     if (result !== 'success') throw new Error(response?.message || '设备返回执行失败')
@@ -189,7 +189,7 @@ async function execute(action) {
             </div>
             <p>{{ control.message }}</p>
           </div>
-          <el-alert v-if="!controlOnline" title="灌溉控制器离线或未绑定，禁止远程控制" description="请先检查设备绑定、启用状态和最后心跳。" type="error" show-icon :closable="false" />
+  <el-alert v-if="!controlOnline" title="灌溉控制器离线或未绑定，禁止远程控制" description="请先检查设备绑定状态和最后心跳。" type="error" show-icon :closable="false" />
         </div>
       </section>
 

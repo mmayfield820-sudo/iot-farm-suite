@@ -23,7 +23,8 @@ const routes = [
     redirect: '/farm/dashboard',
     children: [
       { path: 'dashboard', name: 'farm-dashboard', component: () => import('@/views/farmAdmin/Dashboard.vue'), meta: { title: '多地块总览' } },
-      { path: 'control', name: 'farm-control', component: () => import('@/views/farmAdmin/DeviceControl.vue'), meta: { title: '设备控制' } },
+      { path: 'status', name: 'farm-status', component: () => import('@/views/farmAdmin/DeviceControl.vue'), meta: { title: '设备状态' } },
+      { path: 'control', redirect: '/farm/status' },
       { path: 'devices', name: 'farm-devices', component: () => import('@/views/farmAdmin/Devices.vue'), meta: { title: '设备管理' } },
       { path: 'alerts', name: 'farm-alerts', component: () => import('@/views/farmAdmin/Alerts.vue'), meta: { title: '告警日志' } },
     ],

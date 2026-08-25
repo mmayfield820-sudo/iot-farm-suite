@@ -82,7 +82,7 @@
             class="plot-item" 
             shadow="hover"
             :style="{ borderLeft: '5px solid ' + getStatusConfig(plot.status).color }"
-            @click="goToControl(plot)"
+            @click="goToStatus(plot)"
           >
             <div class="plot-header">
               <div class="plot-title">
@@ -146,7 +146,6 @@ import { getStatusConfig, getHumidityStatus } from '@/utils/farmAdminStatus'
 import { mockPlots } from '@/mock/farmAdminData'
 import { ElMessage } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
-import { getPlotDetail } from '@/api/plot'
 import { normalizePlot } from '@/utils/dataAdapters'
 
 const router = useRouter()
@@ -158,20 +157,20 @@ const isMock = import.meta.env.VITE_USE_MOCK === 'true'
 
 onMounted(async () => {
   try {
-    const farmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const scopedFarmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
     if (isMock) {
+      const farmIds = scopedFarmIds.length ? scopedFarmIds : [...new Set(mockPlots.map((plot) => String(plot.farmId)))]
       plotStore.setPlots(mockPlots.filter((plot) => farmIds.includes(String(plot.farmId))))
       return
     }
     await platformStore.loadData()
+    const farmIds = scopedFarmIds.length ? scopedFarmIds : platformStore.farms.map((farm) => String(farm.farmId))
     const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
-    const details = await Promise.allSettled(basePlots.map((plot) => getPlotDetail(plot.plotNo)))
-    plotStore.setPlots(basePlots.map((base, index) => {
-      const detail = details[index].status === 'fulfilled' ? (details[index].value?.data || details[index].value) : {}
+    plotStore.setPlots(basePlots.map((base) => {
       const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
       const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
       const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
-      return normalizePlot({ ...base, ...detail, plotId: base.plotNo }, { devices, alerts, farm })
+      return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
     }))
   } catch (error) {
     ElMessage.error(error.message || '农场数据加载失败')
@@ -189,12 +188,12 @@ const getHumidityColor = (humidity, threshold) => {
   return colors[status]
 }
 
-const goToControl = (plot) => {
+const goToStatus = (plot) => {
   if (!plot.deviceOnline) {
     ElMessage.warning(`${plot.plotName} 设备离线，请先检查设备状态`)
   }
   router.push({
-    path: '/farm/control',
+    path: '/farm/status',
     query: { plotId: plot.plotId }
   })
 }

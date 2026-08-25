@@ -21,7 +21,8 @@ const notificationTarget = computed(() => userStore.role === 'farmer' ? '/farmer
 const notificationCount = computed(() => {
   if (userStore.role === 'farmer') return farmerStore.unhandledCount
   if (userStore.role === 'farmAdmin') {
-    const farmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const farmIds = scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
     const plotIds = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId))).map((plot) => String(plot.plotNo))
     return platformStore.alerts.filter((alert) => alert.status === '未处理' && plotIds.includes(String(alert.plotNo || alert.plotId))).length
   }

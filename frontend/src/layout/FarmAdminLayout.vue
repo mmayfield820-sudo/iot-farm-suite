@@ -9,11 +9,14 @@ const userStore = useUserStore()
 onMounted(() => platformStore.loadData().catch(() => ElMessage.error(platformStore.loadError || '农场数据加载失败')))
 const menu = [
   { label: '多地块总览', path: '/farm/dashboard', icon: 'DataLine' },
-  { label: '设备控制', path: '/farm/control', icon: 'SwitchButton' },
+  { label: '设备状态', path: '/farm/status', icon: 'Monitor' },
   { label: '设备管理', path: '/farm/devices', icon: 'Cpu' },
   { label: '告警日志', path: '/farm/alerts', icon: 'Bell' },
 ]
-const farmIds = computed(() => (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String))
+const farmIds = computed(() => {
+  const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+  return scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
+})
 const contextLabel = computed(() => {
   const farms = platformStore.farms.filter((farm) => farmIds.value.includes(String(farm.farmId)))
   return farms.length === 1 ? farms[0].farmName || farms[0].name : `已授权 ${farms.length || farmIds.value.length} 个农场`

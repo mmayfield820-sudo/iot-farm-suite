@@ -38,9 +38,12 @@ button, input { font: inherit; }
 .section-head p { margin: 0; color: #87968f; font-size: var(--app-font-small); }
 .plot-select { width: 210px; }
 .filter-control { min-width: 280px; padding: 10px 12px; border: 1px solid #b9d9ca; border-radius: 14px; background: linear-gradient(135deg, #f5fbf8, #fff); box-shadow: 0 7px 18px rgba(31,122,91,.1); }
+.filter-control.plot-filter { padding: 0; border: 0; background: transparent; box-shadow: none; }
 .filter-control .filter-label { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; color: #287b5d; font-size: 12px; font-weight: 700; }
 .filter-control .plot-select { width: 100%; }
-.filter-control .plot-select .el-select__wrapper { min-height: 42px; border-radius: 10px; box-shadow: 0 0 0 1px #9ecdb8 inset !important; }
+.filter-control.plot-filter .plot-select .el-select__wrapper { min-height: 46px; border-radius: 11px; background: rgba(255,255,255,.42); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px rgba(91,170,137,.5) inset !important; transition: background .2s ease, box-shadow .2s ease; }
+.filter-control.plot-filter .plot-select .el-select__wrapper:hover { background: rgba(255,255,255,.56); box-shadow: 0 0 0 1px rgba(57,145,109,.68) inset !important; }
+.filter-control.plot-filter .plot-select .el-select__wrapper.is-focused { background: rgba(255,255,255,.64); box-shadow: 0 0 0 1px #2f8b68 inset !important; }
 .filter-control .plot-select .el-select__selected-item { color: #244b3d; font-weight: 700; }
 .data-freshness { display: inline-flex; align-items: center; gap: 6px; color: #2d8962; font-size: var(--app-font-small); }
 .data-freshness::before { width: 7px; height: 7px; content: ''; border-radius: 50%; background: #35a273; box-shadow: 0 0 0 4px #e4f5ec; }

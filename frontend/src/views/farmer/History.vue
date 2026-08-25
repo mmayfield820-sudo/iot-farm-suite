@@ -38,7 +38,7 @@ const devices = computed(() => {
   if (!plot.value) return []
   if (plot.value.deviceList?.length) return plot.value.deviceList.map((device) => ({
     ...device,
-    status: device.online ? (device.type.includes('灌溉') && plot.value.irrigating ? '运行中' : '在线') : device.active ? '离线' : '停用',
+      status: device.online ? (device.type.includes('灌溉') && plot.value.irrigating ? '运行中' : '在线') : '离线',
     last: device.lastHeartbeat || '-',
     data: device.type.includes('温度') ? `${plot.value.temperature}℃` : device.type.includes('湿度') ? `${plot.value.humidity}%` : plot.value.irrigating ? '灌溉中' : '已关闭',
   }))
@@ -51,9 +51,9 @@ const devices = computed(() => {
 
 <template>
   <div class="farmer-page">
-    <div class="page-head history-tools">
-      <div class="page-actions range-filter">
-        <span class="filter-label"><el-icon><Calendar /></el-icon> 数据范围</span>
+    <section class="content-panel chart-panel">
+      <div class="section-head chart-head">
+        <div class="chart-title"><h3>{{ plot?.plotName }} 温湿度变化</h3><p>图中同时展示湿度阈值线和灌溉事件标记</p></div>
         <div class="range-fields">
           <el-radio-group v-model="period">
             <el-radio-button value="24h">近24小时</el-radio-button>
@@ -62,12 +62,6 @@ const devices = computed(() => {
           </el-radio-group>
           <el-date-picker v-if="period === 'custom'" v-model="dateRange" type="datetimerange" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
         </div>
-      </div>
-    </div>
-
-    <section class="content-panel chart-panel">
-      <div class="section-head">
-        <div><h3>{{ plot?.plotName }} 温湿度变化</h3><p>图中同时展示湿度阈值线和灌溉事件标记</p></div>
         <div class="legend-notes"><span><i class="threshold"></i>湿度阈值 {{ plot?.threshold }}%</span><span><i class="irrigation"></i>灌溉事件</span></div>
       </div>
       <TrendChart v-if="trend.times?.length" :data="trend" :height="380" />
@@ -109,5 +103,5 @@ const devices = computed(() => {
 </template>
 
 <style scoped>
-.history-tools{justify-content:flex-end;margin:18px 0 14px}.range-filter{display:block;padding:10px 12px;border:1px solid #b9d9ca;border-radius:14px;background:linear-gradient(135deg,#f5fbf8,#fff);box-shadow:0 7px 18px rgba(31,122,91,.1)}.filter-label{display:flex;align-items:center;gap:6px;margin-bottom:7px;color:#287b5d;font-size:12px;font-weight:700}.range-fields{display:flex;align-items:center;gap:10px}.range-filter :deep(.el-radio-button__inner){min-height:38px;display:flex;align-items:center;font-weight:600}.range-filter :deep(.el-radio-button__original-radio:checked+.el-radio-button__inner){background:#277e5b;border-color:#277e5b;box-shadow:-1px 0 0 0 #277e5b}.chart-panel{margin:4px 0 18px}.device-panel{margin-top:18px}.legend-notes{display:flex;gap:14px;color:#7d8d87;font-size:11px}.legend-notes span{display:flex;align-items:center;gap:5px}.legend-notes i{width:18px;height:2px;display:inline-block}.legend-notes .threshold{border-top:2px dashed #e49b4d}.legend-notes .irrigation{background:#2879a8}.effect-grid{margin-top:0}@media(max-width:900px){.history-tools{justify-content:flex-start}.page-actions{justify-content:flex-start}.range-filter{width:100%}.range-fields{align-items:stretch;flex-direction:column}.legend-notes{display:none}}
+.chart-head{display:grid;grid-template-columns:minmax(220px,1fr) auto minmax(220px,1fr);align-items:start}.chart-title{justify-self:start}.range-fields{display:flex;align-items:center;justify-self:center;gap:10px}.range-fields :deep(.el-radio-button__inner){min-height:38px;display:flex;align-items:center;font-weight:600}.range-fields :deep(.el-radio-button__original-radio:checked+.el-radio-button__inner){background:#277e5b;border-color:#277e5b;box-shadow:-1px 0 0 0 #277e5b}.chart-panel{margin:18px 0}.device-panel{margin-top:18px}.legend-notes{display:flex;justify-self:end;gap:14px;padding-top:8px;color:#7d8d87;font-size:11px}.legend-notes span{display:flex;align-items:center;gap:5px}.legend-notes i{width:18px;height:2px;display:inline-block}.legend-notes .threshold{border-top:2px dashed #e49b4d}.legend-notes .irrigation{background:#2879a8}.effect-grid{margin-top:0}@media(max-width:1100px){.chart-head{grid-template-columns:1fr auto}.chart-title{grid-column:1}.range-fields{grid-column:2;justify-self:end}.legend-notes{grid-column:1/-1;grid-row:2;justify-self:end}}@media(max-width:900px){.chart-head{display:flex;align-items:flex-start;flex-direction:column}.range-fields{width:100%;align-items:stretch;flex-direction:column}.legend-notes{display:none}}
 </style>

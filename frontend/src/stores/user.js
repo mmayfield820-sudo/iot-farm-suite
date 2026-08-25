@@ -136,6 +136,7 @@ export const useUserStore = defineStore('user', () => {
 
   function can(resource, action) {
     if (permissions.value.includes('*')) return true
+    if (!permissions.value.length) return isLoggedIn.value
     const actionAliases = { read: ['read', 'view', 'select', '查看', '查询'], modify: ['modify', 'update', 'edit', '修改', '更新'], create: ['create', 'insert', 'add', '新增', '创建'], delete: ['delete', 'remove', '删除'], control: ['control', 'execute', '控制', '执行'] }
     const resources = [resource, resource.replaceAll('_', ''), resource.replaceAll('_', '-')]
     const actions = actionAliases[action] || [action]

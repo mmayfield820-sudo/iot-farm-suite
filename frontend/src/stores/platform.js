@@ -1,16 +1,16 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { initialSystemParams, platformAlerts, platformAuditLogs, platformDevices, platformFarms, platformPlots, platformUsers } from '@/mock/platformData'
-import { getAlertList, resolveAlert } from '@/api/alert'
-import { getPlotList } from '@/api/plot'
-import { bindDevice as bindDeviceApi, createDevice, getAllDevices, getFarmList, getUserList, resetUserPassword, saveUser as saveUserApi, updateDeviceActive, updateUserActive } from '@/api/platform'
-import { normalizeAlert, normalizeDevice, normalizeFarm, normalizeId, unwrapList } from '@/utils/dataAdapters'
+import { acknowledgeAlert } from '@/api/alert'
+import { bindDevice as bindDeviceApi, createDevice, getAllDevices, getFarmList, getFarmOverview, getUserList, resetUserPassword, saveUser as saveUserApi, unbindDevice as unbindDeviceApi, updateUserActive } from '@/api/platform'
+import { normalizeAlert, normalizeDevice, normalizeFarm, normalizeId, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
 const timeText = () => new Date().toLocaleString('zh-CN', { hour12: false })
 const roleLabel = { farmer: '农户', farmAdmin: '农场管理员', farm_admin: '农场管理员', systemAdmin: '系统管理员', system_admin: '系统管理员' }
 const roleCode = { 农户: 'farmer', 农场管理员: 'farm_admin', 系统管理员: 'system_admin', farmer: 'farmer', farmAdmin: 'farm_admin', systemAdmin: 'system_admin' }
+const deviceTypeCode = { 温度传感器: 'temperature', 湿度传感器: 'humidity', 灌溉设备: 'irrigation' }
 const asArray = (value) => Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map((item) => item.trim()).filter(Boolean) : []
 
 const normalizePlatformPlot = (row = {}) => ({
@@ -67,11 +67,19 @@ export const usePlatformStore = defineStore('platform', () => {
     if (isMock) { initialized.value = true; return }
     loading.value = true; loadError.value = ''
     try {
-      const results = await Promise.allSettled([getFarmList(), getPlotList(), getAllDevices(), getUserList(), getAlertList()])
-      if (results.every((result) => result.status === 'rejected')) throw results[0].reason
-      const [farmResult, plotResult, deviceResult, userResult, alertResult] = results
-      if (farmResult.status === 'fulfilled') farms.value = unwrapList(farmResult.value).map(normalizeFarm)
-      if (plotResult.status === 'fulfilled') plots.value = unwrapList(plotResult.value).map(normalizePlatformPlot)
+      const farmResponse = await getFarmList()
+      farms.value = unwrapList(farmResponse).map(normalizeFarm)
+      const results = await Promise.allSettled([Promise.allSettled(farms.value.map((farm) => getFarmOverview(farm.farmId))), getAllDevices(), getUserList(), getAlertList()])
+      const [overviewResult, deviceResult, userResult, alertResult] = results
+      if (overviewResult.status === 'fulfilled') {
+        plots.value = overviewResult.value.flatMap((result, index) => unwrapList(result.status === 'fulfilled' ? result.value : []).map((overview) => {
+          const base = normalizePlatformPlot(overview.plot || {})
+          const normalized = normalizePlot({ ...(overview.plot || {}), farmName: farms.value[index]?.name }, {
+            farm: farms.value[index], report: overviewMetricsToReport(overview.latestMetrics, base.plotNo), devices: overview.devices || [],
+          })
+          return { ...base, ...normalized, plotNo: normalized.plotId, name: normalized.plotName }
+        }))
+      }
       if (deviceResult.status === 'fulfilled') devices.value = unwrapList(deviceResult.value).map(normalizeDevice).map((device) => {
         const plot = plots.value.find((item) => item.plotNo === device.plotId)
         return { ...device, farmId: plot?.farmId || '' }
@@ -89,7 +97,7 @@ export const usePlatformStore = defineStore('platform', () => {
   function log(user, module, action, result = '成功') { auditLogs.value.unshift({ id: `LOG${Date.now()}`, time: timeText(), user, module, action, result, ip: '-' }) }
   async function addDevice(data) {
     if (!isMock) {
-      const response = await createDevice({ plot_id: data.plotNo || null, device_code: data.deviceNo, device_type: data.type, active: true })
+      const response = await createDevice({ deviceNo: data.deviceNo, mqttDeviceId: data.mqttDeviceId, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
       devices.value.unshift(normalizeDevice(response?.data || response)); return
     }
     const next = String(Math.max(0, ...devices.value.map((item) => Number(String(item.id).replace(/\D/g, '')) || 0)) + 1).padStart(3, '0')
@@ -97,13 +105,13 @@ export const usePlatformStore = defineStore('platform', () => {
   }
   async function bindDevice(deviceId, plotNo) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
-    if (!isMock) await bindDeviceApi(deviceId, { plot_id: plotNo })
-    const old = device.plotNo || device.plotId || '未绑定'; device.plotNo = plotNo; device.plotId = plotNo; device.status = '在线'; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
+    if (!isMock) await bindDeviceApi(deviceId, plotNo)
+    const old = device.plotNo || device.plotId || '未绑定'; device.plotNo = plotNo; device.plotId = plotNo; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
   }
-  async function unbindDevice(deviceId, disable = true) {
+  async function unbindDevice(deviceId) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
-    if (!isMock) { await bindDeviceApi(deviceId, { plot_id: null }); if (disable) await updateDeviceActive(deviceId, false) }
-    const old = device.plotNo || device.plotId; device.plotNo = ''; device.plotId = ''; if (disable) device.status = '停用'; log('当前用户', '设备绑定', `${deviceId} 从 ${old} 解绑${disable ? '并停用' : ''}`)
+    if (!isMock) await unbindDeviceApi(deviceId)
+    const old = device.plotNo || device.plotId; device.plotNo = ''; device.plotId = ''; log('当前用户', '设备绑定', `${deviceId} 从 ${old} 解绑`)
   }
   async function toggleUser(userId) {
     const user = users.value.find((item) => normalizeId(item.id) === normalizeId(userId)); if (!user) return
@@ -113,7 +121,7 @@ export const usePlatformStore = defineStore('platform', () => {
   async function resetPassword(userId) { if (!isMock) await resetUserPassword(userId); log('当前用户', '用户管理', `重置账号 ${userId} 密码`) }
   async function saveUser(data) {
     if (!isMock) {
-      const payload = { username: data.username, email: data.email, phone: data.phone, active: data.status !== '禁用', role_codes: data.roles.map((item) => roleCode[item] || item), farm_ids: Array.isArray(data.farmScope) ? data.farmScope : String(data.farmScope || '').split(',').map((item) => item.trim()).filter(Boolean), plot_ids: Array.isArray(data.plotScope) ? data.plotScope : String(data.plotScope || '').split(',').map((item) => item.trim()).filter(Boolean) }
+      const payload = { username: data.username, name: data.name, email: data.email, phone: data.phone, active: data.status !== '禁用', role_codes: data.roles.map((item) => roleCode[item] || item), farm_ids: Array.isArray(data.farmScope) ? data.farmScope : String(data.farmScope || '').split(',').map((item) => item.trim()).filter(Boolean), plot_ids: Array.isArray(data.plotScope) ? data.plotScope : String(data.plotScope || '').split(',').map((item) => item.trim()).filter(Boolean) }
       const response = await saveUserApi(data.id, payload); const saved = normalizePlatformUser(response?.data || response)
       const index = users.value.findIndex((item) => item.id === saved.id); if (index >= 0) users.value[index] = saved; else users.value.unshift(saved); return
     }
@@ -124,8 +132,8 @@ export const usePlatformStore = defineStore('platform', () => {
   function saveParams(next) { Object.assign(params.value, next); log('当前用户', '系统参数', '更新运行参数') }
   async function handleAlert(alertId) {
     const alert = alerts.value.find((item) => normalizeId(item.id) === normalizeId(alertId)); if (!alert) return
-    if (!isMock) await resolveAlert(alertId)
-    alert.status = '已处理'; alert.handledAt = timeText(); alert.process ||= []; alert.process.push(`${timeText()} 标记已处理`); log('当前用户', '全局告警', `处理告警 ${alertId}`)
+    if (!isMock) await acknowledgeAlert(alertId)
+    alert.status = '处理中'; alert.handledAt = timeText(); alert.process ||= []; alert.process.push(`${timeText()} 确认告警`); log('当前用户', '全局告警', `确认告警 ${alertId}`)
   }
 
   return { farms, plots, devices, users, alerts, auditLogs, params, loading, initialized, loadError, capabilities, onlineDevices, offlineDevices, unhandledAlerts, commandSuccessRate, loadData, addDevice, bindDevice, unbindDevice, toggleUser, resetPassword, saveUser, saveParams, handleAlert }

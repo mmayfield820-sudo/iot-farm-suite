@@ -108,9 +108,8 @@
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="scope">
             <div class="action-row">
-              <el-button v-if="scope.row.status === '未处理'" type="primary" plain size="small" @click="handleConfirm(scope.row)"><el-icon><Check /></el-icon>确认</el-button>
-              <el-button v-if="scope.row.status === '未处理' || scope.row.status === '处理中'" type="success" plain size="small" @click="handleResolve(scope.row)"><el-icon><CircleCheck /></el-icon>标记已处理</el-button>
-              <el-button v-if="scope.row.status === '已处理' || scope.row.status === '已忽略'" type="info" plain size="small" disabled><el-icon><SuccessFilled /></el-icon>已完成</el-button>
+                <el-button v-if="scope.row.status === '未处理'" type="primary" plain size="small" @click="handleConfirm(scope.row)"><el-icon><Check /></el-icon>确认告警</el-button>
+                <el-button v-if="scope.row.status !== '未处理'" type="info" plain size="small" disabled><el-icon><SuccessFilled /></el-icon>{{ scope.row.status }}</el-button>
               <el-button type="primary" link size="small" @click="showDetail(scope.row)">详情</el-button>
             </div>
           </template>
@@ -165,7 +164,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { normalizeAlert, parseDate } from '@/utils/dataAdapters'
 import { usePlatformStore } from '@/stores/platform'
-import { confirmAlert as confirmAlertApi, resolveAlert as resolveAlertApi } from '@/api/alert'
+import { acknowledgeAlert } from '@/api/alert'
 
 const loading = ref(false)
 const alertList = ref([])
@@ -194,7 +193,8 @@ async function loadAlerts(force = false) {
   loading.value = true
   try {
     await platformStore.loadData(force)
-    const farmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const farmIds = scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
     const plotIds = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId))).map((plot) => String(plot.plotNo))
     alertList.value = platformStore.alerts.filter((alert) => plotIds.includes(String(alert.plotId || alert.plotNo))).map((alert) => {
       const normalized = normalizeAlert(alert)
@@ -269,23 +269,10 @@ const handleConfirm = (alert) => {
     '确认告警',
     { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
   ).then(async () => {
-    if (!isMock) await confirmAlertApi(alert.alertId)
+    if (!isMock) await acknowledgeAlert(alert.alertId)
     const idx = alertList.value.findIndex(a => a.alertId === alert.alertId)
     if (idx !== -1) alertList.value[idx].status = '处理中'
-    ElMessage.success('告警已进入处理中')
-  })
-}
-
-const handleResolve = (alert) => {
-  ElMessageBox.confirm(
-    `确认将告警 ${alert.alertId} 标记为已处理？`,
-    '标记已处理',
-    { confirmButtonText: '确认', cancelButtonText: '取消', type: 'success' }
-  ).then(async () => {
-    if (!isMock) await resolveAlertApi(alert.alertId)
-    const idx = alertList.value.findIndex(a => a.alertId === alert.alertId)
-    if (idx !== -1) alertList.value[idx].status = '已处理'
-    ElMessage.success('已标记为已处理')
+    ElMessage.success('告警已确认')
   })
 }
 
