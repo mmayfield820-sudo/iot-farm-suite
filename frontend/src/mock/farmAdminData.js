@@ -113,6 +113,28 @@ export const mockPlots = [
       irrigation: { deviceId: 'D015', deviceNo: 'SENSOR-015', online: false }
     },
     cropName: '试验作物'
+  },
+  {
+    plotId: 'P101',
+    plotName: '西区一号田',
+    farmId: 'F002',
+    farmName: '西区试验农场',
+    temperature: 29.3,
+    humidity: 24,
+    threshold: 32,
+    maxDuration: 50,
+    status: 'alert',
+    deviceOnline: true,
+    irrigating: false,
+    unhandledAlerts: 1,
+    updateTime: '2026-08-22 10:24:28',
+    deviceId: 'D103',
+    devices: {
+      temperature: { deviceId: 'D101', deviceNo: 'SENSOR-101', online: true },
+      humidity: { deviceId: 'D102', deviceNo: 'SENSOR-102', online: true },
+      irrigation: { deviceId: 'D103', deviceNo: 'VALVE-101', online: true }
+    },
+    cropName: '水稻'
   }
 ]
 
