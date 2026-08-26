@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+openai
+numpy
+requests
+
+# 教程 C3 向量库（build_vector_db.py 用）
+langchain
+langchain-community
+langchain-chroma
+langchain-text-splitters
+langchain-core
+chromadb
