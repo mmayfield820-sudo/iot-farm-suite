@@ -98,7 +98,7 @@ export const usePlatformStore = defineStore('platform', () => {
   async function addDevice(data) {
     if (!isMock) {
       const response = await createDevice({ deviceNo: data.deviceNo, mqttDeviceId: data.mqttDeviceId, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
-      devices.value.unshift(normalizeDevice(response?.data || response)); return
+      devices.value.unshift({ ...normalizeDevice(response?.data || response), farmId: data.farmId || '', plotNo: data.plotNo, plotId: data.plotNo }); return
     }
     const next = String(Math.max(0, ...devices.value.map((item) => Number(String(item.id).replace(/\D/g, '')) || 0)) + 1).padStart(3, '0')
     devices.value.unshift({ id: `D${next}`, ...data, status: '在线', lastHeartbeat: '-', latestValue: '-' }); log('当前用户', '设备管理', `录入设备 ${data.deviceNo}`)
@@ -106,7 +106,7 @@ export const usePlatformStore = defineStore('platform', () => {
   async function bindDevice(deviceId, plotNo) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
     if (!isMock) await bindDeviceApi(deviceId, plotNo)
-    const old = device.plotNo || device.plotId || '未绑定'; device.plotNo = plotNo; device.plotId = plotNo; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
+    const old = device.plotNo || device.plotId || '未绑定'; const plot = plots.value.find((item) => item.plotNo === plotNo); device.plotNo = plotNo; device.plotId = plotNo; device.farmId = plot?.farmId || device.farmId; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
   }
   async function unbindDevice(deviceId) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
