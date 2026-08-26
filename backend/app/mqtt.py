@@ -295,7 +295,7 @@ class MqttService:
         operator_id: int | None = None,
         activation_type: str = "manual",
     ) -> dict[str, Any]:
-        """Create a pending irrigation row, then publish the HarmonyOS command."""
+        """Publish an irrigation command and wait for the device ACK to settle it."""
         device_uuid = self._parse_device_uuid(device_uuid)
         switch = self._parse_switch(switch)
         if activation_type not in {"manual", "auto"}:

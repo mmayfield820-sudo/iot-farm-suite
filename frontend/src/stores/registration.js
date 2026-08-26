@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { approveRegistration, getRegistrationApplications, register as registerApi, rejectRegistration } from '@/api/auth'
-import { unwrapList } from '@/utils/dataAdapters'
+import { formatDateTime, unwrapList } from '@/utils/dataAdapters'
 
 const APPLICATION_KEY = 'smart-agriculture-registration-applications'
 const APPROVED_ACCOUNT_KEY = 'smart-agriculture-approved-accounts'
@@ -12,7 +12,19 @@ const readStorage = (key, fallback = []) => {
   catch { return fallback }
 }
 
-const nowText = () => new Date().toLocaleString('zh-CN', { hour12: false })
+const nowText = () => formatDateTime(new Date())
+const statusText = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }
+const normalizeApplication = (item) => ({
+  ...item,
+  id: String(item.id || item.applicationId || item.application_id),
+  roles: item.roles || item.roleCodes || item.role_codes || [],
+  plotIds: (item.plotIds || item.plot_ids || []).map(String),
+  farmIds: (item.farmIds || item.farm_ids || []).map(String),
+  status: statusText[item.status] || item.status || '待审核',
+  createdAt: item.createdAt || item.created_at || '',
+  reviewedAt: item.reviewedAt || item.reviewed_at || '',
+  rejectReason: item.rejectReason || item.reject_reason || '',
+})
 
 export const useRegistrationStore = defineStore('registration', () => {
   const applications = ref(isMock ? readStorage(APPLICATION_KEY) : [])
@@ -25,17 +37,7 @@ export const useRegistrationStore = defineStore('registration', () => {
   async function loadApplications() {
     if (isMock) return
     const response = await getRegistrationApplications()
-    applications.value = unwrapList(response).map((item) => ({
-      ...item,
-      id: String(item.id || item.applicationId || item.application_id),
-      roles: item.roles || item.roleCodes || item.role_codes || [],
-      plotIds: (item.plotIds || item.plot_ids || []).map(String),
-      farmIds: (item.farmIds || item.farm_ids || []).map(String),
-      status: item.status || '待审核',
-      createdAt: item.createdAt || item.created_at || '',
-      reviewedAt: item.reviewedAt || item.reviewed_at || '',
-      rejectReason: item.rejectReason || item.reject_reason || '',
-    }))
+    applications.value = unwrapList(response).map(normalizeApplication)
   }
 
   async function submitApplication(payload) {
@@ -64,7 +66,7 @@ export const useRegistrationStore = defineStore('registration', () => {
         plot_ids: payload.plotIds,
         farm_ids: payload.farmIds,
       })
-      application = { ...application, ...(response?.data || response), password: undefined }
+      application = { ...application, ...normalizeApplication(response?.data || response), password: undefined }
     }
     if (existing) Object.assign(existing, application)
     else applications.value.unshift(application)

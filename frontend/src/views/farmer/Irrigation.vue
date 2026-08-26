@@ -48,9 +48,17 @@ const commandDisabled = computed(() => {
 })
 
 const humidityAngle = computed(() => `${Math.min(100, Math.max(0, plot.value?.humidity || 0)) * 3.6}deg`)
-const progressSteps = ['指令下发', '设备接收', '执行反馈', '完成']
-const currentStep = computed(() => ({ idle: -1, sending: 0, executing: 1, success: 3, failed: 2 }[control.state] ?? -1))
-const progressLabel = computed(() => ({ idle: '等待操作', sending: '正在下发', executing: '设备执行中', success: '执行成功', failed: '执行失败' }[control.state]))
+const progressSteps = ['创建命令', '下发指令', '设备响应', '命令成功']
+const currentStep = computed(() => ({ idle: -1, sending: 1, executing: 2, success: 3, failed: 2 }[control.state] ?? -1))
+const commandSuccessLabel = computed(() => {
+  if (activeCommand.value?.action === 'irrigation_on') return '开启命令成功'
+  if (activeCommand.value?.action === 'irrigation_off') return '关闭命令成功'
+  return '命令执行成功'
+})
+const progressLabel = computed(() => {
+  if (control.state === 'success') return commandSuccessLabel.value
+  return { idle: '等待操作', sending: '正在下发指令', executing: '等待设备响应', failed: '命令执行失败' }[control.state]
+})
 
 function progressState(index) {
   if (control.state === 'failed' && index === currentStep.value) return 'error'
@@ -73,6 +81,7 @@ watch(
 
 async function execute(action) {
   const verb = action === 'open' ? '开启' : '关闭'
+  let commandCompleted = false
   if (!controlDevice.value) return ElMessage.error('当前地块未绑定灌溉控制器')
   if (!controlOnline.value) return ElMessage.error('灌溉控制器离线，禁止远程控制')
   try {
@@ -84,23 +93,29 @@ async function execute(action) {
     control.loading = true
     activeCommand.value = store.beginCommand(plot.value.plotId, action)
     control.state = 'sending'
-    control.message = `指令 ${activeCommand.value.commandId} 下发中，等待设备结果回传…`
-    await new Promise((resolve) => setTimeout(resolve, 650))
+    control.message = `正在下发${verb}灌溉指令…`
     control.state = 'executing'
-    control.message = '等待后端与设备返回执行结果…'
-      const response = await store.sendControl(activeCommand.value)
-    const result = ['success', '成功', 'accepted'].includes(response?.result || response?.status || 'success') ? 'success' : 'failed'
+    const submitted = await store.sendControl(activeCommand.value)
+    control.message = '指令已下发，正在等待设备响应…'
+    const response = await store.waitCommandResult(submitted.commandId)
+    const result = ['success', '成功'].includes(response?.result || response?.status) ? 'success' : response?.status === 'timeout' ? 'timeout' : 'failed'
     store.completeCommand(activeCommand.value.commandId, result, '手动')
-    if (result !== 'success') throw new Error(response?.message || '设备返回执行失败')
+    commandCompleted = true
+    if (result !== 'success') {
+      control.state = 'failed'
+      control.message = response?.message || (result === 'timeout' ? '设备未在规定时间内响应' : '设备未能执行该命令')
+      ElMessage.error(control.message)
+      return
+    }
     control.state = 'success'
-    control.message = `设备已确认，${verb}灌溉执行成功`
+    control.message = `${verb}命令已由设备确认执行`
     selectedAction.value = action === 'open' ? 'close' : 'open'
-    ElMessage.success(`${verb}灌溉成功`)
+    ElMessage.success(`${verb}命令执行成功`)
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      if (activeCommand.value) store.completeCommand(activeCommand.value.commandId, 'failed', '用户')
+      if (activeCommand.value && !commandCompleted) store.completeCommand(activeCommand.value.commandId, 'failed', '用户')
       control.state = 'failed'
-      control.message = '指令执行失败，请检查设备后重试'
+      control.message = error?.message || '命令执行失败，请稍后重试'
     }
   } finally {
     control.loading = false
@@ -180,7 +195,7 @@ async function execute(action) {
           </div>
 
           <div class="command-progress">
-            <div class="progress-head"><h4>指令执行状态</h4><span :class="['progress-result', control.state]"><el-icon v-if="control.state === 'success'"><CircleCheckFilled /></el-icon><el-icon v-else-if="control.state === 'failed'"><CircleCloseFilled /></el-icon>{{ progressLabel }}</span></div>
+            <div class="progress-head"><h4>灌溉指令状态</h4><span :class="['progress-result', control.state]"><el-icon v-if="control.state === 'success'"><CircleCheckFilled /></el-icon><el-icon v-else-if="control.state === 'failed'"><CircleCloseFilled /></el-icon>{{ progressLabel }}</span></div>
             <div class="progress-track">
               <div v-for="(item, index) in progressSteps" :key="item" :class="['progress-step', progressState(index)]">
                 <span class="progress-dot"><el-icon v-if="progressState(index) === 'done'"><Check /></el-icon><el-icon v-else-if="progressState(index) === 'error'"><Close /></el-icon></span>
@@ -194,7 +209,7 @@ async function execute(action) {
       </section>
 
       <section v-if="commandLogs.length" class="content-panel command-panel">
-        <div class="section-head"><div><h3>控制指令状态</h3><p>设备回传成功、失败或超时结果</p></div></div>
+        <div class="section-head"><div><h3>控制指令记录</h3><p>记录设备对开启或关闭命令的执行结果。</p></div></div>
         <el-table :data="commandLogs" class="compact-table">
           <el-table-column prop="commandId" label="指令编号" min-width="155" />
           <el-table-column prop="deviceId" label="设备编号" min-width="120" />

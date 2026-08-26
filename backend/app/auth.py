@@ -35,31 +35,33 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _role_for(connection: Any, user_id: int) -> str:
-    is_system_admin = connection.execute(
+def _role_codes_for(connection: Any, user_id: int) -> list[str]:
+    rows = connection.execute(
         text(
             """
-            SELECT 1
+            SELECT r.role_code
             FROM user_role_rel AS ur
             JOIN roles AS r ON r.role_id = ur.role_id
             WHERE ur.user_id = :user_id
               AND ur.status = 'active'
-              AND r.role_code = 'system_admin'
-            LIMIT 1
+            ORDER BY FIELD(r.role_code, 'system_admin', 'farm_admin', 'farmer')
             """
         ),
         {"user_id": user_id},
-    ).scalar()
-    if is_system_admin:
-        return "system_admin"
+    ).scalars().all()
+    return list(rows)
 
-    is_farm_admin = connection.execute(
+
+def _role_for(connection: Any, user_id: int) -> str:
+    roles = _role_codes_for(connection, user_id)
+    if roles:
+        return roles[0]
+    # Backward-compatible fallback before migration 006 has been applied.
+    if connection.execute(
         text("SELECT 1 FROM farm WHERE admin_user_id = :user_id LIMIT 1"),
         {"user_id": user_id},
-    ).scalar()
-    if is_farm_admin:
+    ).scalar():
         return "farm_admin"
-
     return "farmer"
 
 
@@ -83,6 +85,7 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
             "user_id": user["user_id"],
             "username": user["username"],
             "role": _role_for(connection, user["user_id"]),
+            "roles": _role_codes_for(connection, user["user_id"]),
         }
 
 
@@ -127,4 +130,5 @@ def current_user(
             "user_id": user["user_id"],
             "username": user["username"],
             "role": _role_for(connection, user["user_id"]),
+            "roles": _role_codes_for(connection, user["user_id"]),
         }

@@ -190,7 +190,7 @@
 | `switch` | 是 | 实际开关结果 | 与原指令核对 |
 | `name` | 否 | 模拟器设备显示名 | 仅日志，不作为身份依据 |
 
-收到 `result = ok` 时，更新 `irrigation_record.status = 'success'`、`executed_at = 收到 ACK 的时间`；`failed` 对应 `status = 'failed'` 并产生 `irrigation_failed` 告警。超过 `COMMAND_ACK_TIMEOUT_SECONDS`（当前默认 30 秒）仍为 `pending` 时，后端更新为 `timeout` 并产生同类告警。后端绝不能在发布 `sensor/cmd` 后直接标记成功。
+MQTT Broker 接受发布只表示指令已经送出，`irrigation_record` 保持 `pending`。后端收到匹配的 `sensor/ack` 后，才根据 `result` 更新为 `success` 或 `failed`；超过 `COMMAND_ACK_TIMEOUT_SECONDS` 未收到 ACK 则更新为 `timeout`。前端展示的“开启命令成功”或“关闭命令成功”对应设备 ACK 成功，不表示整次灌溉任务已经结束。
 
 ## 9. 信息流 G：查询与查询响应
 

@@ -95,7 +95,7 @@
           <div class="farm-heading">
 
             <div class="farm-type">
-              ORCHARD MONITOR
+              FIELD MONITOR
             </div>
 
             <h2>
@@ -269,7 +269,9 @@
 <script setup>
 
 import {
+  computed,
   ref,
+  watch,
   onMounted,
   onUnmounted
 } from 'vue'
@@ -299,76 +301,35 @@ import strawberryBg from '@/assets/crops/strawberry.png'
 const router = useRouter()
 
 
-/* =========================================================
-   当前测试数据
-========================================================= */
-
-const farms = ref([
-
-  {
-    id: 1,
-    name: '东区果园',
-    humidity: 45,
-    temperature: 26,
-    status: 'normal',
-    background: tomatoBg
+const props = defineProps({
+  plots: {
+    type: Array,
+    default: () => [],
   },
+})
 
-  {
-    id: 2,
-    name: '南区果园',
-    humidity: 21,
-    temperature: 34,
-    status: 'danger',
-    background: pepperBg
-  },
-
-  {
-    id: 3,
-    name: '北区果园',
-    humidity: 39,
-    temperature: 29,
-    status: 'watering',
-    background: waterSpinachBg
-  },
-
-  {
-    id: 4,
-    name: '西区果园',
-    humidity: 55,
-    temperature: 24,
-    status: 'normal',
-    background: cucumberBg
-  },
-
-  {
-    id: 5,
-    name: '中央果园',
-    humidity: 62,
-    temperature: 25,
-    status: 'normal',
-    background: lettuceBg
-  },
-
-  {
-    id: 6,
-    name: '北坡果园',
-    humidity: 48,
-    temperature: 27,
-    status: 'normal',
-    background: cornBg
-  },
-
-  {
-    id: 7,
-    name: '南坡果园',
-    humidity: 36,
-    temperature: 28,
-    status: 'watering',
-    background: strawberryBg
-  }
-
-])
+const cropBackgrounds = {
+  番茄: tomatoBg,
+  辣椒: pepperBg,
+  空心菜: waterSpinachBg,
+  黄瓜: cucumberBg,
+  生菜: lettuceBg,
+  玉米: cornBg,
+  草莓: strawberryBg,
+}
+const fallbackBackgrounds = Object.values(cropBackgrounds)
+const farms = computed(() => props.plots.map((plot, index) => ({
+  id: String(plot.plotId),
+  name: plot.plotName,
+  humidity: Number(plot.humidity ?? 0),
+  temperature: Number(plot.temperature ?? 0),
+  status: plot.irrigating || plot.status === 'irrigating'
+    ? 'watering'
+    : plot.status === 'alert' || !plot.deviceOnline
+      ? 'danger'
+      : 'normal',
+  background: cropBackgrounds[plot.cropName] || fallbackBackgrounds[index % fallbackBackgrounds.length],
+})))
 
 
 /* =========================================================
@@ -376,6 +337,10 @@ const farms = ref([
 ========================================================= */
 
 const currentIndex = ref(0)
+
+watch(farms, (items) => {
+  if (currentIndex.value >= items.length) currentIndex.value = 0
+}, { immediate: true })
 
 
 /* =========================================================

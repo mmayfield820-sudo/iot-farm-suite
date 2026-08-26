@@ -34,8 +34,10 @@ async function ask(text = input.value) {
       const response = await sendChatMessage(sessionId, { message: question, plotId: plot.value.plotId })
       const body = response?.data || response
       messages.value.push({ id: Date.now() + 1, role: 'assistant', text: body.answer || '智能体暂未返回有效内容。', evidence: body.sources || [] })
+      store.serviceStatus.assistant = true
     }
   } catch (error) {
+    store.serviceStatus.assistant = false
     messages.value.push({ id: Date.now() + 1, role: 'assistant', text: error.message || '智能体服务暂时不可用，请稍后重试。', evidence: [] })
   } finally {
     sending.value = false

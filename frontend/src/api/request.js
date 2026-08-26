@@ -19,7 +19,7 @@ request.interceptors.response.use(
       localStorage.removeItem('smart-agriculture-user')
       if (window.location.pathname !== '/login') window.location.assign('/login')
     }
-    const message = error.response?.data?.message || (error.code === 'ECONNABORTED' ? '请求超时，请检查网络后重试' : '请求失败，请稍后重试')
+    const message = error.response?.data?.message || error.response?.data?.detail || (error.code === 'ECONNABORTED' ? '请求超时，请检查网络后重试' : '请求失败，请稍后重试')
     error.message = message
     return Promise.reject(error)
   },

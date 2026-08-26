@@ -12,6 +12,7 @@ tags:
   - name: Telemetry
   - name: Commands
   - name: Alerts
+  - name: Irrigation
   - name: Chat
 paths:
   /auth/login:
@@ -33,6 +34,93 @@ paths:
                 $ref: '#/components/schemas/LoginResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Submit a registration application
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistrationRequest' }
+      responses: { '201': { description: Registration application created } }
+  /registration-resources:
+    get:
+      tags: [Auth]
+      summary: List public registration scope choices
+      responses: { '200': { description: Farms and plots available for registration } }
+  /registration-applications:
+    get:
+      tags: [Auth]
+      summary: List registration applications
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Registration applications } }
+  /registration-applications/{applicationId}/approve:
+    put:
+      tags: [Auth]
+      summary: Approve a registration application
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: applicationId, required: true, schema: { type: string, example: REG001 } }]
+      responses: { '200': { description: Approved registration application } }
+  /registration-applications/{applicationId}/reject:
+    put:
+      tags: [Auth]
+      summary: Reject a registration application
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: applicationId, required: true, schema: { type: string, example: REG001 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistrationRejection' }
+      responses: { '200': { description: Rejected registration application } }
+  /users:
+    get:
+      tags: [Auth]
+      summary: List platform users
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Users } }
+    post:
+      tags: [Auth]
+      summary: Create a platform user with a generated temporary password
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserSaveRequest' }
+      responses: { '201': { description: Created user } }
+  /users/{userId}:
+    put:
+      tags: [Auth]
+      summary: Update a platform user and their scopes
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: userId, required: true, schema: { type: string, example: U004 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserSaveRequest' }
+      responses: { '200': { description: Updated user } }
+  /users/{userId}/active:
+    put:
+      tags: [Auth]
+      summary: Enable or disable a platform user
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: userId, required: true, schema: { type: string, example: U004 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [active], properties: { active: { type: boolean } } }
+      responses: { '200': { description: Updated user } }
+  /users/{userId}/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset a user password and return a temporary password
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: userId, required: true, schema: { type: string, example: U004 } }]
+      responses: { '200': { description: Temporary password generated } }
   /farms:
     get:
       tags: [Farms]
@@ -194,6 +282,52 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/MetricPoint' }
+  /irrigation/records:
+    get:
+      tags: [Irrigation]
+      summary: List irrigation command records for a plot
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: plotId
+          required: true
+          schema: { type: string, example: P001 }
+      responses:
+        '200':
+          description: Irrigation records ordered from newest to oldest
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IrrigationRecord' }
+  /plots/{plotId}/irrigation-settings:
+    get:
+      tags: [Irrigation]
+      summary: Get plot irrigation settings
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses:
+        '200':
+          description: Current irrigation settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IrrigationSettings' }
+    put:
+      tags: [Irrigation]
+      summary: Update plot irrigation settings
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IrrigationSettingsUpdate' }
+      responses:
+        '200':
+          description: Saved irrigation settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IrrigationSettings' }
   /alerts:
     get:
       tags: [Alerts]
@@ -332,6 +466,47 @@ components:
         id: { type: string, example: U001 }
         username: { type: string }
         role: { type: string, enum: [farmer, farm_admin, system_admin] }
+    RegistrationRequest:
+      type: object
+      required: [username, password, real_name, role_codes]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+        real_name: { type: string }
+        email: { type: string, format: email, nullable: true }
+        phone: { type: string, nullable: true }
+        role_codes: { type: array, items: { type: string, enum: [farmer, farm_admin] } }
+        farm_ids: { type: array, items: { type: string, example: F001 } }
+        plot_ids: { type: array, items: { type: string, example: P001 } }
+    RegistrationRejection:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    RegistrationApplication:
+      type: object
+      properties:
+        id: { type: string, example: REG001 }
+        username: { type: string }
+        realName: { type: string }
+        roles: { type: array, items: { type: string } }
+        farmIds: { type: array, items: { type: string } }
+        plotIds: { type: array, items: { type: string } }
+        status: { type: string, enum: [pending, approved, rejected] }
+        createdAt: { type: string, format: date-time, description: UTC timestamp with a Z suffix }
+        reviewedAt: { type: string, format: date-time, nullable: true, description: UTC timestamp with a Z suffix }
+    UserSaveRequest:
+      type: object
+      required: [username, role_codes]
+      properties:
+        username: { type: string }
+        name: { type: string, nullable: true }
+        email: { type: string, format: email, nullable: true }
+        phone: { type: string, nullable: true }
+        active: { type: boolean }
+        role_codes: { type: array, items: { type: string, enum: [farmer, farm_admin, system_admin] } }
+        farm_ids: { type: array, items: { type: string } }
+        plot_ids: { type: array, items: { type: string } }
     Farm:
       type: object
       properties:
@@ -407,6 +582,31 @@ components:
         status: { type: string, enum: [pending, success, failed, timeout] }
         requestedAt: { type: string, format: date-time, description: UTC 时间，始终带 Z 后缀 }
         executedAt: { type: string, format: date-time, nullable: true, description: UTC 时间，始终带 Z 后缀 }
+    IrrigationSettingsUpdate:
+      type: object
+      required: [irrigationDuration, irrigationInterval]
+      properties:
+        irrigationDuration: { type: integer, minimum: 0, maximum: 1440 }
+        irrigationInterval: { type: integer, minimum: 0, maximum: 10080 }
+    IrrigationSettings:
+      allOf:
+        - $ref: '#/components/schemas/IrrigationSettingsUpdate'
+        - type: object
+          properties:
+            plotId: { type: string, example: P001 }
+            updatedAt: { type: string, format: date-time, nullable: true, description: UTC timestamp with a Z suffix }
+    IrrigationRecord:
+      type: object
+      properties:
+        recordId: { type: string, example: IR001 }
+        commandId: { type: string, nullable: true }
+        plotId: { type: string, example: P001 }
+        deviceId: { type: string, example: D003 }
+        action: { type: string, enum: [irrigation_on, irrigation_off] }
+        activationType: { type: string, enum: [manual, auto] }
+        status: { type: string, enum: [pending, success, failed, timeout] }
+        requestedAt: { type: string, format: date-time, description: UTC timestamp with a Z suffix }
+        executedAt: { type: string, format: date-time, nullable: true, description: UTC timestamp with a Z suffix }
     AlertRuleRequest:
       type: object
       required: [plotId, soilMoistureThreshold]

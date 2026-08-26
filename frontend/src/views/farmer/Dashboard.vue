@@ -88,7 +88,7 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
       </div>
     </section>
 
-    <FarmWheel />
+    <FarmWheel v-if="store.accessiblePlots.length" :plots="store.accessiblePlots" />
 
     <!--
     !<section class="content-panel plot-overview">

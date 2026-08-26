@@ -71,6 +71,18 @@ SET @plot2_id = (
   ORDER BY plot_id LIMIT 1
 );
 
+INSERT INTO plot (farmer_user_id, farm_id, plot_name, location, crop_name, description)
+SELECT @farmer_user_id, @farm_id, 'Plot 3', 'North Greenhouse', 'Lettuce', 'Development demo plot 3'
+WHERE NOT EXISTS (
+  SELECT 1 FROM plot WHERE farm_id = @farm_id AND plot_name = 'Plot 3'
+);
+
+SET @plot3_id = (
+  SELECT plot_id FROM plot
+  WHERE farm_id = @farm_id AND plot_name = 'Plot 3'
+  ORDER BY plot_id LIMIT 1
+);
+
 INSERT INTO device (device_code, device_uuid, device_type, plot_id, status)
 SELECT 'P001-TEMP', '3b8dcefd-3a51-4adc-b452-47c184c0951d', 'temperature', @plot_id, 'online'
 WHERE NOT EXISTS (SELECT 1 FROM device WHERE device_code = 'P001-TEMP');
@@ -98,19 +110,29 @@ UPDATE device SET plot_id = @plot_id, device_type = 'irrigation', status = 'offl
 WHERE device_id = @irrigation_device_id;
 
 INSERT INTO device (device_code, device_uuid, device_type, plot_id, status)
-SELECT 'P002-TEMP', '5b0a7464-a7db-449b-ae30-26063977c708', 'temperature', @plot2_id, 'offline'
+SELECT 'P002-TEMP', '77448f68-baa9-46f1-b380-d835d4e2dda6', 'temperature', @plot2_id, 'offline'
 WHERE NOT EXISTS (SELECT 1 FROM device WHERE device_code = 'P002-TEMP');
 INSERT INTO device (device_code, device_uuid, device_type, plot_id, status)
-SELECT 'P002-MOIST', 'f2ac7d43-6c0d-4fb3-9b1a-5404bc51299a', 'humidity', @plot2_id, 'offline'
+SELECT 'P002-MOIST', '8e52cfa5-9106-45c2-8645-2a26f9d0e554', 'humidity', @plot2_id, 'offline'
 WHERE NOT EXISTS (SELECT 1 FROM device WHERE device_code = 'P002-MOIST');
 INSERT INTO device (device_code, device_uuid, device_type, plot_id, status)
-SELECT 'P002-IRRIG', 'b4d49779-b744-4096-898a-433b2d231839', 'irrigation', @plot2_id, 'offline'
+SELECT 'P002-IRRIG', 'b0242636-5e56-4c0f-9b82-5a407e6e23ea', 'irrigation', @plot2_id, 'offline'
 WHERE NOT EXISTS (SELECT 1 FROM device WHERE device_code = 'P002-IRRIG');
 
 INSERT INTO threshold_config (
   plot_id, soil_moisture_threshold, irrigation_length, irrigation_interval, updated_by
 )
 VALUES (@plot2_id, 35.00, 60, 30, @admin_user_id)
+ON DUPLICATE KEY UPDATE
+  soil_moisture_threshold = VALUES(soil_moisture_threshold),
+  irrigation_length = VALUES(irrigation_length),
+  irrigation_interval = VALUES(irrigation_interval),
+  updated_by = VALUES(updated_by);
+
+INSERT INTO threshold_config (
+  plot_id, soil_moisture_threshold, irrigation_length, irrigation_interval, updated_by
+)
+VALUES (@plot3_id, 35.00, 60, 30, @admin_user_id)
 ON DUPLICATE KEY UPDATE
   soil_moisture_threshold = VALUES(soil_moisture_threshold),
   irrigation_length = VALUES(irrigation_length),
