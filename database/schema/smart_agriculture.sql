@@ -1,4 +1,4 @@
---mysql建库
+-- mysql建库
 
 CREATE DATABASE IF NOT EXISTS smart_agriculture
   DEFAULT CHARACTER SET utf8mb4
@@ -16,7 +16,7 @@ USE smart_agriculture;
 CREATE TABLE users (
     user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     username VARCHAR(50) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,    --加密之后的密码
+    password_hash VARCHAR(255) NOT NULL,    -- 加密之后的密码
     email VARCHAR(100) NOT NULL,
     phone VARCHAR(20) NULL,
     user_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
