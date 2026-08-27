@@ -9,7 +9,6 @@ export const platformPlots = [
   { internalId: 3, farmId: 'F001', plotNo: 'P003', name: '三号露地', crop: '空心菜', note: '生长期' },
   { internalId: 4, farmId: 'F001', plotNo: 'P004', name: '四号育苗区', crop: '番茄幼苗', note: '育苗期' },
   { internalId: 5, farmId: 'F001', plotNo: 'P005', name: '五号试验田', crop: '试验作物', note: '' },
-  { internalId: 101, farmId: 'F002', plotNo: 'P101', name: '西区一号田', crop: '水稻', note: '生长期' },
 ]
 
 export const platformDevices = [
@@ -22,9 +21,6 @@ export const platformDevices = [
   { id: 'D007', deviceNo: 'SENSOR-007', mqttId: 'device_007', type: '温度传感器', farmId: 'F001', plotNo: 'P003', status: '在线', lastHeartbeat: '2026-08-22 10:20:00', lastDataAt: '2026-08-22 10:02:00', latestValue: '30.1℃', msgId: 'M00680' },
   { id: 'D008', deviceNo: 'SENSOR-008', mqttId: 'device_008', type: '湿度传感器', farmId: 'F001', plotNo: 'P003', status: '异常', lastHeartbeat: '2026-08-22 10:20:00', lastDataAt: '2026-08-22 10:02:00', latestValue: '22%', msgId: 'M00677' },
   { id: 'D009', deviceNo: 'SENSOR-009', mqttId: 'device_009', type: '灌溉设备', farmId: 'F001', plotNo: '', status: '离线', lastHeartbeat: '2026-08-20 16:30:00', lastDataAt: '-', latestValue: '-', msgId: '-' },
-  { id: 'D101', deviceNo: 'SENSOR-101', mqttId: 'device_101', type: '温度传感器', farmId: 'F002', plotNo: 'P101', status: '在线', lastHeartbeat: '2026-08-22 10:24:30', lastDataAt: '2026-08-22 10:24:28', latestValue: '29.3℃', msgId: 'M10101' },
-  { id: 'D102', deviceNo: 'SENSOR-102', mqttId: 'device_102', type: '湿度传感器', farmId: 'F002', plotNo: 'P101', status: '在线', lastHeartbeat: '2026-08-22 10:24:30', lastDataAt: '2026-08-22 10:24:28', latestValue: '24%', msgId: 'M10102' },
-  { id: 'D103', deviceNo: 'VALVE-101', mqttId: 'device_103', type: '灌溉设备', farmId: 'F002', plotNo: 'P101', status: '在线', lastHeartbeat: '2026-08-22 10:24:29', lastDataAt: '-', latestValue: '关闭', msgId: 'M10103' },
 ]
 
 export const platformUsers = [

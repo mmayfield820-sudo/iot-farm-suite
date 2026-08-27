@@ -138,10 +138,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePlotStore } from '@/stores/plot'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
+import { useUserStore } from '@/stores/user'
 import { getStatusConfig, getHumidityStatus } from '@/utils/farmAdminStatus'
 import { mockPlots } from '@/mock/farmAdminData'
 import { ElMessage } from 'element-plus'
@@ -150,38 +150,31 @@ import { normalizePlot } from '@/utils/dataAdapters'
 
 const router = useRouter()
 const plotStore = usePlotStore()
-const farmAdminStore = useFarmAdminStore()
+const userStore = useUserStore()
 const platformStore = usePlatformStore()
 const filterStatus = ref('all')
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
 
-function syncPlots() {
-  const farmIds = farmAdminStore.selectedFarmIds
-  if (isMock) {
-    plotStore.setPlots(mockPlots.filter((plot) => farmIds.includes(String(plot.farmId))))
-    return
-  }
-  const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
-  plotStore.setPlots(basePlots.map((base) => {
-    const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
-    const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
-    const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
-    return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
-  }))
-}
-
 onMounted(async () => {
   try {
+    const scopedFarmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    if (isMock) {
+      const farmIds = scopedFarmIds.length ? scopedFarmIds : [...new Set(mockPlots.map((plot) => String(plot.farmId)))]
+      plotStore.setPlots(mockPlots.filter((plot) => farmIds.includes(String(plot.farmId))))
+      return
+    }
     await platformStore.loadData()
-    syncPlots()
+    const farmIds = scopedFarmIds.length ? scopedFarmIds : platformStore.farms.map((farm) => String(farm.farmId))
+    const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
+    plotStore.setPlots(basePlots.map((base) => {
+      const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
+      const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
+      const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
+      return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
+    }))
   } catch (error) {
     ElMessage.error(error.message || '农场数据加载失败')
   }
-})
-
-watch(() => farmAdminStore.selectedFarmIds.join('|'), () => {
-  filterStatus.value = 'all'
-  syncPlots()
 })
 
 const filteredPlots = computed(() => {

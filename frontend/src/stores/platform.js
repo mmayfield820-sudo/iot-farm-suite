@@ -1,13 +1,13 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { initialSystemParams, platformAlerts, platformAuditLogs, platformDevices, platformFarms, platformPlots, platformUsers } from '@/mock/platformData'
-import { acknowledgeAlert } from '@/api/alert'
+import { acknowledgeAlert, getAlertList } from '@/api/alert'
 import { bindDevice as bindDeviceApi, createDevice, getAllDevices, getFarmList, getFarmOverview, getUserList, resetUserPassword, saveUser as saveUserApi, unbindDevice as unbindDeviceApi, updateUserActive } from '@/api/platform'
-import { normalizeAlert, normalizeDevice, normalizeFarm, normalizeId, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
+import { formatDateTime, normalizeAlert, normalizeDevice, normalizeFarm, normalizeId, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
-const timeText = () => new Date().toLocaleString('zh-CN', { hour12: false })
+const timeText = () => formatDateTime(new Date())
 const roleLabel = { farmer: '农户', farmAdmin: '农场管理员', farm_admin: '农场管理员', systemAdmin: '系统管理员', system_admin: '系统管理员' }
 const roleCode = { 农户: 'farmer', 农场管理员: 'farm_admin', 系统管理员: 'system_admin', farmer: 'farmer', farmAdmin: 'farm_admin', systemAdmin: 'system_admin' }
 const deviceTypeCode = { 温度传感器: 'temperature', 湿度传感器: 'humidity', 灌溉设备: 'irrigation' }
@@ -97,8 +97,8 @@ export const usePlatformStore = defineStore('platform', () => {
   function log(user, module, action, result = '成功') { auditLogs.value.unshift({ id: `LOG${Date.now()}`, time: timeText(), user, module, action, result, ip: '-' }) }
   async function addDevice(data) {
     if (!isMock) {
-      const response = await createDevice({ deviceNo: data.deviceNo, mqttDeviceId: data.mqttDeviceId, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
-      devices.value.unshift({ ...normalizeDevice(response?.data || response), farmId: data.farmId || '', plotNo: data.plotNo, plotId: data.plotNo }); return
+      const response = await createDevice({ deviceNo: data.deviceNo, deviceUuid: data.deviceUuid, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
+      devices.value.unshift(normalizeDevice(response?.data || response)); return
     }
     const next = String(Math.max(0, ...devices.value.map((item) => Number(String(item.id).replace(/\D/g, '')) || 0)) + 1).padStart(3, '0')
     devices.value.unshift({ id: `D${next}`, ...data, status: '在线', lastHeartbeat: '-', latestValue: '-' }); log('当前用户', '设备管理', `录入设备 ${data.deviceNo}`)
@@ -106,7 +106,7 @@ export const usePlatformStore = defineStore('platform', () => {
   async function bindDevice(deviceId, plotNo) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
     if (!isMock) await bindDeviceApi(deviceId, plotNo)
-    const old = device.plotNo || device.plotId || '未绑定'; const plot = plots.value.find((item) => item.plotNo === plotNo); device.plotNo = plotNo; device.plotId = plotNo; device.farmId = plot?.farmId || device.farmId; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
+    const old = device.plotNo || device.plotId || '未绑定'; device.plotNo = plotNo; device.plotId = plotNo; log('当前用户', '设备绑定', `${deviceId} ${old} → ${plotNo}`)
   }
   async function unbindDevice(deviceId) {
     const device = devices.value.find((item) => normalizeId(item.id) === normalizeId(deviceId)); if (!device) return
@@ -118,12 +118,17 @@ export const usePlatformStore = defineStore('platform', () => {
     const active = user.status !== '正常'; if (!isMock) await updateUserActive(userId, active)
     user.status = active ? '正常' : '禁用'; log('当前用户', '用户管理', `${active ? '恢复' : '禁用'}账号 ${userId}`)
   }
-  async function resetPassword(userId) { if (!isMock) await resetUserPassword(userId); log('当前用户', '用户管理', `重置账号 ${userId} 密码`) }
+  async function resetPassword(userId) {
+    const response = !isMock ? await resetUserPassword(userId) : null
+    log('当前用户', '用户管理', `重置账号 ${userId} 密码`)
+    return response?.data || response
+  }
   async function saveUser(data) {
     if (!isMock) {
       const payload = { username: data.username, name: data.name, email: data.email, phone: data.phone, active: data.status !== '禁用', role_codes: data.roles.map((item) => roleCode[item] || item), farm_ids: Array.isArray(data.farmScope) ? data.farmScope : String(data.farmScope || '').split(',').map((item) => item.trim()).filter(Boolean), plot_ids: Array.isArray(data.plotScope) ? data.plotScope : String(data.plotScope || '').split(',').map((item) => item.trim()).filter(Boolean) }
-      const response = await saveUserApi(data.id, payload); const saved = normalizePlatformUser(response?.data || response)
-      const index = users.value.findIndex((item) => item.id === saved.id); if (index >= 0) users.value[index] = saved; else users.value.unshift(saved); return
+      const response = await saveUserApi(data.id, payload); const raw = response?.data || response; const saved = normalizePlatformUser(raw)
+      const index = users.value.findIndex((item) => item.id === saved.id); if (index >= 0) users.value[index] = saved; else users.value.unshift(saved)
+      return { user: saved, temporaryPassword: raw?.temporaryPassword }
     }
     const current = users.value.find((item) => item.id === data.id)
     if (current) Object.assign(current, data); else users.value.unshift({ ...data, id: `U${String(users.value.length + 1).padStart(3, '0')}`, lastLogin: '-', status: '正常' })

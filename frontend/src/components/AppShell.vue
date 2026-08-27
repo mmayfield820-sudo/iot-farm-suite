@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { ROLE_LABEL, useUserStore } from '@/stores/user'
 import { useFarmerStore } from '@/stores/farmer'
 import { usePlatformStore } from '@/stores/platform'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 const props = defineProps({ title: String, subtitle: String, menu: Array, contextLabel: { type: String, default: '一号示范农场' }, contextStatus: { type: String, default: '运行正常' }, contextStatusTone: { type: String, default: 'success' }, showContext: { type: Boolean, default: true }, hideContextPaths: { type: Array, default: () => [] }, accent: { type: String, default: '#1f7a5b' } })
@@ -13,7 +12,6 @@ const router = useRouter()
 const userStore = useUserStore()
 const farmerStore = useFarmerStore()
 const platformStore = usePlatformStore()
-const farmAdminStore = useFarmAdminStore()
 const collapsed = ref(false)
 const fontSize = ref(Number(localStorage.getItem('smart-farm-font-size')) || 14)
 const activePath = computed(() => route.path)
@@ -23,7 +21,10 @@ const notificationTarget = computed(() => userStore.role === 'farmer' ? '/farmer
 const notificationCount = computed(() => {
   if (userStore.role === 'farmer') return farmerStore.unhandledCount
   if (userStore.role === 'farmAdmin') {
-    return farmAdminStore.visibleAlerts.filter((alert) => alert.status === '未处理').length
+    const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const farmIds = scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
+    const plotIds = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId))).map((plot) => String(plot.plotNo))
+    return platformStore.alerts.filter((alert) => alert.status === '未处理' && plotIds.includes(String(alert.plotNo || alert.plotId))).length
   }
   return platformStore.unhandledAlerts
 })
@@ -65,7 +66,7 @@ function openNotifications() { router.push(notificationTarget.value) }
     </aside>
     <section class="workspace">
       <header class="topbar" :class="{ 'context-hidden': !contextVisible }">
-        <div v-if="contextVisible"><slot name="context"><span class="farm-dot"></span> {{ contextLabel }} <span :class="['online', contextStatusTone]">{{ contextStatus }}</span></slot></div>
+        <div v-if="contextVisible"><span class="farm-dot"></span> {{ contextLabel }} <span :class="['online', contextStatusTone]">{{ contextStatus }}</span></div>
         <div class="user-area">
           <el-popover placement="bottom" :width="284" trigger="click" popper-class="font-size-popover">
             <template #reference><button class="font-trigger" title="调节字体大小"><span class="font-small">A</span><span>A</span></button></template>

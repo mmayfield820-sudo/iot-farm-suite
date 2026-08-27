@@ -1,50 +1,36 @@
-# 后端
+# Python backend
 
-后端业务服务、数据库访问、MQTT 接入和 WebSocket 推送代码放在这里。接口以
-`../contracts/openapi.yaml` 为准，数据库结构以
-`../database/schema/smart_agriculture.sql` 为准。
+This service uses FastAPI, SQLAlchemy, PyMySQL, bcrypt, JWT, and Paho MQTT. It reads MySQL data, authenticates users, and consumes device messages from EMQX.
 
-## 当前状态
+## Local startup
 
-- 编程语言：Python
-- 数据库：MySQL，数据库由 SQL Workbench 管理
-- Python 数据库访问：SQLAlchemy + PyMySQL
-- 配置读取：python-dotenv
-- Web 框架：尚未确定
+From the project root:
 
-当前已经创建数据库连接基础层，但还没有连接 API、业务模块或启动服务器。
-
-## 目录结构
-
-```text
-backend/
-├── src/
-│   ├── config/
-│   │   └── settings.py          # 数据库和应用配置
-│   ├── database/
-│   │   ├── connection.py        # SQLAlchemy Engine 和 Session 工厂
-│   │   ├── models/              # 数据库模型
-│   │   └── repositories/        # 数据访问对象
-│   ├── modules/                 # auth、farm、device 等业务模块
-│   ├── mqtt/                    # MQTT 连接和消息处理
-│   └── websocket/               # 实时事件推送
-├── tests/                       # 后端单元测试和接口测试
-└── README.md
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r backend/requirements.txt
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8080
 ```
 
-详细说明见 [backend 目录与文件说明](目录与文件说明.md)。
+Set a non-default `JWT_SECRET` in `.env` before startup. The local demo users `demo_admin`, `demo_farmer`, and `demo_system` use the development password `DemoPass123!`.
 
-## 数据库连接配置
+## HTTP endpoints
 
-复制项目根目录的 `.env.example` 为 `.env`，填写 SQL Workbench 所连接的 MySQL 实例信息：
+- `GET /health` checks the service and MySQL.
+- `POST /api/auth/login` returns a JWT.
+- `GET /api/farms` lists farms in the current user scope.
+- `GET /api/farms/F001/overview` returns authorized plot summaries.
+- `GET /api/devices?plotId=P001` lists authorized devices.
 
-```text
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=smart_agriculture
+Other than health and login, requests need `Authorization: Bearer <token>`.
+
+## MQTT ingestion
+
+The service subscribes to `farm/telemetry/+`, `farm/status/+`, and `farm/command_result/+` when it starts. Telemetry is deduplicated by device and `msgId`; a `plot_report` is saved only after both humidity and temperature readings arrive within `TELEMETRY_PAIR_TIMEOUT_SECONDS`. An unpaired reading after that timeout creates a `device_fault` alert.
+
+Run one local telemetry cycle after starting the backend:
+
+```powershell
+.venv\Scripts\python.exe device-simulator/simulator.py --once
 ```
-
-连接 URL 会由程序安全地拼接，密码中的特殊字符不需要手动 URL 编码。`.env` 已被 Git 忽略，
-不要将真实密码提交到仓库。

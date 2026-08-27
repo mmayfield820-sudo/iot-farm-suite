@@ -27,8 +27,11 @@ export function parseDate(value) {
 export function formatDateTime(value, fallback = '-') {
   const date = parseDate(value)
   if (!date) return fallback
-  const pad = (number) => String(number).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {})
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`
 }
 
 export function isHeartbeatOnline(lastHeartbeat, offlineMinutes = 30) {
@@ -65,7 +68,7 @@ export function normalizeDevice(row = {}, options = {}) {
     plotId,
     plotNo: plotId,
     deviceNo: firstDefined(row.deviceNo, row.deviceCode, row.device_code, ''),
-    mqttDeviceId: firstDefined(row.mqttDeviceId, row.mqtt_device_id, row.mqttId, ''),
+    deviceUuid: firstDefined(row.deviceUuid, row.device_uuid, row.mqttDeviceId, row.mqtt_device_id, row.mqttId, ''),
     type,
     online: Boolean(online),
     status: online ? '在线' : '离线',
@@ -98,17 +101,18 @@ export function normalizeReport(row = {}) {
 }
 
 export function normalizeIrrigationRecord(row = {}) {
-  const startTime = firstDefined(row.startTime, row.start_time, '')
-  const endTime = firstDefined(row.endTime, row.end_time, '')
+  const startTime = firstDefined(row.startTime, row.start_time, row.requestedAt, row.requested_at, '')
+  const endTime = firstDefined(row.endTime, row.end_time, row.executedAt, row.executed_at, '')
   const start = parseDate(startTime)
   const end = parseDate(endTime)
-  const statusMap = { 执行中: '进行中' }
+  const statusMap = { pending: '待确认', success: '成功', failed: '失败', timeout: '超时', 执行中: '进行中' }
+  const actionMap = { irrigation_on: '开启', irrigation_off: '关闭', on: '开启', off: '关闭' }
   return {
     ...row,
     recordId: normalizeId(firstDefined(row.recordId, row.record_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
-    operationType: firstDefined(row.operationType, row.actionType, row.action_type, ''),
+    operationType: actionMap[firstDefined(row.operationType, row.action, row.actionType, row.action_type, '')] || firstDefined(row.operationType, row.action, row.actionType, row.action_type, ''),
     activationType: firstDefined(row.activationType, row.activation_type, row.source, '手动'),
     operatorId: normalizeId(firstDefined(row.operatorId, row.operator_id)),
     operator: firstDefined(row.operator, row.operatorName, row.operator_name, row.operatorUsername, '系统'),
@@ -123,20 +127,30 @@ export function normalizeIrrigationRecord(row = {}) {
 export function normalizeAlert(row = {}) {
   const statusMap = { active: '未处理', acknowledged: '处理中', recovered: '已处理', 已确认: '处理中', 已恢复: '已处理' }
   const rawType = firstDefined(row.type, row.metricType, row.metric_type, row.alertType, row.alert_type, '未知告警')
-  const typeMap = { humidity: '湿度过低', temperature: '温度异常' }
+  const typeMap = {
+    humidity: '湿度过低',
+    temperature: '温度异常',
+    low_moisture: '湿度过低',
+    device_offline: '设备离线',
+    device_fault: '设备故障',
+    irrigation_failed: '灌溉失败',
+  }
+  const occurTime = firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, '')
+  const handledAt = firstDefined(row.handledAt, row.handled_at, '')
   return {
     ...row,
     alertId: normalizeId(firstDefined(row.alertId, row.alert_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
+    typeCode: rawType,
     type: typeMap[rawType] || rawType,
     reason: firstDefined(row.reason, row.alertDescription, row.alert_description, '暂无告警说明'),
     value: firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-'),
     threshold: firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-'),
-    occurTime: firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, ''),
+    occurTime: formatDateTime(occurTime, ''),
     status: statusMap[row.status] || statusMap[row.alert_status] || firstDefined(row.status, row.alert_status, '未处理'),
     handledBy: normalizeId(firstDefined(row.handledBy, row.handled_by)),
-    handledAt: firstDefined(row.handledAt, row.handled_at, ''),
+    handledAt: formatDateTime(handledAt, ''),
   }
 }
 
@@ -153,6 +167,7 @@ export function normalizePlot(row = {}, related = {}) {
     irrigation: devices.find((item) => item.type.includes('灌溉')),
   }
   const activeIrrigation = irrigationRecords.find((item) => item.operationType === '开启' && item.status === '进行中')
+    || (irrigationRecords.find((item) => ['开启', '关闭'].includes(item.operationType) && item.status === '成功')?.operationType === '开启')
   const lastIrrigation = irrigationRecords.find((item) => item.operationType === '开启')
   const allOnline = devices.length > 0 && devices.every((item) => item.online)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.id))
@@ -166,7 +181,7 @@ export function normalizePlot(row = {}, related = {}) {
     farmName: firstDefined(row.farmName, row.farm_name, related.farm?.farmName, related.farm?.name, '未命名农场'),
     plotName: firstDefined(row.plotName, row.plot_name, row.name, `地块 ${plotId}`),
     location: firstDefined(row.location, ''),
-    cropName: firstDefined(row.cropName, row.crop_name, '暂未种植'),
+    cropName: firstDefined(row.cropName, row.crop_name, row.crop, '暂未种植'),
     cropStage: firstDefined(row.cropStage, row.crop_stage, row.description, '未填写生长阶段'),
     description: firstDefined(row.description, ''),
     active: Boolean(firstDefined(row.active, row.Active, true)),

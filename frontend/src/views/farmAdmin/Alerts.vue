@@ -158,17 +158,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ALERT_TYPE_CONFIG, ALERT_STATUS_CONFIG } from '@/utils/farmAdminStatus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
+import { useUserStore } from '@/stores/user'
 import { normalizeAlert, parseDate } from '@/utils/dataAdapters'
 import { usePlatformStore } from '@/stores/platform'
 import { acknowledgeAlert } from '@/api/alert'
 
 const loading = ref(false)
 const alertList = ref([])
-const farmAdminStore = useFarmAdminStore()
+const userStore = useUserStore()
 
 const filterForm = ref({
   type: '',
@@ -193,7 +193,9 @@ async function loadAlerts(force = false) {
   loading.value = true
   try {
     await platformStore.loadData(force)
-    const plotIds = farmAdminStore.visiblePlots.map((plot) => String(plot.plotNo))
+    const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+    const farmIds = scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
+    const plotIds = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId))).map((plot) => String(plot.plotNo))
     alertList.value = platformStore.alerts.filter((alert) => plotIds.includes(String(alert.plotId || alert.plotNo))).map((alert) => {
       const normalized = normalizeAlert(alert)
       return {
@@ -217,11 +219,6 @@ async function loadAlerts(force = false) {
 }
 
 onMounted(() => loadAlerts())
-
-watch(() => farmAdminStore.selectedFarmIds.join('|'), () => {
-  pagination.value.page = 1
-  loadAlerts()
-})
 
 const filteredAlerts = computed(() => {
   let result = alertList.value

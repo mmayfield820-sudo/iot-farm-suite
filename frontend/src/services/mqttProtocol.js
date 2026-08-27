@@ -1,14 +1,18 @@
 export const MQTT_TOPICS = {
-  telemetry: (deviceId) => `farm/telemetry/${deviceId}`,
-  status: (deviceId) => `farm/status/${deviceId}`,
-  command: (deviceId) => `farm/command/${deviceId}`,
-  commandResult: (deviceId) => `farm/command_result/${deviceId}`,
+  telemetry: (deviceId) => `sensor/${deviceId}/data`,
+  status: () => 'sensor/state',
+  command: () => 'sensor/cmd',
+  commandResult: () => 'sensor/ack',
 }
 
-export function buildControlCommand(deviceId, action, commandId = `CMD${Date.now()}`) {
+export function buildControlCommand(deviceId, action, commandId = Date.now()) {
+  const switchValue = action === 'open' ? 'on' : 'off'
+  const numericCommandId = Number(commandId)
+  const sequence = Number.isInteger(numericCommandId) ? numericCommandId : Date.now()
   return {
-    topic: MQTT_TOPICS.command(deviceId),
-    payload: { commandId, deviceId, action: action === 'open' ? 'irrigation_on' : 'irrigation_off', ts: new Date().toISOString() },
+    commandId: String(sequence),
+    topic: MQTT_TOPICS.command(),
+    payload: { seq: sequence, ts: Date.now(), deviceId, switch: switchValue },
   }
 }
 

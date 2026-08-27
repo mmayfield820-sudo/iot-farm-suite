@@ -1,12 +1,12 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
+import { useUserStore } from '@/stores/user'
 
 const DEVICE_TYPES = ['温度传感器', '湿度传感器', '灌溉设备']
 const store = usePlatformStore()
-const farmAdminStore = useFarmAdminStore()
+const userStore = useUserStore()
 const keyword = ref('')
 const status = ref('')
 const deviceType = ref('')
@@ -18,10 +18,14 @@ const importRows = ref([])
 const importFileName = ref('')
 const importing = ref(false)
 const current = ref(null)
-const form = reactive({ deviceNo: '', mqttDeviceId: '', type: '温度传感器', farmId: '', plotNo: '' })
+const form = reactive({ deviceNo: '', deviceUuid: '', type: '温度传感器', farmId: '', plotNo: '' })
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const farmIds = computed(() => farmAdminStore.selectedFarmIds)
-const currentFarmId = computed(() => farmAdminStore.selectedFarmId === farmAdminStore.ALL_FARMS ? farmIds.value[0] || '' : farmAdminStore.selectedFarmId)
+const farmIds = computed(() => {
+  const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+  return scoped.length ? scoped : store.farms.map((farm) => String(farm.farmId))
+})
+const currentFarmId = computed(() => farmIds.value[0] || '')
 const devices = computed(() => store.devices.filter((item) =>
   farmIds.value.includes(String(item.farmId)) &&
   (!keyword.value || `${item.id}${item.deviceNo}`.toLowerCase().includes(keyword.value.toLowerCase())) &&
@@ -34,27 +38,19 @@ const latestHeartbeat = computed(() => devices.value.map((item) => item.lastHear
 const validImportCount = computed(() => importRows.value.filter((item) => item.valid).length)
 let excelModule
 
-watch(() => farmAdminStore.selectedFarmId, () => {
-  keyword.value = ''
-  status.value = ''
-  deviceType.value = ''
-  dialog.value = false
-  bindDialog.value = false
-  importDialog.value = false
-})
-
 async function getExcelJS() {
   if (!excelModule) excelModule = (await import('exceljs')).default
   return excelModule
 }
 
 function add() {
-  Object.assign(form, { deviceNo: '', mqttDeviceId: '', type: '温度传感器', farmId: currentFarmId.value, plotNo: '' })
+  Object.assign(form, { deviceNo: '', deviceUuid: '', type: '温度传感器', farmId: currentFarmId.value, plotNo: '' })
   dialog.value = true
 }
 
 async function save() {
-  if (!form.deviceNo || !form.mqttDeviceId || !form.plotNo) return ElMessage.warning('请填写设备编号、MQTT 设备标识并选择所属地块')
+  if (!form.deviceNo || !form.deviceUuid || !form.plotNo) return ElMessage.warning('请填写设备编号、设备 UUID 并选择所属地块')
+  if (!UUID_PATTERN.test(form.deviceUuid)) return ElMessage.warning('设备 UUID 格式无效')
   const selectedPlot = store.plots.find((item) => item.plotNo === form.plotNo)
   form.farmId = selectedPlot?.farmId || currentFarmId.value
   try {
@@ -116,10 +112,10 @@ async function readExcel(event) {
     const headers = {}
     sheet.getRow(1).eachCell((cell, column) => { headers[String(cell.value || '').trim()] = column })
     const noColumn = headers['设备编号'] || headers.deviceNo
-    const mqttColumn = headers['MQTT设备标识'] || headers.mqttDeviceId
+    const uuidColumn = headers['设备 UUID'] || headers.deviceUuid
     const typeColumn = headers['设备类型'] || headers.type
     const plotColumn = headers['所属地块'] || headers.plotNo
-    if (!noColumn || !mqttColumn || !typeColumn) throw new Error('表头必须包含“设备编号”、“MQTT设备标识”和“设备类型”')
+    if (!noColumn || !uuidColumn || !typeColumn) throw new Error('表头必须包含“设备编号”、“设备 UUID”和“设备类型”')
 
     const existing = new Set(store.devices.map((item) => String(item.deviceNo).toUpperCase()))
     const seen = new Set()
@@ -127,20 +123,21 @@ async function readExcel(event) {
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return
       const deviceNo = cellText(row, noColumn)
-      const mqttDeviceId = cellText(row, mqttColumn)
+      const deviceUuid = cellText(row, uuidColumn)
       const type = cellText(row, typeColumn)
       const plotNo = plotColumn ? cellText(row, plotColumn) : ''
       if (!deviceNo && !type && !plotNo) return
       const errors = []
       if (!deviceNo) errors.push('设备编号为空')
-      if (!mqttDeviceId) errors.push('MQTT设备标识为空')
+      if (!deviceUuid) errors.push('设备 UUID 为空')
+      else if (!UUID_PATTERN.test(deviceUuid)) errors.push('设备 UUID 格式无效')
       if (!plotNo) errors.push('所属地块为空')
       if (!DEVICE_TYPES.includes(type)) errors.push('设备类型无效')
       if (plotNo && !plots.value.some((item) => item.plotNo === plotNo)) errors.push('所属地块不存在或无权限')
       if (existing.has(deviceNo.toUpperCase()) || seen.has(deviceNo.toUpperCase())) errors.push('设备编号重复')
       if (deviceNo) seen.add(deviceNo.toUpperCase())
       const plot = plots.value.find((item) => item.plotNo === plotNo)
-      rows.push({ rowNumber, deviceNo, mqttDeviceId, type, plotNo, farmId: plot?.farmId || currentFarmId.value, valid: !errors.length, error: errors.join('；') })
+      rows.push({ rowNumber, deviceNo, deviceUuid, type, plotNo, farmId: plot?.farmId || currentFarmId.value, valid: !errors.length, error: errors.join('；') })
     })
     importRows.value = rows
     importFileName.value = file.name
@@ -158,7 +155,7 @@ async function confirmImport() {
   let success = 0
   for (const row of rows) {
     try {
-      await store.addDevice({ deviceNo: row.deviceNo, mqttDeviceId: row.mqttDeviceId, type: row.type, plotNo: row.plotNo, farmId: row.farmId })
+      await store.addDevice({ deviceNo: row.deviceNo, deviceUuid: row.deviceUuid, type: row.type, plotNo: row.plotNo, farmId: row.farmId })
       success += 1
     } catch (error) {
       row.valid = false
@@ -176,11 +173,11 @@ async function downloadTemplate() {
   const sheet = workbook.addWorksheet('设备导入模板')
   sheet.columns = [
     { header: '设备编号', key: 'deviceNo', width: 22 },
-    { header: 'MQTT设备标识', key: 'mqttDeviceId', width: 24 },
+    { header: '设备 UUID', key: 'deviceUuid', width: 38 },
     { header: '设备类型', key: 'type', width: 20 },
     { header: '所属地块', key: 'plotNo', width: 18 },
   ]
-  sheet.addRow({ deviceNo: 'SENSOR-010', mqttDeviceId: 'device_010', type: '湿度传感器', plotNo: plots.value[0]?.plotNo || '' })
+  sheet.addRow({ deviceNo: 'SENSOR-010', deviceUuid: '123e4567-e89b-42d3-a456-426614174000', type: '湿度传感器', plotNo: plots.value[0]?.plotNo || '' })
   sheet.getRow(1).font = { bold: true }
   const blob = new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
@@ -228,15 +225,15 @@ async function downloadTemplate() {
 
     <section class="content-panel logs"><div class="section-head"><div><h3>设备操作记录</h3><p>记录设备录入、绑定、换绑和解绑操作</p></div></div><el-table :data="logs" class="compact-table"><el-table-column prop="time" label="时间" min-width="170"/><el-table-column prop="user" label="操作人" min-width="130"/><el-table-column prop="module" label="类型" width="110"/><el-table-column prop="action" label="操作内容" min-width="260"/><el-table-column prop="result" label="结果" width="90"/></el-table></section>
 
-    <el-dialog v-model="dialog" title="录入设备" width="520px"><el-form label-position="top"><el-form-item label="设备编号"><el-input v-model="form.deviceNo" placeholder="例如 SENSOR-010"/></el-form-item><el-form-item label="MQTT 设备标识"><el-input v-model="form.mqttDeviceId" placeholder="例如 device_010"/></el-form-item><el-form-item label="设备类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="item in DEVICE_TYPES" :key="item" :label="item" :value="item"/></el-select></el-form-item><el-form-item label="所属地块"><el-select v-model="form.plotNo" style="width:100%" placeholder="请选择所属地块"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.farmName || item.farmId} · ${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog>
+    <el-dialog v-model="dialog" title="录入设备" width="520px"><el-form label-position="top"><el-form-item label="设备编号"><el-input v-model="form.deviceNo" placeholder="例如 SENSOR-010"/></el-form-item><el-form-item label="设备 UUID"><el-input v-model="form.deviceUuid" placeholder="例如 123e4567-e89b-42d3-a456-426614174000"/></el-form-item><el-form-item label="设备类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="item in DEVICE_TYPES" :key="item" :label="item" :value="item"/></el-select></el-form-item><el-form-item label="所属地块"><el-select v-model="form.plotNo" style="width:100%" placeholder="请选择所属地块"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog>
 
-    <el-dialog v-model="bindDialog" title="绑定设备" width="460px"><el-alert title="换绑或解绑不会删除设备已经产生的历史数据" type="warning" :closable="false" show-icon/><el-form label-position="top" class="bind-form"><el-form-item label="目标地块"><el-select v-model="form.plotNo" style="width:100%"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.farmName || item.farmId} · ${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="bindDialog=false">取消</el-button><el-button type="primary" @click="saveBind">确认绑定</el-button></template></el-dialog>
+    <el-dialog v-model="bindDialog" title="绑定设备" width="460px"><el-alert title="换绑或解绑不会删除设备已经产生的历史数据" type="warning" :closable="false" show-icon/><el-form label-position="top" class="bind-form"><el-form-item label="目标地块"><el-select v-model="form.plotNo" style="width:100%"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="bindDialog=false">取消</el-button><el-button type="primary" @click="saveBind">确认绑定</el-button></template></el-dialog>
 
     <el-dialog v-model="importDialog" title="Excel 批量导入设备" width="760px" class="import-dialog">
       <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="readExcel">
       <div class="import-guide">
         <div class="import-icon"><el-icon><DocumentAdd/></el-icon></div>
-        <div><strong>{{ importFileName || '选择设备 Excel 文件' }}</strong><p>必填列：设备编号、MQTT设备标识、设备类型、所属地块</p></div>
+        <div><strong>{{ importFileName || '选择设备 Excel 文件' }}</strong><p>必填列：设备编号、设备 UUID、设备类型、所属地块</p></div>
         <el-button @click="selectImportFile">选择文件</el-button>
         <el-button link type="primary" @click="downloadTemplate">下载模板</el-button>
       </div>
@@ -244,7 +241,7 @@ async function downloadTemplate() {
       <el-table v-if="importRows.length" :data="importRows" max-height="330" class="import-preview">
         <el-table-column prop="rowNumber" label="行号" width="70"/>
         <el-table-column prop="deviceNo" label="设备编号" min-width="130"/>
-        <el-table-column prop="mqttDeviceId" label="MQTT设备标识" min-width="140"/>
+        <el-table-column prop="deviceUuid" label="设备 UUID" min-width="280"/>
         <el-table-column prop="type" label="设备类型" min-width="120"/>
         <el-table-column prop="plotNo" label="所属地块" width="110"><template #default="scope">{{ scope.row.plotNo || '未绑定' }}</template></el-table-column>
         <el-table-column label="校验结果" min-width="180"><template #default="scope"><el-tag :type="scope.row.valid ? 'success' : 'danger'" effect="plain">{{ scope.row.valid ? '可导入' : scope.row.error }}</el-tag></template></el-table-column>

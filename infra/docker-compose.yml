@@ -1,9 +1,41 @@
-# 智慧农业项目 —— Docker Compose（当前仅 EMQX，后续由 F 扩展 MySQL/后端/前端）
+# Smart agriculture local dependencies
 services:
+  mysql:
+    image: mysql:8.0
+    command: ["--default-time-zone=+00:00"]
+    container_name: farm-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-farm}
+      MYSQL_USER: ${MYSQL_USER:-farm}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-farm}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-farm-root}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../database/schema/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ../database/schema/002_reference_data.sql:/docker-entrypoint-initdb.d/002_reference_data.sql:ro
+      - ../database/schema/003_mqtt_tracking.sql:/docker-entrypoint-initdb.d/003_mqtt_tracking.sql:ro
+      - ../database/schema/004_device_uuid_migration.sql:/docker-entrypoint-initdb.d/004_device_uuid_migration.sql:ro
+      - ../database/schema/005_unbound_device_support.sql:/docker-entrypoint-initdb.d/005_unbound_device_support.sql:ro
+      - ../database/schema/006_user_registration_and_scopes.sql:/docker-entrypoint-initdb.d/006_user_registration_and_scopes.sql:ro
+      - ../database/schema/007_localize_demo_data.sql:/docker-entrypoint-initdb.d/007_localize_demo_data.sql:ro
+      - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   emqx:
     image: emqx/emqx
     container_name: emqx
     restart: unless-stopped
     ports:
-      - "1883:1883"   # MQTT 端口（脚本/后端连这个）
-      - "18083:18083" # 控制台端口（浏览器看消息用）
+      - "2883:1883"
+      - "8083:8083"
+      - "18083:18083"
+
+volumes:
+  mysql_data:

@@ -1,11 +1,33 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppShell from '@/components/AppShell.vue'
 import { useFarmerStore } from '@/stores/farmer'
 
 const farmerStore = useFarmerStore()
-onMounted(() => farmerStore.loadFarmerData().catch(() => ElMessage.error(farmerStore.loadError || '农户数据加载失败')))
+let refreshTimer
+let refreshInFlight = false
+
+async function refreshRealtimeData() {
+  if (refreshInFlight) return
+  refreshInFlight = true
+  try {
+    await farmerStore.refreshRealtimeData()
+  } finally {
+    refreshInFlight = false
+  }
+}
+
+onMounted(async () => {
+  try {
+    await farmerStore.loadFarmerData()
+  } catch {
+    ElMessage.error(farmerStore.loadError || '农户数据加载失败')
+  }
+  refreshTimer = window.setInterval(() => refreshRealtimeData().catch(() => {}), 10000)
+})
+
+onBeforeUnmount(() => window.clearInterval(refreshTimer))
 const menu = [
   { label: '农场首页', path: '/farmer/dashboard', icon: 'House' }, { label: '地块管理', path: '/farmer/management', icon: 'DataAnalysis' },
   { label: '智慧灌溉', path: '/farmer/irrigation', icon: 'Drizzling' },

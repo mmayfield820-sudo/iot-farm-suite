@@ -30,7 +30,12 @@ function edit(row) {
 function add() { Object.assign(form, { id: '', username: '', name: '', email: '', roles: [], farmScope: [], plotScope: [] }); dialog.value = true }
 async function save() {
   if (!form.username || !form.roles.length) return ElMessage.warning('请填写用户名并至少分配一个角色')
-  try { await store.saveUser({ ...form }); dialog.value = false; ElMessage.success('账号信息已保存') } catch (error) { ElMessage.error(error.message || '账号保存失败') }
+  try {
+    const result = await store.saveUser({ ...form })
+    dialog.value = false
+    if (result?.temporaryPassword) await ElMessageBox.alert(`临时密码：${result.temporaryPassword}`, '账号已创建', { confirmButtonText: '我已记录' })
+    else ElMessage.success('账号信息已保存')
+  } catch (error) { ElMessage.error(error.message || '账号保存失败') }
 }
 function toggle(row) {
   ElMessageBox.confirm(`确认${row.status === '正常' ? '禁用' : '恢复'}账号 ${row.username}？`, '账号状态变更', { type: 'warning' })
@@ -38,7 +43,12 @@ function toggle(row) {
 }
 function reset(row) {
   ElMessageBox.confirm(`将为 ${row.username} 生成临时密码，确认继续？`, '重置密码', { type: 'warning' })
-    .then(async () => { try { await store.resetPassword(row.id); ElMessage.success('密码重置请求已提交') } catch (error) { ElMessage.error(error.message || '密码重置失败') } })
+    .then(async () => {
+      try {
+        const result = await store.resetPassword(row.id)
+        await ElMessageBox.alert(`临时密码：${result?.temporaryPassword || '-'}`, '密码已重置', { confirmButtonText: '我已记录' })
+      } catch (error) { ElMessage.error(error.message || '密码重置失败') }
+    })
 }
 function resourceNames(application) {
   const parts = []

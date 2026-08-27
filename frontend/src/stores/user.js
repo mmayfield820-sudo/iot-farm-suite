@@ -21,7 +21,7 @@ const mockAccounts = [
     roles: ['farmer', 'farmAdmin', 'systemAdmin'],
     permissions: ['*'],
     accessiblePlots: ['P001', 'P002', 'P003', 'P004', 'P005', 'P006', 'P007'],
-    roleScopes: { farmer: { plotIds: ['P001', 'P002', 'P003', 'P004', 'P005', 'P006', 'P007'] }, farmAdmin: { farmIds: ['F001', 'F002'] }, systemAdmin: { global: true } },
+    roleScopes: { farmer: { plotIds: ['P001', 'P002', 'P003', 'P004', 'P005', 'P006', 'P007'] }, farmAdmin: { farmIds: ['F001'] }, systemAdmin: { global: true } },
   },
   {
     id: 'U002',                          

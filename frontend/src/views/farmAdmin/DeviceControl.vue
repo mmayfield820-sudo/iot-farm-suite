@@ -179,10 +179,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePlotStore } from '@/stores/plot'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
+import { useUserStore } from '@/stores/user'
 import { getHumidityStatus, IRRIGATION_STATUS } from '@/utils/farmAdminStatus'
 import { mockPlots, mockIrrigationRecords } from '@/mock/farmAdminData'
 import { ElMessage } from 'element-plus'
@@ -193,7 +193,7 @@ import { normalizeIrrigationRecord, normalizePlot, unwrapList } from '@/utils/da
 const route = useRoute()
 const router = useRouter()
 const plotStore = usePlotStore()
-const farmAdminStore = useFarmAdminStore()
+const userStore = useUserStore()
 const platformStore = usePlatformStore()
 const selectedPlotId = ref('')
 const records = ref([])
@@ -212,51 +212,38 @@ const getDeviceState = (type) => {
   }
 }
 
-async function loadSelectedFarm() {
+onMounted(async () => {
+  const scopedFarmIds = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
   let scopedPlots = []
-  const farmIds = farmAdminStore.selectedFarmIds
   if (isMock) {
+    const farmIds = scopedFarmIds.length ? scopedFarmIds : [...new Set(mockPlots.map((plot) => String(plot.farmId)))]
     scopedPlots = mockPlots.filter((plot) => farmIds.includes(String(plot.farmId)))
-    const scopedPlotIds = scopedPlots.map((plot) => String(plot.plotId))
-    records.value = mockIrrigationRecords.filter((record) => scopedPlotIds.includes(String(record.plotId)))
   } else {
-    await platformStore.loadData()
-    const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
-    scopedPlots = basePlots.map((base) => {
-      const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
-      const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
-      const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
-      return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
-    })
-    const recordResults = await Promise.allSettled(scopedPlots.map((plot) => getIrrigationRecords(plot.plotId)))
-    records.value = recordResults.flatMap((result) => result.status === 'fulfilled' ? unwrapList(result.value).map(normalizeIrrigationRecord) : [])
+    try {
+      await platformStore.loadData()
+      const farmIds = scopedFarmIds.length ? scopedFarmIds : platformStore.farms.map((farm) => String(farm.farmId))
+      const basePlots = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId)))
+      scopedPlots = basePlots.map((base) => {
+        const devices = platformStore.devices.filter((device) => device.plotId === base.plotNo)
+        const alerts = platformStore.alerts.filter((alert) => alert.plotId === base.plotNo)
+        const farm = platformStore.farms.find((item) => item.farmId === base.farmId)
+        return normalizePlot({ ...base, plotId: base.plotNo }, { devices, alerts, farm })
+      })
+      const recordResults = await Promise.allSettled(scopedPlots.map((plot) => getIrrigationRecords(plot.plotId)))
+      records.value = recordResults.flatMap((result) => result.status === 'fulfilled' ? unwrapList(result.value).map(normalizeIrrigationRecord) : [])
+    } catch (error) {
+      ElMessage.error(error.message || '灌溉数据加载失败')
+    }
   }
+  const scopedPlotIds = scopedPlots.map((plot) => String(plot.plotId))
   plotStore.setPlots(scopedPlots)
+  if (isMock) records.value = mockIrrigationRecords.filter((record) => scopedPlotIds.includes(String(record.plotId)))
   const plotId = Array.isArray(route.query.plotId) ? route.query.plotId[0] : route.query.plotId
   if (plotId && plotStore.plots.find(p => p.plotId === plotId)) {
     selectedPlotId.value = plotId
   } else if (plotStore.plots.length > 0) {
     selectedPlotId.value = plotStore.plots[0].plotId
-    router.replace({ query: { ...route.query, plotId: selectedPlotId.value } })
-  } else {
-    selectedPlotId.value = ''
   }
-}
-
-let pageReady = false
-onMounted(async () => {
-  try {
-    await loadSelectedFarm()
-    pageReady = true
-  } catch (error) {
-    ElMessage.error(error.message || '灌溉数据加载失败')
-  }
-})
-
-watch(() => farmAdminStore.selectedFarmIds.join('|'), async () => {
-  if (!pageReady) return
-  try { await loadSelectedFarm() }
-  catch (error) { ElMessage.error(error.message || '农场切换失败') }
 })
 
 const handlePlotSelect = (plotId) => {
