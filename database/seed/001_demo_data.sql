@@ -23,7 +23,7 @@ FROM roles
 WHERE role_code = 'system_admin';
 
 INSERT INTO farm (admin_user_id, farm_name, city, address)
-SELECT @admin_user_id, 'Demo Farm', 'Hangzhou', 'Demo Address'
+SELECT @admin_user_id, '演示农场', '杭州市', '浙江省杭州市演示农业园'
 WHERE NOT EXISTS (SELECT 1 FROM farm WHERE admin_user_id = @admin_user_id);
 
 SET @farm_id = (
@@ -34,13 +34,13 @@ SET @farm_id = (
 
 UPDATE farm
 SET admin_user_id = @admin_user_id,
-    farm_name = 'Demo Farm',
-    city = 'Hangzhou',
-    address = 'Demo Address'
+    farm_name = '演示农场',
+    city = '杭州市',
+    address = '浙江省杭州市演示农业园'
 WHERE farm_id = @farm_id;
 
 INSERT INTO plot (farmer_user_id, farm_id, plot_name, location, crop_name, description)
-SELECT @farmer_user_id, @farm_id, 'Plot 1', 'East Greenhouse', 'Tomato', 'Development demo plot'
+SELECT @farmer_user_id, @farm_id, '一号田地', '东区温室', '番茄', '演示用一号田地'
 WHERE NOT EXISTS (
   SELECT 1 FROM plot WHERE farm_id = @farm_id AND farmer_user_id = @farmer_user_id
 );
@@ -53,35 +53,60 @@ SET @plot_id = (
 
 UPDATE plot
 SET farmer_user_id = @farmer_user_id,
-    plot_name = 'Plot 1',
-    location = 'East Greenhouse',
-    crop_name = 'Tomato',
-    description = 'Development demo plot'
+    plot_name = '一号田地',
+    location = '东区温室',
+    crop_name = '番茄',
+    description = '演示用一号田地'
 WHERE plot_id = @plot_id;
 
 INSERT INTO plot (farmer_user_id, farm_id, plot_name, location, crop_name, description)
-SELECT @farmer_user_id, @farm_id, 'Plot 2', 'West Greenhouse', 'Cucumber', 'Development demo plot 2'
-WHERE NOT EXISTS (
-  SELECT 1 FROM plot WHERE farm_id = @farm_id AND plot_name = 'Plot 2'
-);
+SELECT @farmer_user_id, @farm_id, '二号田地', '西区温室', '黄瓜', '演示用二号田地'
+WHERE NOT EXISTS (SELECT 1 FROM plot WHERE farm_id = @farm_id AND plot_name = '二号田地');
 
 SET @plot2_id = (
   SELECT plot_id FROM plot
-  WHERE farm_id = @farm_id AND plot_name = 'Plot 2'
-  ORDER BY plot_id LIMIT 1
+WHERE farm_id = @farm_id AND plot_name = '二号田地'
+ORDER BY plot_id LIMIT 1
 );
 
+UPDATE plot
+SET farmer_user_id = @farmer_user_id,
+    plot_name = '二号田地',
+    location = '西区温室',
+    crop_name = '黄瓜',
+    description = '演示用二号田地'
+WHERE plot_id = @plot2_id;
+
 INSERT INTO plot (farmer_user_id, farm_id, plot_name, location, crop_name, description)
-SELECT @farmer_user_id, @farm_id, 'Plot 3', 'North Greenhouse', 'Lettuce', 'Development demo plot 3'
-WHERE NOT EXISTS (
-  SELECT 1 FROM plot WHERE farm_id = @farm_id AND plot_name = 'Plot 3'
-);
+SELECT NULL, @farm_id, '三号田地', '北区温室', '生菜', '演示用三号田地'
+WHERE NOT EXISTS (SELECT 1 FROM plot WHERE farm_id = @farm_id AND plot_name = '三号田地');
 
 SET @plot3_id = (
   SELECT plot_id FROM plot
-  WHERE farm_id = @farm_id AND plot_name = 'Plot 3'
-  ORDER BY plot_id LIMIT 1
+WHERE farm_id = @farm_id AND plot_name = '三号田地'
+ORDER BY plot_id LIMIT 1
 );
+
+UPDATE plot
+SET farmer_user_id = NULL,
+    plot_name = '三号田地',
+    location = '北区温室',
+    crop_name = '生菜',
+    description = '演示用三号田地'
+WHERE plot_id = @plot3_id;
+
+SET @has_farmer_plot_scope = (
+  SELECT COUNT(*) FROM information_schema.tables
+  WHERE table_schema = DATABASE() AND table_name = 'farmer_plot_scope'
+);
+SET @cleanup_plot3_scope_sql = IF(
+  @has_farmer_plot_scope > 0,
+  'DELETE FROM farmer_plot_scope WHERE user_id = @farmer_user_id AND plot_id = @plot3_id',
+  'SELECT 1'
+);
+PREPARE cleanup_plot3_scope_stmt FROM @cleanup_plot3_scope_sql;
+EXECUTE cleanup_plot3_scope_stmt;
+DEALLOCATE PREPARE cleanup_plot3_scope_stmt;
 
 INSERT INTO device (device_code, device_uuid, device_type, plot_id, status)
 SELECT 'P001-TEMP', '3b8dcefd-3a51-4adc-b452-47c184c0951d', 'temperature', @plot_id, 'online'

@@ -458,7 +458,7 @@ class MqttService:
                     plot_id=plot_id,
                     device_id=humidity.device_id,
                     alert_type="low_moisture",
-                    description="Soil moisture is below the configured threshold",
+                    description="土壤湿度低于设定阈值",
                     timestamp=report_time,
                     value=humidity.value,
                     threshold=float(threshold),
@@ -471,7 +471,7 @@ class MqttService:
                         SET alert_status = 'recovered', handled_at = :handled_at
                         WHERE plot_id = :plot_id
                           AND alert_type = 'low_moisture'
-                          AND alert_status = 'active'
+                          AND alert_status IN ('active', 'acknowledged')
                         """
                     ),
                     {"plot_id": plot_id, "handled_at": report_time},
@@ -531,7 +531,7 @@ class MqttService:
                         plot_id=command["plot_id"],
                         device_id=command["device_id"],
                         alert_type="irrigation_failed",
-                        description=f"Irrigation command {command['command_id']} timed out",
+                        description=f"灌溉指令 {command['command_id']} 执行超时",
                         timestamp=timestamp,
                     )
 
@@ -554,7 +554,7 @@ class MqttService:
                 plot_id=plot_id,
                 device_id=missing_device["device_id"] if missing_device else None,
                 alert_type="device_fault",
-                description=f"Missing paired {missing_type} reading",
+                description=f"缺少配对的{'湿度' if missing_type == 'humidity' else '温度'}传感器数据",
                 timestamp=timestamp,
             )
 
@@ -578,7 +578,7 @@ class MqttService:
                 WHERE plot_id = :plot_id
                   AND device_id <=> :device_id
                   AND alert_type = :alert_type
-                  AND alert_status = 'active'
+                  AND alert_status IN ('active', 'acknowledged')
                 LIMIT 1
                 """
             ),

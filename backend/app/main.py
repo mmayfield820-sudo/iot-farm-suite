@@ -427,6 +427,94 @@ def alert_payload(row: Any) -> dict[str, Any]:
     }
 
 
+def sync_low_moisture_alert(
+    connection: Any,
+    *,
+    plot_id: int,
+    device_id: int,
+    moisture: float,
+    threshold: float,
+    timestamp: datetime,
+) -> None:
+    if moisture < threshold:
+        existing_alert = connection.execute(
+            text(
+                """
+                SELECT alert_id FROM alert
+                WHERE plot_id = :plot_id
+                  AND device_id <=> :device_id
+                  AND alert_type = 'low_moisture'
+                  AND alert_status IN ('active', 'acknowledged')
+                LIMIT 1
+                """
+            ),
+            {"plot_id": plot_id, "device_id": device_id},
+        ).scalar()
+        if existing_alert is None:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO alert (
+                        plot_id, device_id, alert_type, alert_description,
+                        alert_value, alert_threshold, alert_datetime, alert_status
+                    ) VALUES (
+                        :plot_id, :device_id, 'low_moisture',
+                        '土壤湿度低于设定阈值',
+                        :moisture, :threshold, :timestamp, 'active'
+                    )
+                    """
+                ),
+                {
+                    "plot_id": plot_id,
+                    "device_id": device_id,
+                    "moisture": moisture,
+                    "threshold": threshold,
+                    "timestamp": timestamp,
+                },
+            )
+        return
+
+    connection.execute(
+        text(
+            """
+            UPDATE alert
+            SET alert_status = 'recovered', handled_at = :handled_at
+            WHERE plot_id = :plot_id
+              AND alert_type = 'low_moisture'
+              AND alert_status IN ('active', 'acknowledged')
+            """
+        ),
+        {"plot_id": plot_id, "handled_at": timestamp},
+    )
+
+
+def evaluate_latest_moisture(
+    connection: Any, *, plot_id: int, threshold: float
+) -> None:
+    latest_report = connection.execute(
+        text(
+            """
+            SELECT plot_moisture, soil_moisture_device_id
+            FROM plot_report
+            WHERE plot_id = :plot_id
+            ORDER BY report_datetime DESC, report_id DESC
+            LIMIT 1
+            """
+        ),
+        {"plot_id": plot_id},
+    ).mappings().first()
+    if latest_report is None:
+        return
+    sync_low_moisture_alert(
+        connection,
+        plot_id=plot_id,
+        device_id=value_of(latest_report, "soil_moisture_device_id"),
+        moisture=float(value_of(latest_report, "plot_moisture")),
+        threshold=threshold,
+        timestamp=datetime.now(UTC).replace(tzinfo=None),
+    )
+
+
 def alert_rule_payload(row: Any) -> dict[str, Any]:
     return {
         "id": business_id("R", value_of(row, "config_id")),
@@ -581,6 +669,30 @@ def ensure_existing_resources(connection: Any, farm_ids: list[int], plot_ids: li
             raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
 
 
+def ensure_plots_available_for_farmer(connection: Any, plot_ids: list[int]) -> None:
+    if not plot_ids:
+        return
+    occupied_plot_ids = connection.execute(
+        text(
+            """
+            SELECT p.plot_id
+            FROM plot AS p
+            WHERE p.plot_id IN :plot_ids
+              AND (
+                p.farmer_user_id IS NOT NULL
+                OR EXISTS (
+                    SELECT 1 FROM farmer_plot_scope AS s
+                    WHERE s.plot_id = p.plot_id
+                )
+              )
+            """
+        ).bindparams(bindparam("plot_ids", expanding=True)),
+        {"plot_ids": plot_ids},
+    ).scalars().all()
+    if occupied_plot_ids:
+        raise HTTPException(status_code=409, detail="PLOT_ALREADY_ASSIGNED")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     try:
@@ -614,7 +726,13 @@ def registration_resources() -> dict[str, list[dict[str, Any]]]:
             text(
                 """
                 SELECT plot_id, farm_id, plot_name, crop_name, description
-                FROM plot ORDER BY plot_id
+                FROM plot AS p
+                WHERE p.farmer_user_id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM farmer_plot_scope AS s
+                    WHERE s.plot_id = p.plot_id
+                  )
+                ORDER BY plot_id
                 """
             )
         ).mappings().all()
@@ -656,6 +774,8 @@ def register(request: RegistrationRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="PLOT_SCOPE_REQUIRED")
     with engine.begin() as connection:
         ensure_existing_resources(connection, farm_ids, plot_ids)
+        if "farmer" in role_codes:
+            ensure_plots_available_for_farmer(connection, plot_ids)
         if connection.execute(
             text("SELECT 1 FROM users WHERE username = :username"),
             {"username": request.username},
@@ -737,12 +857,15 @@ def approve_registration(application_id: str, user: dict[str, Any] = Depends(cur
             dict(application),
         )
         role_codes = json_values(application["role_codes"])
+        plot_ids = [int(value) for value in json_values(application["plot_ids"])]
+        if "farmer" in role_codes:
+            ensure_plots_available_for_farmer(connection, plot_ids)
         replace_user_assignments(
             connection,
             result.lastrowid,
             role_codes,
             [int(value) for value in json_values(application["farm_ids"])],
-            [int(value) for value in json_values(application["plot_ids"])],
+            plot_ids,
         )
         connection.execute(
             text(
@@ -1425,6 +1548,11 @@ def update_irrigation_settings(
                 "updated_by": user["user_id"],
             },
         )
+        evaluate_latest_moisture(
+            connection,
+            plot_id=numeric_plot_id,
+            threshold=request.soilMoistureThreshold,
+        )
         row = connection.execute(
             text(
                 """
@@ -1648,6 +1776,11 @@ def save_alert_rule(
                 "interval": request.irrigationInterval,
                 "updated_by": user["user_id"],
             },
+        )
+        evaluate_latest_moisture(
+            connection,
+            plot_id=numeric_plot_id,
+            threshold=request.soilMoistureThreshold,
         )
         row = connection.execute(
             text(

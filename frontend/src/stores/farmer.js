@@ -46,6 +46,15 @@ export const useFarmerStore = defineStore('farmer', () => {
   const visibleRecords = computed(() => irrigationRecords.value.filter((record) => accessibleIds.value.includes(normalizeId(record.plotId))))
   const unhandledCount = computed(() => visibleAlerts.value.filter((alert) => alert.status === '未处理').length)
 
+  async function refreshAlerts() {
+    if (isMock) return
+    const alertResult = await getAlertList()
+    alerts.value = unwrapList(alertResult).map((row) => {
+      const alert = normalizeAlert(row)
+      return { ...alert, plotName: getPlot(alert.plotId)?.plotName || alert.plotName || alert.plotId }
+    })
+  }
+
   function ensureSelectedPlot() {
     if (!accessibleIds.value.includes(normalizeId(selectedPlotId.value))) selectedPlotId.value = accessibleIds.value[0] || ''
   }
@@ -192,6 +201,7 @@ export const useFarmerStore = defineStore('farmer', () => {
       irrigationInterval: config.irrigationInterval,
     })
     Object.assign(plot, { threshold: config.threshold, irrigationDuration: config.irrigationDuration, irrigationInterval: config.irrigationInterval, maxDuration: config.irrigationDuration })
+    await refreshAlerts()
   }
 
   async function acknowledge(alertId) {
@@ -291,5 +301,5 @@ export const useFarmerStore = defineStore('farmer', () => {
     }
   }
 
-  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, weather, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, loadWeather, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
+  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, weather, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, loadWeather, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
 })

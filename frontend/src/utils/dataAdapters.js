@@ -127,20 +127,30 @@ export function normalizeIrrigationRecord(row = {}) {
 export function normalizeAlert(row = {}) {
   const statusMap = { active: '未处理', acknowledged: '处理中', recovered: '已处理', 已确认: '处理中', 已恢复: '已处理' }
   const rawType = firstDefined(row.type, row.metricType, row.metric_type, row.alertType, row.alert_type, '未知告警')
-  const typeMap = { humidity: '湿度过低', temperature: '温度异常' }
+  const typeMap = {
+    humidity: '湿度过低',
+    temperature: '温度异常',
+    low_moisture: '湿度过低',
+    device_offline: '设备离线',
+    device_fault: '设备故障',
+    irrigation_failed: '灌溉失败',
+  }
+  const occurTime = firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, '')
+  const handledAt = firstDefined(row.handledAt, row.handled_at, '')
   return {
     ...row,
     alertId: normalizeId(firstDefined(row.alertId, row.alert_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
+    typeCode: rawType,
     type: typeMap[rawType] || rawType,
     reason: firstDefined(row.reason, row.alertDescription, row.alert_description, '暂无告警说明'),
     value: firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-'),
     threshold: firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-'),
-    occurTime: firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, ''),
+    occurTime: formatDateTime(occurTime, ''),
     status: statusMap[row.status] || statusMap[row.alert_status] || firstDefined(row.status, row.alert_status, '未处理'),
     handledBy: normalizeId(firstDefined(row.handledBy, row.handled_by)),
-    handledAt: firstDefined(row.handledAt, row.handled_at, ''),
+    handledAt: formatDateTime(handledAt, ''),
   }
 }
 
