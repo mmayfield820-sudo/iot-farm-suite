@@ -19,3 +19,7 @@ class FarmService:
     def list_farms(self) -> list[dict[str, str]]:
         """查询全部农场。"""
         return self._repository.list_farms()
+
+    def get_overview(self, farm_id: int) -> list[dict]:
+        """查询指定农场下所有地块的概况。"""
+        return self._repository.get_overview(farm_id)

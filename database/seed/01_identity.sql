@@ -4,10 +4,10 @@ USE smart_agriculture;
 INSERT IGNORE INTO users
     (user_id, username, password_hash, email, phone, user_status)
 VALUES
-    (1, 'admin', '$2b$10$N9qo8uLOickGXa2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhW', 'admin@example.com', '13800000001', 'ACTIVE'),
-    (2, 'farm_manager', '$2b$10$N9qo8uLOickGXa2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhW', 'manager@example.com', '13800000002', 'ACTIVE'),
-    (3, 'farmer', '$2b$10$N9qo8uLOickGXa2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhW', 'farmer@example.com', '13800000003', 'ACTIVE'),
-    (4, 'viewer', '$2b$10$N9qo8uLOickGXa2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhW', 'viewer@example.com', NULL, 'ACTIVE');
+    (1, 'admin', '$2b$12$wv1ayE838mdm1On1raaYSuTQWEqT9Wg8XPacLVNZMCySv0liMznGW', 'admin@example.com', '13800000001', 'ACTIVE'),
+    (2, 'farm_manager', '$2b$12$wv1ayE838mdm1On1raaYSuTQWEqT9Wg8XPacLVNZMCySv0liMznGW', 'manager@example.com', '13800000002', 'ACTIVE'),
+    (3, 'farmer', '$2b$12$wv1ayE838mdm1On1raaYSuTQWEqT9Wg8XPacLVNZMCySv0liMznGW', 'farmer@example.com', '13800000003', 'ACTIVE'),
+    (4, 'viewer', '$2b$12$wv1ayE838mdm1On1raaYSuTQWEqT9Wg8XPacLVNZMCySv0liMznGW', 'viewer@example.com', NULL, 'ACTIVE');
 
 
 

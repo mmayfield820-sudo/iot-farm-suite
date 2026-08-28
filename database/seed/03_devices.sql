@@ -2,13 +2,13 @@ USE smart_agriculture;
 
 -- 8. 设备表
 INSERT IGNORE INTO devices
-    (device_id, device_code, device_type, plot_id, status, last_heartbeat)
+    (device_id, device_code, mqtt_device_id, device_type, plot_id, status, last_heartbeat)
 VALUES
-    (1, 'GH01-SOIL-001', 'SOIL_MOISTURE_SENSOR', 1, 'ONLINE', '2026-08-24 09:58:00'),
-    (2, 'GH01-TEMP-001', 'TEMPERATURE_SENSOR', 1, 'ONLINE', '2026-08-24 09:58:00'),
-    (3, 'GH01-IRR-001', 'IRRIGATION_CONTROLLER', 1, 'ONLINE', '2026-08-24 09:59:00'),
-    (4, 'GH02-SOIL-001', 'SOIL_MOISTURE_SENSOR', 2, 'OFFLINE', '2026-08-23 18:30:00'),
-    (5, 'GH02-TEMP-001', 'TEMPERATURE_SENSOR', 2, 'ONLINE', '2026-08-24 09:55:00'),
-    (6, 'GH02-IRR-001', 'IRRIGATION_CONTROLLER', 2, 'ONLINE', '2026-08-24 09:56:00'),
-    (7, 'FD01-SOIL-001', 'SOIL_MOISTURE_SENSOR', 3, 'ONLINE', '2026-08-24 09:57:00'),
-    (8, 'FD01-TEMP-001', 'TEMPERATURE_SENSOR', 3, 'ONLINE', '2026-08-24 09:57:00');
+    (1, 'GH01-SOIL-001', 'device_001', 'SOIL_MOISTURE_SENSOR', 1, 'ONLINE', '2026-08-24 09:58:00'),
+    (2, 'GH01-TEMP-001', 'device_002', 'TEMPERATURE_SENSOR', 1, 'ONLINE', '2026-08-24 09:58:00'),
+    (3, 'GH01-IRR-001', 'device_003', 'IRRIGATION_CONTROLLER', 1, 'ONLINE', '2026-08-24 09:59:00'),
+    (4, 'GH02-SOIL-001', 'device_004', 'SOIL_MOISTURE_SENSOR', 2, 'OFFLINE', '2026-08-23 18:30:00'),
+    (5, 'GH02-TEMP-001', 'device_005', 'TEMPERATURE_SENSOR', 2, 'ONLINE', '2026-08-24 09:55:00'),
+    (6, 'GH02-IRR-001', 'device_006', 'IRRIGATION_CONTROLLER', 2, 'ONLINE', '2026-08-24 09:56:00'),
+    (7, 'FD01-SOIL-001', 'device_007', 'SOIL_MOISTURE_SENSOR', 3, 'ONLINE', '2026-08-24 09:57:00'),
+    (8, 'FD01-TEMP-001', 'device_008', 'TEMPERATURE_SENSOR', 3, 'ONLINE', '2026-08-24 09:57:00');

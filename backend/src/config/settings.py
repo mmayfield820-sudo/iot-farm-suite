@@ -39,3 +39,9 @@ def get_database_settings() -> DatabaseSettings:
         password=_required_env("DB_PASSWORD"),
         name=os.getenv("DB_NAME", "smart_agriculture"),
     )
+
+
+@lru_cache(maxsize=1)
+def get_jwt_secret() -> str:
+    """读取 JWT 签名密钥。"""
+    return _required_env("JWT_SECRET")

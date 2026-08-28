@@ -7,3 +7,5 @@ PyMySQL
 python-dotenv
 FastAPI
 uvicorn
+bcrypt
+PyJWT
