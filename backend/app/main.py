@@ -404,10 +404,12 @@ def ensure_device_manage_access(device_id: int, user: dict[str, Any], *, allow_u
 def command_payload(row: Any) -> dict[str, Any]:
     return {
         "commandId": value_of(row, "command_id"),
+        "plotId": business_id("P", value_of(row, "plot_id")),
         "deviceId": business_id("D", value_of(row, "device_id")),
         "deviceUuid": value_of(row, "device_uuid"),
         "action": f"irrigation_{value_of(row, 'action_type')}",
         "activationType": value_of(row, "activation_type"),
+        "plannedDuration": value_of(row, "planned_duration_minutes"),
         "status": value_of(row, "status"),
         "requestedAt": iso(value_of(row, "requested_at")),
         "executedAt": iso(value_of(row, "executed_at")),
@@ -1454,7 +1456,8 @@ def get_command(
             text(
                 """
                 SELECT r.command_id, r.device_id, d.device_uuid, r.plot_id,
-                       r.action_type, r.activation_type, r.status,
+                       r.action_type, r.activation_type,
+                       r.planned_duration_minutes, r.status,
                        r.requested_at, r.executed_at
                 FROM irrigation_record AS r
                 JOIN device AS d ON d.device_id = r.device_id
@@ -1467,6 +1470,32 @@ def get_command(
         raise HTTPException(status_code=404, detail="COMMAND_NOT_FOUND")
     plot_scope(command["plot_id"], user)
     return command_payload(command)
+
+
+@app.get("/api/commands")
+def list_commands(
+    plot_id: str = Query(alias="plotId"),
+    user: dict[str, Any] = Depends(current_user),
+) -> list[dict[str, Any]]:
+    numeric_plot_id = parse_resource_id(plot_id, "P")
+    plot_scope(numeric_plot_id, user)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT r.command_id, r.plot_id, r.device_id, d.device_uuid,
+                       r.action_type, r.activation_type,
+                       r.planned_duration_minutes, r.status,
+                       r.requested_at, r.executed_at
+                FROM irrigation_record AS r
+                JOIN device AS d ON d.device_id = r.device_id
+                WHERE r.plot_id = :plot_id
+                ORDER BY r.requested_at DESC, r.record_id DESC
+                """
+            ),
+            {"plot_id": numeric_plot_id},
+        ).mappings().all()
+    return [command_payload(row) for row in rows]
 
 
 @app.get("/api/plots/{plot_id}/metrics")

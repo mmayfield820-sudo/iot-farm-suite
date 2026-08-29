@@ -75,7 +75,7 @@ const devices = computed(() => {
       <div class="farmer-stat"><div class="stat-symbol orange"><el-icon><Timer /></el-icon></div><div><label>达到目标耗时</label><strong>{{ effect.targetTime }}</strong><small>目标 {{ plot?.threshold }}%</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol"><el-icon><Refresh /></el-icon></div><div><label>近期灌溉次数</label><strong>{{ effect.count }}</strong><small>记录可追溯</small></div></div>
     </section>
-
+    <!--
     <section class="content-panel">
       <div class="section-head"><div><h3>灌溉事件记录</h3><p>用于对照灌溉前后的湿度变化</p></div></div>
       <el-table :data="records" class="compact-table">
@@ -88,7 +88,7 @@ const devices = computed(() => {
         <el-table-column prop="status" label="结果" width="100"><template #default="scope"><span :class="['status-pill', scope.row.status === '失败' ? 'danger' : scope.row.status === '进行中' ? 'info' : '']">{{ scope.row.status }}</span></template></el-table-column>
       </el-table>
     </section>
-
+    -->
     <section class="content-panel device-panel">
       <div class="section-head"><div><h3>设备通信与采集状态</h3><p>通信在线与是否正在采集分别显示，停止采集不等于设备离线</p></div></div>
       <el-table :data="devices" class="compact-table">

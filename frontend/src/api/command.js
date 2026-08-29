@@ -5,3 +5,4 @@ export const createDeviceCommand = (deviceId, action, plannedDuration) => reques
   ...(plannedDuration ? { plannedDuration } : {}),
 })
 export const getCommandStatus = (commandId) => request.get(`/commands/${commandId}`)
+export const getCommandList = (plotId) => request.get(`/commands?plotId=${plotId}`)

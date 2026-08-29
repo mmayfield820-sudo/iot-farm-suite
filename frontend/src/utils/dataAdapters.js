@@ -60,7 +60,7 @@ export function normalizeDevice(row = {}, options = {}) {
   const online = firstDefined(row.online, row.deviceOnline, statusOnline, isHeartbeatOnline(lastHeartbeat, options.offlineMinutes))
   const rawType = firstDefined(row.type, row.deviceType, row.device_type, '未知设备')
   const type = typeMap[rawType] || rawType
-  const rawWorkStatus = firstDefined(row.workStatus, row.work_status, row.running === true ? 'running' : undefined, online ? 'running' : 'stopped')
+  const rawWorkStatus = firstDefined(row.workStatus, row.work_status, row.running === true ? 'running' : undefined, 'stopped')
   const running = ['running', '运行中'].includes(rawWorkStatus)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo))
   return {
@@ -148,6 +148,25 @@ export function normalizeIrrigationRecord(row = {}) {
   }
 }
 
+export function normalizeCommandRecord(row = {}) {
+  const action = firstDefined(row.action, row.actionType, row.action_type, '')
+  const status = firstDefined(row.status, 'failed')
+  const actionMap = { irrigation_on: '开启', irrigation_off: '关闭', on: '开启', off: '关闭' }
+  const statusMap = { pending: '等待设备响应', success: '成功', failed: '失败', timeout: '超时' }
+  return {
+    ...row,
+    commandId: String(firstDefined(row.commandId, row.command_id, '')),
+    plotId: normalizeId(firstDefined(row.plotId, row.plot_id)),
+    deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
+    action,
+    actionText: actionMap[action] || action,
+    status: statusMap[status] || status,
+    plannedDuration: firstDefined(row.plannedDuration, row.planned_duration, null),
+    sentAt: formatDateTime(firstDefined(row.sentAt, row.requestedAt, row.requested_at, ''), ''),
+    resultAt: formatDateTime(firstDefined(row.resultAt, row.executedAt, row.executed_at, ''), ''),
+  }
+}
+
 export function normalizeAlert(row = {}) {
   const statusMap = { active: '未处理', acknowledged: '处理中', recovered: '已处理', 已确认: '处理中', 已恢复: '已处理' }
   const rawType = firstDefined(row.type, row.metricType, row.metric_type, row.alertType, row.alert_type, '未知告警')
@@ -190,8 +209,10 @@ export function normalizePlot(row = {}, related = {}) {
     humidity: devices.find((item) => item.type.includes('湿度')),
     irrigation: devices.find((item) => item.type.includes('灌溉')),
   }
-  const activeIrrigation = irrigationRecords.find((item) => item.operationType === '开启' && item.status === '进行中')
-    || (irrigationRecords.find((item) => ['开启', '关闭'].includes(item.operationType) && item.status === '成功')?.operationType === '开启')
+  const irrigationDevice = deviceByType.irrigation
+  const activeIrrigation = irrigationDevice
+    ? irrigationDevice.workStatusCode === 'running'
+    : Boolean(row.irrigating)
   const lastIrrigation = irrigationRecords.find((item) => item.operationType === '开启')
   const allOnline = devices.length > 0 && devices.every((item) => item.online)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.id))
@@ -221,7 +242,7 @@ export function normalizePlot(row = {}, related = {}) {
     runningDeviceCount: devices.filter((item) => item.running).length,
     deviceCount: devices.length,
     dataState: row.dataState || (report.createdAtRaw && isHeartbeatOnline(report.createdAtRaw, related.staleDataMinutes || 15) ? 'realtime' : 'delayed'),
-    irrigating: Boolean(activeIrrigation || row.irrigating),
+    irrigating: Boolean(activeIrrigation),
     status: row.status || status,
     lastHeartbeat: heartbeatTimes[0] ? formatDateTime(heartbeatTimes[0]) : '',
     sensorId: firstDefined(row.sensorId, deviceByType.humidity?.deviceNo, deviceByType.temperature?.deviceNo, '-'),

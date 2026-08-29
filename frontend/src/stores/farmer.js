@@ -9,8 +9,8 @@ import { getPlotMetrics } from '@/api/sensor'
 import { getAlertRules } from '@/api/alertRule'
 import { getIrrigationSettings, updateIrrigationSettings } from '@/api/irrigationSettings'
 import { acknowledgeAlert, getAlertList } from '@/api/alert'
-import { createDeviceCommand, getCommandStatus } from '@/api/command'
-import { formatDateTime, metricSeriesToTrend, normalizeAlert, normalizeFarm, normalizeId, normalizeIrrigationRecord, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
+import { createDeviceCommand, getCommandList, getCommandStatus } from '@/api/command'
+import { formatDateTime, metricSeriesToTrend, normalizeAlert, normalizeCommandRecord, normalizeFarm, normalizeId, normalizeIrrigationRecord, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
@@ -80,9 +80,14 @@ export const useFarmerStore = defineStore('farmer', () => {
       const plotResults = await Promise.all(overviewRows.map(async ({ overview, farm }) => {
         const row = overview.plot || {}
         const plotId = normalizeId(row.id ?? row.plotId)
-        const [settingsResult, recordsResult] = await Promise.allSettled([getIrrigationSettings(plotId), getIrrigationRecords(plotId)])
+        const [settingsResult, recordsResult, commandsResult] = await Promise.allSettled([
+          getIrrigationSettings(plotId),
+          getIrrigationRecords(plotId),
+          getCommandList(plotId),
+        ])
         const settings = settledValue(settingsResult, {})
         const records = unwrapList(settledValue(recordsResult, [])).map(normalizeIrrigationRecord)
+        const commands = unwrapList(settledValue(commandsResult, [])).map(normalizeCommandRecord)
         const humidityRule = rules.find((rule) => normalizeId(rule.plotId) === plotId)
         const threshold = {
           threshold: Number(settings.soilMoistureThreshold ?? humidityRule?.soilMoistureThreshold ?? humidityRule?.threshold ?? 35),
@@ -99,6 +104,7 @@ export const useFarmerStore = defineStore('farmer', () => {
             staleDataMinutes: 15,
           }),
           records,
+          commands,
         }
       }))
       const normalizedPlots = plotResults.map((item) => item.plot)
@@ -108,6 +114,7 @@ export const useFarmerStore = defineStore('farmer', () => {
         return { ...alert, plotName: normalizedPlots.find((plot) => normalizeId(plot.plotId) === alert.plotId)?.plotName || alert.plotName || alert.plotId }
       })
       irrigationRecords.value = plotResults.flatMap((item) => item.records)
+      commandLogs.value = plotResults.flatMap((item) => item.commands)
       initialized.value = true
       ensureSelectedPlot()
     } catch (error) {
@@ -164,6 +171,23 @@ export const useFarmerStore = defineStore('farmer', () => {
     ])
     const records = irrigationRecords.value.filter((record) => normalizeId(record.plotId) === normalizeId(plotId))
     historyByPlot.value[normalizeId(plotId)] = metricSeriesToTrend(unwrapList(temperature), unwrapList(humidity), getPlot(plotId)?.threshold ?? 35, records)
+  }
+
+  async function refreshControlHistory(plotId) {
+    if (isMock || !plotId) return
+    const normalizedPlotId = normalizeId(plotId)
+    const [recordsResult, commandsResult] = await Promise.all([
+      getIrrigationRecords(normalizedPlotId),
+      getCommandList(normalizedPlotId),
+    ])
+    irrigationRecords.value = [
+      ...unwrapList(recordsResult).map(normalizeIrrigationRecord),
+      ...irrigationRecords.value.filter((record) => normalizeId(record.plotId) !== normalizedPlotId),
+    ]
+    commandLogs.value = [
+      ...unwrapList(commandsResult).map(normalizeCommandRecord),
+      ...commandLogs.value.filter((command) => normalizeId(command.plotId) !== normalizedPlotId),
+    ]
   }
 
   async function updateThreshold(plotId, config) {
@@ -235,6 +259,7 @@ export const useFarmerStore = defineStore('farmer', () => {
       deviceId: device.deviceId || device.id || device.deviceNo,
       topic: built.topic,
       action: action === 'open' ? 'irrigation_on' : 'irrigation_off',
+      actionText: action === 'open' ? '开启' : '关闭',
       payload: built.payload,
       status: '下发中',
       plannedDuration: action === 'open' ? plannedDuration : null,
@@ -285,5 +310,5 @@ export const useFarmerStore = defineStore('farmer', () => {
     }
   }
 
-  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
+  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, refreshControlHistory, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
 })

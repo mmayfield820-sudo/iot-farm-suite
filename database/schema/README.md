@@ -1,15 +1,16 @@
 # 数据库结构
 
-这里存放 MySQL 8 建表和数据库升级脚本。文件按数字前缀排序执行，所有成员使用同一套脚本初始化本地数据库。
+`schema` 目录只保留面向交付的最终建表文件，不包含版本迁移或旧字段兼容脚本。
 
-001_schema.sql 创建表、外键、唯一约束、索引和检查约束；002_reference_data.sql 写入角色和权限基础数据。演示数据位于 database/seed/001_demo_data.sql。
+- `001_schema.sql`：创建项目所有表、索引、外键和检查约束。
+- `002_reference_data.sql`：初始化角色、权限及角色权限关系。
 
-脚本也可以手动执行：
+Docker 首次创建 MySQL 数据卷时会按顺序自动执行这两个文件，然后执行 `database/seed/001_demo_data.sql`。
 
-mysql -h 127.0.0.1 -P 3306 -u farm -p farm < database/schema/001_schema.sql
+在项目根目录一键启动：
 
-003_mqtt_tracking.sql adds persistent MQTT message deduplication and the command_id field needed to match device command-result messages.
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml up -d
+```
 
-008_device_runtime_status.sql separates device communication and collection/work states.
-
-009_irrigation_duration.sql stores the planned duration for irrigation-on commands; actual duration is calculated from the paired on/off execution times.
+如需从空数据库验证初始化，应使用新的 MySQL 数据卷。不要在包含需保留数据的环境中删除数据卷。

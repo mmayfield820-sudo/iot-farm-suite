@@ -1,9 +1,10 @@
--- Stable roles, permissions, and their assignments. Safe to execute repeatedly.
+-- Stable roles and permissions required by the application.
+SET NAMES utf8mb4;
+
 INSERT INTO roles (role_code, scope_type) VALUES
   ('farmer', 'plot'),
   ('farm_admin', 'farm'),
-  ('system_admin', 'system')
-ON DUPLICATE KEY UPDATE scope_type = VALUES(scope_type);
+  ('system_admin', 'system');
 
 INSERT INTO permissions (permission_code, resource_type, action_type) VALUES
   ('farm_view', 'farm', 'view'),
@@ -17,15 +18,12 @@ INSERT INTO permissions (permission_code, resource_type, action_type) VALUES
   ('threshold_update', 'threshold_config', 'update'),
   ('report_view', 'report', 'view'),
   ('alert_view', 'alert', 'view'),
-  ('alert_manage', 'alert', 'manage')
-ON DUPLICATE KEY UPDATE
-  resource_type = VALUES(resource_type),
-  action_type = VALUES(action_type);
+  ('alert_manage', 'alert', 'manage');
 
-INSERT IGNORE INTO role_permission_rel (role_id, permission_id)
+INSERT INTO role_permission_rel (role_id, permission_id)
 SELECT r.role_id, p.permission_id
 FROM roles AS r
-JOIN permissions AS p
+CROSS JOIN permissions AS p
 WHERE r.role_code = 'system_admin'
    OR (r.role_code = 'farm_admin' AND p.permission_code IN (
      'farm_view', 'farm_manage', 'plot_view', 'plot_manage', 'device_view',

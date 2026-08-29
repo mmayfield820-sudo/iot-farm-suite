@@ -186,6 +186,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceStatus'
+  /commands:
+    get:
+      tags: [Commands]
+      summary: 按地块查询已持久化的控制指令
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: plotId
+          required: true
+          schema:
+            type: string
+            example: P001
+      responses:
+        '200':
+          description: 控制指令数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Command'
   /commands/{commandId}:
     get:
       tags: [Commands]
@@ -876,6 +897,9 @@ components:
         commandId:
           type: string
           example: CMD0001
+        plotId:
+          type: string
+          example: P001
         deviceId:
           type: string
           example: D003
@@ -885,10 +909,13 @@ components:
         status:
           type: string
           enum: [pending, success, failed, timeout]
-        createdAt:
+        plannedDuration:
+          type: integer
+          nullable: true
+        requestedAt:
           type: string
           format: date-time
-        finishedAt:
+        executedAt:
           type: string
           format: date-time
           nullable: true
