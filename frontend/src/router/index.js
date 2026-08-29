@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ROLE_HOME, useUserStore } from '@/stores/user'
 
 const routes = [
+  //默认重定向到login
   { path: '/', redirect: '/login' },
   { path: '/login', name: 'login', component: () => import('@/views/login/Login.vue'), meta: { public: true } },
   { path: '/register', name: 'register', component: () => import('@/views/login/Register.vue'), meta: { public: true, title: '用户注册' } },
@@ -11,8 +12,6 @@ const routes = [
     children: [
       { path: 'dashboard', name: 'farmer-dashboard', component: () => import('@/views/farmer/Dashboard.vue'), meta: { title: '农场首页' } },
       { path: 'management', name: 'farmer-management', component: () => import('@/views/farmer/PlotManagement.vue'), meta: { title: '地块管理' } },
-      { path: 'monitor', name: 'farmer-monitor', redirect: (to) => ({ path: '/farmer/management', query: { ...to.query, tab: 'monitor' } }) },
-      { path: 'history', name: 'farmer-history', redirect: (to) => ({ path: '/farmer/management', query: { ...to.query, tab: 'history' } }) },
       { path: 'irrigation', name: 'farmer-irrigation', component: () => import('@/views/farmer/Irrigation.vue'), meta: { title: '智慧灌溉' } },
       { path: 'alarm', name: 'farmer-alarm', component: () => import('@/views/farmer/Alarm.vue'), meta: { title: '告警中心' } },
       { path: 'ai', name: 'farmer-ai', component: () => import('@/views/farmer/AiAssistant.vue'), meta: { title: 'AI 农业助手' } },
@@ -55,6 +54,6 @@ router.beforeEach((to) => {
   return true
 })
 
-router.afterEach((to) => { document.title = `${to.meta.title || '登录'} - 智慧农业监测平台` })
+router.afterEach((to) => { document.title = `${to.meta.title || '登录'} - 橙心如意` })
 
 export default router

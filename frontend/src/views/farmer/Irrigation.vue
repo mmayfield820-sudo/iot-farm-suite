@@ -11,7 +11,6 @@ const activeCommand = ref(null)
 const selectedAction = ref('open')
 const plannedDuration = ref(20)
 const plot = computed(() => store.currentPlot)
-const weather = computed(() => store.weather || { rainProbability: 0 })
 const controlDevice = computed(() => plot.value?.devices?.irrigation || null)
 const controlOnline = computed(() => Boolean(controlDevice.value && (controlDevice.value.online ?? plot.value?.deviceOnline)))
 const records = computed(() => store.visibleRecords.filter((item) => item.plotId === plot.value?.plotId))
@@ -21,12 +20,12 @@ const advice = computed(() => {
   if (!plot.value) return {}
   const dry = plot.value.humidity < plot.value.threshold
   return {
-    action: dry && weather.value.rainProbability < 40 ? '建议进行短时灌溉' : plot.value.irrigating ? '当前正在灌溉' : '暂不建议灌溉',
+    action: dry ? '建议进行短时灌溉' : plot.value.irrigating ? '当前正在灌溉' : '暂不建议灌溉',
     risk: dry ? '中' : '低',
     duration: Math.min(20, plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30),
     evidence: [
       `当前湿度 ${plot.value.humidity}%${dry ? '低于' : '高于'}阈值 ${plot.value.threshold}%`,
-      store.serviceStatus.weather ? `未来 24 小时降雨概率 ${weather.value.rainProbability}%` : '天气服务不可用，本次建议未使用天气数据',
+      '当前建议仅依据农田监测数据，未使用实时天气',
       `灌溉控制器${controlOnline.value ? '在线，可以接收控制指令' : '离线或未绑定，禁止远程控制'}`,
       `最近一次灌溉：${plot.value.lastIrrigation || '暂无记录'}`,
     ],
@@ -91,7 +90,7 @@ async function execute(action) {
       { type: action === 'open' ? 'warning' : 'info', confirmButtonText: `确认${verb}`, cancelButtonText: '取消' },
     )
     control.loading = true
-    activeCommand.value = store.beginCommand(plot.value.plotId, action)
+    activeCommand.value = store.beginCommand(plot.value.plotId, action, action === 'open' ? plannedDuration.value : null)
     control.state = 'sending'
     control.message = `正在下发${verb}灌溉指令…`
     control.state = 'executing'
@@ -128,7 +127,7 @@ async function execute(action) {
     <div class="page-head">
       <div>
         <h1 class="page-title">智慧灌溉</h1>
-        <p class="page-subtitle">依据实时农情和天气生成可解释建议，控制操作必须二次确认。</p>
+        <p class="page-subtitle">依据实时农情生成可解释建议，控制操作必须二次确认。</p>
       </div>
       <div class="page-actions">
         <div class="filter-control plot-filter">
@@ -150,7 +149,6 @@ async function execute(action) {
           <div class="evidence-list">
             <div v-for="item in advice.evidence" :key="item" class="evidence-item"><el-icon><CircleCheck /></el-icon><span>{{ item }}</span></div>
           </div>
-          <el-alert v-if="!store.serviceStatus.weather" title="天气数据暂不可用，当前建议仅依据农田数据生成" type="warning" show-icon :closable="false" />
         </div>
 
         <div class="content-panel control-console">
@@ -226,7 +224,7 @@ async function execute(action) {
           <el-table-column prop="startTime" label="开始时间" min-width="165" />
           <el-table-column prop="endTime" label="结束时间" min-width="165"><template #default="scope">{{ scope.row.endTime || '进行中' }}</template></el-table-column>
           <el-table-column prop="operationType" label="操作" width="80" />
-          <el-table-column prop="duration" label="计划/实际时长" min-width="120" />
+          <el-table-column label="计划/实际时长" min-width="165"><template #default="scope">{{ scope.row.durationText }}</template></el-table-column>
           <el-table-column prop="operator" label="操作人" width="100" />
           <el-table-column prop="source" label="来源" min-width="120" />
           <el-table-column prop="status" label="执行状态" width="110"><template #default="scope"><span :class="['status-pill', scope.row.status === '失败' ? 'danger' : scope.row.status === '进行中' ? 'info' : '']">{{ scope.row.status }}</span></template></el-table-column>

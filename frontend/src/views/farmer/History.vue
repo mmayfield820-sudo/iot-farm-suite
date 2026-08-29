@@ -12,7 +12,7 @@ const trend = computed(() => store.getTrend(plot.value?.plotId, period.value))
 const records = computed(() => store.visibleRecords.filter((item) => {
   if (item.plotId !== plot.value?.plotId) return false
   if (period.value !== 'custom' || dateRange.value?.length !== 2) return true
-  const time = parseDate(item.startTime)?.getTime()
+  const time = parseDate(item.startTimeRaw || item.startTime)?.getTime()
   return time && time >= dateRange.value[0].getTime() && time <= dateRange.value[1].getTime()
 }))
 
@@ -38,12 +38,13 @@ const devices = computed(() => {
   if (!plot.value) return []
   if (plot.value.deviceList?.length) return plot.value.deviceList.map((device) => ({
     ...device,
-      status: device.online ? (device.type.includes('灌溉') && plot.value.irrigating ? '运行中' : '在线') : '离线',
+    communicationStatus: device.online ? '在线' : '离线',
+    collectionStatus: device.workStatus || (device.running ? '运行中' : '已停止采集'),
     last: device.lastHeartbeat || '-',
     data: device.type.includes('温度') ? `${plot.value.temperature}℃` : device.type.includes('湿度') ? `${plot.value.humidity}%` : plot.value.irrigating ? '灌溉中' : '已关闭',
   }))
   return Object.values(plot.value.devices || {}).filter(Boolean).map((device) => ({
-    ...device, status: plot.value.deviceOnline ? (device.type?.includes('灌溉') && plot.value.irrigating ? '运行中' : '在线') : '离线', last: plot.value.lastHeartbeat || '-',
+    ...device, communicationStatus: device.online ? '在线' : '离线', collectionStatus: device.workStatus || (device.running ? '运行中' : '已停止采集'), last: device.lastHeartbeat || plot.value.lastHeartbeat || '-',
     data: device.type?.includes('温度') ? `${plot.value.temperature}℃` : device.type?.includes('湿度') ? `${plot.value.humidity}%` : plot.value.irrigating ? '灌溉中' : '已关闭',
   }))
 })
@@ -80,7 +81,7 @@ const devices = computed(() => {
       <el-table :data="records" class="compact-table">
         <el-table-column prop="startTime" label="开始时间" min-width="170" />
         <el-table-column prop="endTime" label="结束时间" min-width="170"><template #default="scope">{{ scope.row.endTime || '进行中' }}</template></el-table-column>
-        <el-table-column prop="duration" label="时长（分钟）" width="120" />
+        <el-table-column prop="durationText" label="计划/实际时长" min-width="165" />
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column prop="operationType" label="动作" width="90" />
         <el-table-column prop="activationType" label="触发方式" width="110" />
@@ -89,12 +90,13 @@ const devices = computed(() => {
     </section>
 
     <section class="content-panel device-panel">
-      <div class="section-head"><div><h3>设备运行状态</h3><p>查看当前地块各类设备的在线状态、实时数据和最后心跳</p></div></div>
+      <div class="section-head"><div><h3>设备通信与采集状态</h3><p>通信在线与是否正在采集分别显示，停止采集不等于设备离线</p></div></div>
       <el-table :data="devices" class="compact-table">
         <el-table-column prop="id" label="设备ID" width="85" />
         <el-table-column prop="deviceNo" label="设备编号" min-width="125" />
         <el-table-column prop="type" label="设备类型" min-width="120" />
-        <el-table-column label="状态" width="100"><template #default="scope"><span :class="['status-pill', scope.row.status === '离线' ? 'danger' : scope.row.status === '运行中' ? 'info' : '']">{{ scope.row.status }}</span></template></el-table-column>
+        <el-table-column label="通信状态" width="105"><template #default="scope"><span :class="['status-pill', scope.row.communicationStatus === '离线' ? 'danger' : '']">{{ scope.row.communicationStatus }}</span></template></el-table-column>
+        <el-table-column label="采集状态" width="125"><template #default="scope"><span :class="['status-pill', scope.row.collectionStatus === '已停止采集' ? 'info' : '']">{{ scope.row.collectionStatus }}</span></template></el-table-column>
         <el-table-column prop="data" label="当前数据" min-width="100" />
         <el-table-column prop="last" label="最后心跳" min-width="170" />
       </el-table>

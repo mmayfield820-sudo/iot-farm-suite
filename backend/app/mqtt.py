@@ -6,7 +6,7 @@ import math
 import os
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +36,9 @@ class MqttService:
         self.port = int(os.getenv("MQTT_PORT", "1883"))
         self.pair_timeout_seconds = int(
             os.getenv("TELEMETRY_PAIR_TIMEOUT_SECONDS", "30")
+        )
+        self.offline_timeout_seconds = int(
+            os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "90")
         )
         self.command_ack_timeout_seconds = int(
             os.getenv("COMMAND_ACK_TIMEOUT_SECONDS", "30")
@@ -135,13 +138,18 @@ class MqttService:
         device_uuid = self._parse_device_uuid(payload["deviceId"])
         self._parse_sequence(payload["seq"], "seq")
         timestamp = self._parse_timestamp(payload["ts"])
-        self._parse_switch(payload["switch"])
+        switch = self._parse_switch(payload["switch"])
         if payload.get("reason") not in {"local", "remote", "auto", "heartbeat"}:
             raise ValueError("unsupported state reason")
         if not isinstance(payload.get("values"), dict):
             raise ValueError("state values must be an object")
         with engine.begin() as connection:
-            self._touch_device(connection, device_uuid, timestamp)
+            self._touch_device(
+                connection,
+                device_uuid,
+                timestamp,
+                work_status=self._work_status(switch),
+            )
 
     def _handle_heartbeat(self, payload: dict[str, Any]) -> None:
         self._parse_sequence(payload["seq"], "seq")
@@ -157,7 +165,7 @@ class MqttService:
                     raise ValueError("heartbeat sensor entries must be objects")
                 if not snapshot.get("deviceId"):
                     raise ValueError("heartbeat sensor deviceId is required")
-                self._parse_switch(snapshot["switch"])
+                switch = self._parse_switch(snapshot["switch"])
                 if not isinstance(snapshot.get("name"), str) or not snapshot["name"].strip():
                     raise ValueError("heartbeat sensor name is required")
                 if not isinstance(snapshot.get("values"), dict):
@@ -166,6 +174,7 @@ class MqttService:
                     connection,
                     self._parse_device_uuid(snapshot["deviceId"]),
                     timestamp,
+                    work_status=self._work_status(switch),
                 )
 
     def _handle_telemetry(self, device_uuid: str, payload: dict[str, Any]) -> None:
@@ -206,7 +215,8 @@ class MqttService:
                 text(
                     """
                     UPDATE device
-                    SET status = 'online', last_heartbeat = :last_heartbeat
+                    SET status = 'online', work_status = 'running',
+                        last_heartbeat = :last_heartbeat
                     WHERE device_id = :device_id
                     """
                 ),
@@ -215,7 +225,6 @@ class MqttService:
                     "device_id": device["device_id"],
                 },
             )
-
         reading = Reading(
             device_id=device["device_id"],
             value=value,
@@ -252,7 +261,13 @@ class MqttService:
             if device is None:
                 logger.warning("Ignored command result from unknown device %s", device_uuid)
                 return
-            self._touch_device(connection, device_uuid, timestamp, device)
+            self._touch_device(
+                connection,
+                device_uuid,
+                timestamp,
+                device,
+                work_status=self._work_status(switch),
+            )
 
             updated = connection.execute(
                 text(
@@ -294,6 +309,7 @@ class MqttService:
         switch: str,
         operator_id: int | None = None,
         activation_type: str = "manual",
+        planned_duration_minutes: int | None = None,
     ) -> dict[str, Any]:
         """Publish an irrigation command and wait for the device ACK to settle it."""
         device_uuid = self._parse_device_uuid(device_uuid)
@@ -322,10 +338,12 @@ class MqttService:
                     """
                     INSERT INTO irrigation_record (
                         command_id, plot_id, device_id, action_type,
-                        activation_type, operator_id, requested_at, status
+                        activation_type, operator_id, planned_duration_minutes,
+                        requested_at, status
                     ) VALUES (
                         :command_id, :plot_id, :device_id, :action_type,
-                        :activation_type, :operator_id, :requested_at, 'pending'
+                        :activation_type, :operator_id, :planned_duration_minutes,
+                        :requested_at, 'pending'
                     )
                     """
                 ),
@@ -336,6 +354,7 @@ class MqttService:
                     "action_type": switch,
                     "activation_type": activation_type,
                     "operator_id": operator_id,
+                    "planned_duration_minutes": planned_duration_minutes if switch == "on" else None,
                     "requested_at": requested_at,
                 },
             )
@@ -374,12 +393,13 @@ class MqttService:
         self._parse_sequence(payload["seq"], "seq")
         device_uuid = self._parse_device_uuid(payload["deviceId"])
         self._parse_sequence(payload["cmdSeq"], "cmdSeq")
-        self._parse_switch(payload["switch"])
+        switch = self._parse_switch(payload["switch"])
         with engine.begin() as connection:
             self._touch_device(
                 connection,
                 device_uuid,
                 datetime.now(UTC).replace(tzinfo=None),
+                work_status=self._work_status(switch),
             )
 
     def _handle_query_all_ack(self, payload: dict[str, Any]) -> None:
@@ -393,10 +413,12 @@ class MqttService:
             for sensor in sensors:
                 if not isinstance(sensor, dict):
                     continue
+                switch = self._parse_switch(sensor["switch"])
                 self._touch_device(
                     connection,
                     self._parse_device_uuid(sensor["deviceId"]),
                     timestamp,
+                    work_status=self._work_status(switch),
                 )
 
     def _store_reading(self, plot_id: int, metric_type: str, reading: Reading) -> None:
@@ -497,8 +519,25 @@ class MqttService:
                     )
                     self._record_missing_reading_alert(plot_id, missing_type, now)
                 self._expire_pending_commands(now)
+                self._expire_offline_devices(now)
             except Exception:
                 logger.exception("Failed to run MQTT timeout checks")
+
+    def _expire_offline_devices(self, timestamp: datetime) -> None:
+        cutoff = timestamp - timedelta(seconds=self.offline_timeout_seconds)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE device
+                    SET status = 'offline', work_status = 'stopped'
+                    WHERE status = 'online'
+                      AND last_heartbeat IS NOT NULL
+                      AND last_heartbeat < :cutoff
+                    """
+                ),
+                {"cutoff": cutoff},
+            )
 
     def _expire_pending_commands(self, timestamp: datetime) -> None:
         cutoff = timestamp.timestamp() - self.command_ack_timeout_seconds
@@ -665,6 +704,10 @@ class MqttService:
         return value
 
     @staticmethod
+    def _work_status(switch: str) -> str:
+        return "running" if switch == "on" else "stopped"
+
+    @staticmethod
     def _parse_message_id(value: Any) -> str:
         if not isinstance(value, (str, int)) or isinstance(value, bool):
             raise ValueError("msgId must be a string or integer")
@@ -693,6 +736,7 @@ class MqttService:
         device_uuid: str,
         timestamp: datetime,
         device: Any = None,
+        work_status: str | None = None,
     ) -> Any:
         device = device or self._find_device(connection, device_uuid)
         if device is None:
@@ -702,10 +746,16 @@ class MqttService:
             text(
                 """
                 UPDATE device
-                SET status = 'online', last_heartbeat = :last_heartbeat
+                SET status = 'online',
+                    work_status = COALESCE(:work_status, work_status),
+                    last_heartbeat = :last_heartbeat
                 WHERE device_id = :device_id
                 """
             ),
-            {"last_heartbeat": timestamp, "device_id": device["device_id"]},
+            {
+                "last_heartbeat": timestamp,
+                "work_status": work_status,
+                "device_id": device["device_id"],
+            },
         )
         return device

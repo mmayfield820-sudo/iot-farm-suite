@@ -21,7 +21,10 @@ services:
       - ../database/schema/005_unbound_device_support.sql:/docker-entrypoint-initdb.d/005_unbound_device_support.sql:ro
       - ../database/schema/006_user_registration_and_scopes.sql:/docker-entrypoint-initdb.d/006_user_registration_and_scopes.sql:ro
       - ../database/schema/007_localize_demo_data.sql:/docker-entrypoint-initdb.d/007_localize_demo_data.sql:ro
+      - ../database/schema/008_device_runtime_status.sql:/docker-entrypoint-initdb.d/008_device_runtime_status.sql:ro
+      - ../database/schema/009_irrigation_duration.sql:/docker-entrypoint-initdb.d/009_irrigation_duration.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
+      - ../database/seed/002_orange_demo_reset.sql:/docker-entrypoint-initdb.d/010_orange_demo_reset.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 10s

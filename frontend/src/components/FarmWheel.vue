@@ -16,7 +16,7 @@
         class="farm-card"
         :class="{
           active: index === currentIndex,
-          danger: farm.status === 'danger',
+          danger: farm.status === 'danger' || farm.status === 'offline',
           watering: farm.status === 'watering'
         }"
         :style="cardStyle(index)"
@@ -74,7 +74,7 @@
             class="status-indicator"
             :class="{
               normal: farm.status === 'normal',
-              danger: farm.status === 'danger',
+              danger: farm.status === 'danger' || farm.status === 'offline',
               watering: farm.status === 'watering'
             }"
           ></span>
@@ -99,7 +99,7 @@
             </div>
 
             <h2>
-              <span class="tree-icon">🌳</span>
+              <span class="tree-icon">🍊</span>
               {{ farm.name }}
             </h2>
 
@@ -164,7 +164,7 @@
                 class="status-dot"
                 :class="{
                   normal: farm.status === 'normal',
-                  danger: farm.status === 'danger',
+                  danger: farm.status === 'danger' || farm.status === 'offline',
                   watering: farm.status === 'watering'
                 }"
               ></span>
@@ -253,7 +253,7 @@
         class="indicator"
         :class="{
           active: index === currentIndex,
-          danger: farm.status === 'danger',
+          danger: farm.status === 'danger' || farm.status === 'offline',
           watering: farm.status === 'watering'
         }"
         :aria-label="`查看${farm.name}`"
@@ -285,13 +285,7 @@ import {
    背景图片
 ========================================================= */
 
-import tomatoBg from '@/assets/crops/tomato.png'
-import pepperBg from '@/assets/crops/pepper.png'
-import waterSpinachBg from '@/assets/crops/water-spinach.png'
-import cucumberBg from '@/assets/crops/cucumber.png'
-import lettuceBg from '@/assets/crops/lettuce.png'
-import cornBg from '@/assets/crops/corn.png'
-import strawberryBg from '@/assets/crops/strawberry.png'
+import { orangeCropBackground } from '@/utils/cropAssets'
 
 
 /* =========================================================
@@ -308,16 +302,6 @@ const props = defineProps({
   },
 })
 
-const cropBackgrounds = {
-  番茄: tomatoBg,
-  辣椒: pepperBg,
-  空心菜: waterSpinachBg,
-  黄瓜: cucumberBg,
-  生菜: lettuceBg,
-  玉米: cornBg,
-  草莓: strawberryBg,
-}
-const fallbackBackgrounds = Object.values(cropBackgrounds)
 const farms = computed(() => props.plots.map((plot, index) => ({
   id: String(plot.plotId),
   name: plot.plotName,
@@ -325,10 +309,12 @@ const farms = computed(() => props.plots.map((plot, index) => ({
   temperature: Number(plot.temperature ?? 0),
   status: plot.irrigating || plot.status === 'irrigating'
     ? 'watering'
-    : plot.status === 'alert' || !plot.deviceOnline
-      ? 'danger'
-      : 'normal',
-  background: cropBackgrounds[plot.cropName] || fallbackBackgrounds[index % fallbackBackgrounds.length],
+    : !plot.deviceOnline
+      ? 'offline'
+      : plot.status === 'alert'
+        ? 'danger'
+        : 'normal',
+  background: orangeCropBackground(plot.cropName, index),
 })))
 
 
@@ -360,26 +346,29 @@ const AUTO_TIME = 3200
 ========================================================= */
 
 const rainDrops = Array.from(
-  { length: 42 },
+  { length: 68 },
   (_, index) => {
 
     const left =
       Math.random() * 100
 
     const height =
-      10 + Math.random() * 15
+      14 + Math.random() * 20
 
     const duration =
-      0.65 + Math.random() * 0.7
+      0.58 + Math.random() * 0.52
 
     const delay =
       Math.random() * 1.8
 
     const opacity =
-      0.18 + Math.random() * 0.32
+      0.34 + Math.random() * 0.42
 
     const drift =
-      3 + Math.random() * 8
+      7 + Math.random() * 11
+
+    const width =
+      index % 5 === 0 ? 2 : 1
 
     return {
 
@@ -397,7 +386,9 @@ const rainDrops = Array.from(
           `${duration}s`,
 
         animationDelay:
-          `${delay}s`,
+          `-${delay}s`,
+
+        width: `${width}px`,
 
         '--rain-drift':
           `${drift}px`
@@ -728,6 +719,14 @@ function openMonitor(farm) {
 function statusText(farm) {
 
   if (
+    farm.status === 'offline'
+  ) {
+
+    return '暂未接入设备'
+
+  }
+
+  if (
     farm.status === 'danger'
   ) {
 
@@ -851,11 +850,11 @@ onUnmounted(() => {
   border: 1px solid
     rgba(255,255,255,.55);
 
-  background: #26372e;
+  background: #4a2b18;
 
   box-shadow:
     0 30px 70px
-    rgba(23,44,30,.25);
+    rgba(82,43,16,.25);
 
   transition:
     transform 1.25s
@@ -879,7 +878,7 @@ onUnmounted(() => {
 
   box-shadow:
     0 42px 110px
-      rgba(20,48,29,.32),
+      rgba(99,50,16,.32),
     0 10px 30px
       rgba(0,0,0,.12);
 
@@ -938,10 +937,10 @@ onUnmounted(() => {
   background:
     linear-gradient(
       90deg,
-      rgba(11,28,19,.88) 0%,
-      rgba(14,35,23,.72) 35%,
-      rgba(17,37,25,.38) 68%,
-      rgba(11,28,18,.20) 100%
+      rgba(54,27,12,.88) 0%,
+      rgba(75,37,14,.72) 35%,
+      rgba(88,45,18,.38) 68%,
+      rgba(48,24,10,.20) 100%
     );
 
 }
@@ -1187,7 +1186,7 @@ onUnmounted(() => {
   border-radius: 16px;
 
   background:
-    rgba(7,24,15,.28);
+    rgba(48,23,8,.34);
 
   backdrop-filter:
     blur(10px);
@@ -1278,11 +1277,11 @@ onUnmounted(() => {
   border-radius: inherit;
 
   background:
-    rgba(157,207,103,.88);
+    rgba(245,165,63,.92);
 
   box-shadow:
     0 0 8px
-    rgba(157,207,103,.32);
+    rgba(245,150,39,.36);
 
 }
 
@@ -1471,6 +1470,18 @@ onUnmounted(() => {
 
   pointer-events: none;
 
+  opacity: .92;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(124, 206, 235, .08),
+      transparent 42%,
+      rgba(96, 186, 218, .06)
+    );
+
+  mix-blend-mode: screen;
+
 }
 
 
@@ -1484,8 +1495,6 @@ onUnmounted(() => {
 
   top: -30px;
 
-  width: 1px;
-
   min-width: 1px;
 
   border-radius: 999px;
@@ -1494,8 +1503,12 @@ onUnmounted(() => {
     linear-gradient(
       180deg,
       rgba(225,246,255,0),
-      rgba(215,242,255,.72)
+      rgba(222,247,255,.98)
     );
+
+  box-shadow:
+    0 0 3px
+    rgba(157, 222, 244, .38);
 
   transform:
     rotate(14deg);
@@ -1504,6 +1517,22 @@ onUnmounted(() => {
     rainFall
     linear
     infinite;
+
+}
+
+
+.rain-drop:nth-child(3n) {
+
+  filter: blur(.35px);
+
+}
+
+
+.rain-drop:nth-child(5n) {
+
+  box-shadow:
+    0 0 5px
+    rgba(180, 234, 251, .58);
 
 }
 
@@ -1682,7 +1711,7 @@ onUnmounted(() => {
 
   bottom: 0;
 
-  width: 5px;
+  width: 10px;
 
   z-index: 6;
 
@@ -1699,6 +1728,7 @@ onUnmounted(() => {
     rgba(245,103,91,.28);
 
 }
+
 
 
 /* =========================================================
@@ -1905,7 +1935,7 @@ onUnmounted(() => {
   border-radius: 10px;
 
   background:
-    rgba(71,105,76,.28);
+    rgba(157,91,38,.28);
 
   cursor: pointer;
 
@@ -1922,11 +1952,11 @@ onUnmounted(() => {
   width: 27px;
 
   background:
-    #6d9c55;
+    #e47a20;
 
   box-shadow:
     0 3px 10px
-    rgba(89,139,68,.24);
+    rgba(228,122,32,.26);
 
 }
 

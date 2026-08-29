@@ -5,9 +5,9 @@ START TRANSACTION;
 
 UPDATE users
 SET real_name = CASE username
-  WHEN 'demo_admin' THEN '张三'
-  WHEN 'demo_farmer' THEN '李四'
-  WHEN 'demo_system' THEN '王五'
+  WHEN 'demo_admin' THEN '张园长'
+  WHEN 'demo_farmer' THEN '李果农'
+  WHEN 'demo_system' THEN '王管理员'
   ELSE real_name
 END
 WHERE username IN ('demo_admin', 'demo_farmer', 'demo_system');
@@ -17,8 +17,7 @@ JOIN users AS u ON u.user_id = f.admin_user_id
 SET f.farm_name = '演示农场',
     f.city = '杭州市',
     f.address = '浙江省杭州市演示农业园'
-WHERE u.username = 'demo_admin'
-  AND f.farm_name IN ('Demo Farm', '演示农场');
+WHERE u.username = 'demo_admin';
 
 UPDATE plot AS p
 JOIN farm AS f ON f.farm_id = p.farm_id
@@ -28,7 +27,10 @@ SET p.plot_name = '一号田地',
     p.crop_name = '番茄',
     p.description = '演示用一号田地'
 WHERE u.username = 'demo_admin'
-  AND p.plot_name IN ('Plot 1', '一号田地');
+  AND EXISTS (
+    SELECT 1 FROM device AS d
+    WHERE d.plot_id = p.plot_id AND d.device_code = 'P001-TEMP'
+  );
 
 UPDATE plot AS p
 JOIN farm AS f ON f.farm_id = p.farm_id
@@ -38,7 +40,10 @@ SET p.plot_name = '二号田地',
     p.crop_name = '黄瓜',
     p.description = '演示用二号田地'
 WHERE u.username = 'demo_admin'
-  AND p.plot_name IN ('Plot 2', '二号田地');
+  AND EXISTS (
+    SELECT 1 FROM device AS d
+    WHERE d.plot_id = p.plot_id AND d.device_code = 'P002-TEMP'
+  );
 
 UPDATE plot AS p
 JOIN farm AS f ON f.farm_id = p.farm_id
@@ -48,7 +53,10 @@ SET p.plot_name = '三号田地',
     p.crop_name = '生菜',
     p.description = '演示用三号田地'
 WHERE u.username = 'demo_admin'
-  AND p.plot_name IN ('Plot 3', '三号田地');
+  AND p.farmer_user_id IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM device AS d WHERE d.plot_id = p.plot_id
+  );
 
 UPDATE alert
 SET alert_description = CASE alert_type

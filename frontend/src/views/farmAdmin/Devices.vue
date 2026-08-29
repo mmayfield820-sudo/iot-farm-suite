@@ -1,12 +1,12 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
-import { useUserStore } from '@/stores/user'
+import { useFarmAdminStore } from '@/stores/farmAdmin'
 
 const DEVICE_TYPES = ['温度传感器', '湿度传感器', '灌溉设备']
 const store = usePlatformStore()
-const userStore = useUserStore()
+const farmAdminStore = useFarmAdminStore()
 const keyword = ref('')
 const status = ref('')
 const deviceType = ref('')
@@ -21,11 +21,8 @@ const current = ref(null)
 const form = reactive({ deviceNo: '', deviceUuid: '', type: '温度传感器', farmId: '', plotNo: '' })
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-const farmIds = computed(() => {
-  const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
-  return scoped.length ? scoped : store.farms.map((farm) => String(farm.farmId))
-})
-const currentFarmId = computed(() => farmIds.value[0] || '')
+const farmIds = computed(() => farmAdminStore.selectedFarmIds)
+const currentFarmId = computed(() => farmAdminStore.selectedFarmId === farmAdminStore.ALL_FARMS ? farmIds.value[0] || '' : farmAdminStore.selectedFarmId)
 const devices = computed(() => store.devices.filter((item) =>
   farmIds.value.includes(String(item.farmId)) &&
   (!keyword.value || `${item.id}${item.deviceNo}`.toLowerCase().includes(keyword.value.toLowerCase())) &&
@@ -37,6 +34,15 @@ const logs = computed(() => store.auditLogs.filter((item) => ['设备管理', '�
 const latestHeartbeat = computed(() => devices.value.map((item) => item.lastHeartbeat).filter(Boolean).sort().at(-1) || '暂无')
 const validImportCount = computed(() => importRows.value.filter((item) => item.valid).length)
 let excelModule
+
+watch(() => farmAdminStore.selectedFarmId, () => {
+  keyword.value = ''
+  status.value = ''
+  deviceType.value = ''
+  dialog.value = false
+  bindDialog.value = false
+  importDialog.value = false
+})
 
 async function getExcelJS() {
   if (!excelModule) excelModule = (await import('exceljs')).default
@@ -217,7 +223,8 @@ async function downloadTemplate() {
         <el-table-column prop="deviceNo" label="设备编号" min-width="125"/>
         <el-table-column prop="type" label="设备类型" min-width="120"/>
         <el-table-column prop="plotNo" label="所属地块" width="100"><template #default="scope">{{ scope.row.plotNo || '未绑定' }}</template></el-table-column>
-        <el-table-column prop="status" label="状态" width="90"><template #default="scope"><span :class="['status-pill',scope.row.status === '异常' ? 'danger' : '']">{{ scope.row.status }}</span></template></el-table-column>
+        <el-table-column prop="status" label="通信状态" width="105"><template #default="scope"><span :class="['status-pill',scope.row.status === '离线' ? 'danger' : '']">{{ scope.row.status }}</span></template></el-table-column>
+        <el-table-column prop="workStatus" label="采集状态" width="125"><template #default="scope"><span :class="['status-pill',scope.row.workStatus === '已停止采集' ? 'info' : '']">{{ scope.row.workStatus }}</span></template></el-table-column>
         <el-table-column prop="lastHeartbeat" label="最后心跳" min-width="170"/>
         <el-table-column label="操作" fixed="right" width="160"><template #default="scope"><el-button link type="primary" @click="openBind(scope.row)">{{ scope.row.plotNo ? '换绑' : '绑定' }}</el-button><el-button v-if="scope.row.plotNo" link type="danger" @click="unbind(scope.row)">解绑</el-button></template></el-table-column>
       </el-table>
@@ -225,9 +232,9 @@ async function downloadTemplate() {
 
     <section class="content-panel logs"><div class="section-head"><div><h3>设备操作记录</h3><p>记录设备录入、绑定、换绑和解绑操作</p></div></div><el-table :data="logs" class="compact-table"><el-table-column prop="time" label="时间" min-width="170"/><el-table-column prop="user" label="操作人" min-width="130"/><el-table-column prop="module" label="类型" width="110"/><el-table-column prop="action" label="操作内容" min-width="260"/><el-table-column prop="result" label="结果" width="90"/></el-table></section>
 
-    <el-dialog v-model="dialog" title="录入设备" width="520px"><el-form label-position="top"><el-form-item label="设备编号"><el-input v-model="form.deviceNo" placeholder="例如 SENSOR-010"/></el-form-item><el-form-item label="设备 UUID"><el-input v-model="form.deviceUuid" placeholder="例如 123e4567-e89b-42d3-a456-426614174000"/></el-form-item><el-form-item label="设备类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="item in DEVICE_TYPES" :key="item" :label="item" :value="item"/></el-select></el-form-item><el-form-item label="所属地块"><el-select v-model="form.plotNo" style="width:100%" placeholder="请选择所属地块"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog>
+    <el-dialog v-model="dialog" title="录入设备" width="520px"><el-form label-position="top"><el-form-item label="设备编号"><el-input v-model="form.deviceNo" placeholder="例如 SENSOR-010"/></el-form-item><el-form-item label="设备 UUID"><el-input v-model="form.deviceUuid" placeholder="例如 123e4567-e89b-42d3-a456-426614174000"/></el-form-item><el-form-item label="设备类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="item in DEVICE_TYPES" :key="item" :label="item" :value="item"/></el-select></el-form-item><el-form-item label="所属地块"><el-select v-model="form.plotNo" style="width:100%" placeholder="请选择所属地块"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.farmName || item.farmId} · ${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog>
 
-    <el-dialog v-model="bindDialog" title="绑定设备" width="460px"><el-alert title="换绑或解绑不会删除设备已经产生的历史数据" type="warning" :closable="false" show-icon/><el-form label-position="top" class="bind-form"><el-form-item label="目标地块"><el-select v-model="form.plotNo" style="width:100%"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="bindDialog=false">取消</el-button><el-button type="primary" @click="saveBind">确认绑定</el-button></template></el-dialog>
+    <el-dialog v-model="bindDialog" title="绑定设备" width="460px"><el-alert title="换绑或解绑不会删除设备已经产生的历史数据" type="warning" :closable="false" show-icon/><el-form label-position="top" class="bind-form"><el-form-item label="目标地块"><el-select v-model="form.plotNo" style="width:100%"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.farmName || item.farmId} · ${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="bindDialog=false">取消</el-button><el-button type="primary" @click="saveBind">确认绑定</el-button></template></el-dialog>
 
     <el-dialog v-model="importDialog" title="Excel 批量导入设备" width="760px" class="import-dialog">
       <input ref="importInput" class="file-input" type="file" accept=".xlsx" @change="readExcel">

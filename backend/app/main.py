@@ -78,6 +78,7 @@ class RejectRegistrationRequest(BaseModel):
 class CommandCreateRequest(BaseModel):
     action: str
     activationType: str = "manual"
+    plannedDuration: int | None = Field(default=None, ge=1, le=240)
 
 
 class DeviceCreateRequest(BaseModel):
@@ -171,6 +172,7 @@ def device_payload(row: Any) -> dict[str, Any]:
             else None
         ),
         "status": value_of(row, "status"),
+        "workStatus": value_of(row, "work_status") or "stopped",
         "lastSeenAt": iso(value_of(row, "last_heartbeat")),
     }
 
@@ -267,8 +269,10 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
             text(
                 """
                 SELECT p.plot_name, p.crop_name, p.location,
+                       f.city AS farm_city, f.address AS farm_address,
                        t.soil_moisture_threshold
                 FROM plot AS p
+                JOIN farm AS f ON f.farm_id = p.farm_id
                 LEFT JOIN threshold_config AS t ON t.plot_id = p.plot_id
                 WHERE p.plot_id = :plot_id
                 """
@@ -314,6 +318,8 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
         "plotName": plot["plot_name"],
         "cropName": plot["crop_name"],
         "location": plot["location"],
+        "farmCity": plot["farm_city"],
+        "farmAddress": plot["farm_address"],
         "soilMoistureThreshold": (
             float(plot["soil_moisture_threshold"])
             if plot["soil_moisture_threshold"] is not None
@@ -344,7 +350,7 @@ def device_scope(device_id: int, user: dict[str, Any], *, allow_unbound_admin: b
             text(
                 """
                 SELECT d.device_id, d.device_code, d.device_uuid, d.device_type,
-                       d.plot_id, d.status, d.last_heartbeat,
+                       d.plot_id, d.status, d.work_status, d.last_heartbeat,
                        p.farmer_user_id, f.admin_user_id
                 FROM device AS d
                 LEFT JOIN plot AS p ON p.plot_id = d.plot_id
@@ -538,6 +544,56 @@ def irrigation_record_payload(row: Any) -> dict[str, Any]:
         "requestedAt": iso(value_of(row, "requested_at")),
         "executedAt": iso(value_of(row, "executed_at")),
     }
+
+
+def irrigation_session_payloads(rows: list[Any]) -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    active_by_device: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        action = value_of(row, "action_type")
+        status_code = value_of(row, "status")
+        occurred_at = (
+            value_of(row, "executed_at")
+            if status_code == "success" and value_of(row, "executed_at") is not None
+            else value_of(row, "requested_at")
+        )
+        device_id = value_of(row, "device_id")
+        if action == "on":
+            session = {
+                "recordId": business_id("IR", value_of(row, "record_id")),
+                "commandId": value_of(row, "command_id"),
+                "plotId": business_id("P", value_of(row, "plot_id")),
+                "deviceId": business_id("D", device_id),
+                "operationType": "irrigation_on",
+                "activationType": value_of(row, "activation_type"),
+                "operatorId": (
+                    business_id("U", value_of(row, "operator_id"))
+                    if value_of(row, "operator_id") is not None else None
+                ),
+                "operator": value_of(row, "operator_name") or "系统",
+                "plannedDuration": value_of(row, "planned_duration_minutes"),
+                "startedAt": iso(occurred_at),
+                "endedAt": None,
+                "actualDuration": None,
+                "status": status_code,
+            }
+            sessions.append(session)
+            if status_code == "success":
+                active_by_device[device_id] = session
+        elif action == "off" and status_code == "success":
+            session = active_by_device.pop(device_id, None)
+            if session is not None:
+                session["endedAt"] = iso(occurred_at)
+                started_at = value_of(row, "paired_started_at")
+                if started_at is not None and occurred_at is not None:
+                    session["actualDuration"] = round(
+                        max(0, (occurred_at - started_at).total_seconds()) / 60,
+                        2,
+                    )
+                session["status"] = "success"
+    for session in active_by_device.values():
+        session["status"] = "in_progress"
+    return list(reversed(sessions))
 
 
 def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
@@ -1115,7 +1171,7 @@ def farm_overview(
                 text(
                     """
                            SELECT device_id, device_code, device_uuid, device_type,
-                           plot_id, status, last_heartbeat
+                           plot_id, status, work_status, last_heartbeat
                     FROM device
                     WHERE plot_id = :plot_id
                     ORDER BY device_id
@@ -1206,7 +1262,7 @@ def list_devices(
             text(
                 f"""
                 SELECT d.device_id, d.device_code, d.device_uuid, d.device_type,
-                       d.plot_id, d.status, d.last_heartbeat
+                       d.plot_id, d.status, d.work_status, d.last_heartbeat
                 FROM device AS d
                 LEFT JOIN plot AS p ON p.plot_id = d.plot_id
                 LEFT JOIN farm AS f ON f.farm_id = p.farm_id
@@ -1258,7 +1314,7 @@ def create_device(
             text(
                 """
                 SELECT device_id, device_code, device_uuid, device_type,
-                       plot_id, status, last_heartbeat
+                       plot_id, status, work_status, last_heartbeat
                 FROM device WHERE device_id = :device_id
                 """
             ),
@@ -1289,7 +1345,7 @@ def bind_device(
             text(
                 """
                 SELECT device_id, device_code, device_uuid, device_type,
-                       plot_id, status, last_heartbeat
+                       plot_id, status, work_status, last_heartbeat
                 FROM device WHERE device_id = :device_id
                 """
             ),
@@ -1307,7 +1363,10 @@ def unbind_device(
     ensure_device_manage_access(numeric_device_id, user)
     with engine.begin() as connection:
         connection.execute(
-            text("UPDATE device SET plot_id = NULL, status = 'offline' WHERE device_id = :device_id"),
+            text(
+                "UPDATE device SET plot_id = NULL, status = 'offline', "
+                "work_status = 'stopped' WHERE device_id = :device_id"
+            ),
             {"device_id": numeric_device_id},
         )
 
@@ -1321,6 +1380,7 @@ def get_device_status(
     return {
         "deviceId": business_id("D", device["device_id"]),
         "status": device["status"],
+        "workStatus": device.get("work_status") or "stopped",
         "lastSeenAt": iso(device["last_heartbeat"]),
     }
 
@@ -1366,6 +1426,7 @@ def create_device_command(
             switch=action,
             operator_id=user["user_id"],
             activation_type=request.activationType,
+            planned_duration_minutes=request.plannedDuration,
         )
         return {
             "commandId": command["commandId"],
@@ -1466,16 +1527,30 @@ def list_irrigation_records(
         rows = connection.execute(
             text(
                 """
-                SELECT record_id, command_id, plot_id, device_id, action_type,
-                       activation_type, status, requested_at, executed_at
-                FROM irrigation_record
-                WHERE plot_id = :plot_id
-                ORDER BY requested_at DESC, record_id DESC
+                SELECT r.record_id, r.command_id, r.plot_id, r.device_id, r.action_type,
+                       r.activation_type, r.operator_id, r.planned_duration_minutes,
+                       r.status, r.requested_at, r.executed_at,
+                       COALESCE(u.real_name, u.username) AS operator_name,
+                       CASE WHEN r.action_type = 'off' THEN (
+                         SELECT COALESCE(previous_on.executed_at, previous_on.requested_at)
+                         FROM irrigation_record AS previous_on
+                         WHERE previous_on.device_id = r.device_id
+                           AND previous_on.action_type = 'on'
+                           AND previous_on.status = 'success'
+                           AND COALESCE(previous_on.executed_at, previous_on.requested_at)
+                               < COALESCE(r.executed_at, r.requested_at)
+                         ORDER BY COALESCE(previous_on.executed_at, previous_on.requested_at) DESC
+                         LIMIT 1
+                       ) END AS paired_started_at
+                FROM irrigation_record AS r
+                LEFT JOIN users AS u ON u.user_id = r.operator_id
+                WHERE r.plot_id = :plot_id
+                ORDER BY r.requested_at, r.record_id
                 """
             ),
             {"plot_id": numeric_plot_id},
         ).mappings().all()
-    return [irrigation_record_payload(row) for row in rows]
+    return irrigation_session_payloads(rows)
 
 
 @app.get("/api/plots/{plot_id}/irrigation-settings")
@@ -1795,6 +1870,26 @@ def save_alert_rule(
     return alert_rule_payload(row)
 
 
+@app.get("/api/chat/health")
+def chat_health(_user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    service_url = os.getenv("AI_SERVICE_URL", "").rstrip("/")
+    if not service_url:
+        return {"available": False, "modelEnabled": False, "searchEnabled": False}
+    try:
+        with urlopen(
+            f"{service_url}/health",
+            timeout=float(os.getenv("AI_HEALTH_TIMEOUT_SECONDS", "5")),
+        ) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return {
+            "available": result.get("status") == "ok",
+            "modelEnabled": bool(result.get("modelEnabled")),
+            "searchEnabled": bool(result.get("searchEnabled")),
+        }
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return {"available": False, "modelEnabled": False, "searchEnabled": False}
+
+
 @app.post("/api/chat/sessions/{session_id}/messages")
 def send_chat_message(
     session_id: str,
@@ -1822,7 +1917,7 @@ def send_chat_message(
     try:
         with urlopen(
             Request(target, data=payload, headers={"Content-Type": "application/json"}),
-            timeout=float(os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "10")),
+            timeout=float(os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "120")),
         ) as response:
             result = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as error:

@@ -1,17 +1,26 @@
-# AI 服务（RAG 智能体）
+# AI 服务
 
-农业知识库 + RAG 检索 + 智能问答接口。被后端调用（`POST /chat`），不直接操作 MQTT 设备。
+当前 AI 服务以 `app/main.py` 为唯一入口，提供农业知识库检索、地块上下文问答、Ollama 模型调用和可选的博查联网搜索。
 
-- 详细启动 / 测试 / 排障 / 接口字段说明：见 [docs/README.md](docs/README.md)
+## 启动
 
-**快速启动：**
+在项目根目录完成 `.env` 配置后运行：
 
-```bash
-cd ai-service
-python app.py        # 默认 8000 端口，浏览器开 http://localhost:8000/docs
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir ai-service
 ```
 
-前置：本地 Ollama（qwen2.5:7b）需在跑。
+也可以使用项目根目录的 `start-all.cmd` 一键启动全部服务。
 
-**机密说明**：API key 放在本地 `local_secrets.py`（已被 `.gitignore` 排除，不入库），
-其他人拉取后需自行创建该文件或在环境变量里配置对应 key 才能使用联网 / embedding 功能。
+## 联网搜索
+
+在根目录 `.env` 中填写：
+
+```dotenv
+BOCHA_API_KEY=你的博查API密钥
+BOCHA_TIMEOUT_SECONDS=20
+```
+
+包含“今天、明天、最新、天气、降雨、价格、行情、新闻”等时效关键词的问题会触发搜索。没有配置密钥、搜索超时或服务报错时，问答会继续执行，并明确说明本次回答已降级为仅使用农田数据和本地知识库。
+
+详细接口、数据流和排障说明见 [docs/README.md](docs/README.md)。

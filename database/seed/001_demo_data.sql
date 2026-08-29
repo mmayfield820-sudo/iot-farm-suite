@@ -1,5 +1,7 @@
 -- Development-only demo data. Safe to execute repeatedly.
 -- All demo accounts use a bcrypt hash of the local development password documented in backend/README.md.
+SET NAMES utf8mb4;
+
 START TRANSACTION;
 
 INSERT INTO users (username, password_hash, email, phone)

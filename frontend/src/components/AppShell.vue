@@ -4,14 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { ROLE_LABEL, useUserStore } from '@/stores/user'
 import { useFarmerStore } from '@/stores/farmer'
 import { usePlatformStore } from '@/stores/platform'
+import { useFarmAdminStore } from '@/stores/farmAdmin'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
-const props = defineProps({ title: String, subtitle: String, menu: Array, contextLabel: { type: String, default: '一号示范农场' }, contextStatus: { type: String, default: '运行正常' }, contextStatusTone: { type: String, default: 'success' }, showContext: { type: Boolean, default: true }, hideContextPaths: { type: Array, default: () => [] }, accent: { type: String, default: '#1f7a5b' } })
+const props = defineProps({ title: String, subtitle: String, menu: Array, contextLabel: { type: String, default: '朱衣橙园' }, contextStatus: { type: String, default: '运行正常' }, contextStatusTone: { type: String, default: 'success' }, showContext: { type: Boolean, default: true }, hideContextPaths: { type: Array, default: () => [] }, accent: { type: String, default: '#df741b' } })
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const farmerStore = useFarmerStore()
 const platformStore = usePlatformStore()
+const farmAdminStore = useFarmAdminStore()
 const collapsed = ref(false)
 const fontSize = ref(Number(localStorage.getItem('smart-farm-font-size')) || 14)
 const activePath = computed(() => route.path)
@@ -21,10 +23,7 @@ const notificationTarget = computed(() => userStore.role === 'farmer' ? '/farmer
 const notificationCount = computed(() => {
   if (userStore.role === 'farmer') return farmerStore.unhandledCount
   if (userStore.role === 'farmAdmin') {
-    const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
-    const farmIds = scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
-    const plotIds = platformStore.plots.filter((plot) => farmIds.includes(String(plot.farmId))).map((plot) => String(plot.plotNo))
-    return platformStore.alerts.filter((alert) => alert.status === '未处理' && plotIds.includes(String(alert.plotNo || alert.plotId))).length
+    return farmAdminStore.visibleAlerts.filter((alert) => alert.status === '未处理').length
   }
   return platformStore.unhandledAlerts
 })
@@ -56,7 +55,7 @@ function openNotifications() { router.push(notificationTarget.value) }
 <template>
   <div class="shell" :style="{ '--accent': accent, '--el-color-primary': accent }">
     <aside class="sidebar" :class="{ collapsed }">
-      <div class="brand"><div class="brand-mark">禾</div><div v-if="!collapsed"><strong>{{ title }}</strong><span>{{ subtitle }}</span></div></div>
+      <div class="brand"><div class="brand-mark">橙</div><div v-if="!collapsed"><strong>{{ title }}</strong><span>{{ subtitle }}</span></div></div>
       <el-menu :default-active="activePath" router class="nav" :collapse="collapsed" :collapse-transition="false">
         <el-menu-item v-for="item in menu" :key="item.path" :index="item.path">
           <el-icon><component :is="icon(item.icon)" /></el-icon><template #title>{{ item.label }}</template>
@@ -66,14 +65,14 @@ function openNotifications() { router.push(notificationTarget.value) }
     </aside>
     <section class="workspace">
       <header class="topbar" :class="{ 'context-hidden': !contextVisible }">
-        <div v-if="contextVisible"><span class="farm-dot"></span> {{ contextLabel }} <span :class="['online', contextStatusTone]">{{ contextStatus }}</span></div>
+        <div v-if="contextVisible"><slot name="context"><span class="farm-dot"></span> {{ contextLabel }} <span :class="['online', contextStatusTone]">{{ contextStatus }}</span></slot></div>
         <div class="user-area">
           <el-popover placement="bottom" :width="284" trigger="click" popper-class="font-size-popover">
             <template #reference><button class="font-trigger" title="调节字体大小"><span class="font-small">A</span><span>A</span></button></template>
             <div class="font-control">
               <div class="font-control-head"><div><strong>页面字体大小</strong><small>拖动滑杆即可实时调整</small></div><el-button text size="small" @click="resetFontSize">恢复默认</el-button></div>
               <div class="font-slider"><span>小</span><el-slider v-model="fontSize" :min="12" :max="18" :step="1" :show-tooltip="true" :format-tooltip="(value) => `${value}px`"/><span>大</span></div>
-              <div class="font-preview"><span>预览</span><p>智慧农业，让管理更轻松</p><em>当前 {{ fontSize }}px</em></div>
+              <div class="font-preview"><span>预览</span><p>橙心如意，让橙园管理更轻松</p><em>当前 {{ fontSize }}px</em></div>
             </div>
           </el-popover>
           <el-badge :value="notificationCount" :hidden="!notificationCount" :max="99"><button class="notification-btn" title="查看未处理告警" @click="openNotifications"><el-icon><component :is="icon('Bell')" /></el-icon></button></el-badge>
@@ -103,24 +102,24 @@ function openNotifications() { router.push(notificationTarget.value) }
 
 <style scoped>
 .shell { min-height: 100vh; display: flex; }
-.sidebar { width: 238px; position: fixed; inset: 0 auto 0 0; z-index: 10; display: flex; flex-direction: column; color: #eaf5f1; background: linear-gradient(180deg, #153f34, #102f28); transition: width .2s; }
+.sidebar { width: 238px; position: fixed; inset: 0 auto 0 0; z-index: 10; display: flex; flex-direction: column; color: #fff4e8; background: linear-gradient(180deg, #4c2a18, #2d1b12); transition: width .2s; }
 .sidebar.collapsed { width: 72px; }
 .brand { height: 80px; display: flex; align-items: center; gap: 12px; padding: 0 17px; border-bottom: 1px solid rgba(255,255,255,.09); overflow: hidden; white-space: nowrap; }
-.brand-mark { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border-radius: 12px; background: #55bd88; font-weight: 800; color: #103d31; }
-.brand strong, .brand span { display: block; }.brand strong { font-size: 15px; }.brand span { margin-top: 4px; color: #97bbae; font-size: 11px; letter-spacing: 1px; }
+.brand-mark { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border-radius: 12px; background: linear-gradient(145deg, #ffad49, #ef7d1e); font-weight: 800; color: #4a2816; box-shadow: 0 8px 20px rgba(9,4,1,.2); }
+.brand strong, .brand span { display: block; }.brand strong { font-size: 15px; }.brand span { margin-top: 4px; color: #d7bca7; font-size: 11px; letter-spacing: 1px; }
 .nav { flex: 1; padding: 16px 10px; border: 0; background: transparent; }
-.nav :deep(.el-menu-item) { height: 48px; margin-bottom: 5px; border-radius: 10px; color: #bad0c9; }
+.nav :deep(.el-menu-item) { height: 48px; margin-bottom: 5px; border-radius: 10px; color: #dbc6b6; }
 .nav :deep(.el-menu-item:hover) { background: rgba(255,255,255,.08); color: white; }
 .nav :deep(.el-menu-item.is-active) { color: white; background: var(--accent); }
-.collapse-btn { height: 56px; border: 0; border-top: 1px solid rgba(255,255,255,.09); background: transparent; color: #a9c2ba; display: flex; align-items: center; gap: 12px; padding: 0 26px; cursor: pointer; white-space: nowrap; }
+.collapse-btn { height: 56px; border: 0; border-top: 1px solid rgba(255,255,255,.09); background: transparent; color: #d3bba9; display: flex; align-items: center; gap: 12px; padding: 0 26px; cursor: pointer; white-space: nowrap; }
 .workspace { min-width: 0; flex: 1; margin-left: 238px; transition: margin .2s; }.sidebar.collapsed + .workspace { margin-left: 72px; }
-.topbar { height: 64px; padding: 0 28px; display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,.95); border-bottom: 1px solid var(--line); color: #4d625a; position: sticky; top: 0; z-index: 5; }
+.topbar { height: 64px; padding: 0 28px; display: flex; justify-content: space-between; align-items: center; background: rgba(255,253,249,.95); border-bottom: 1px solid var(--line); color: #6d584a; position: sticky; top: 0; z-index: 5; }
 .topbar.context-hidden { justify-content: flex-end; }
 .farm-dot { width: 8px; height: 8px; display: inline-block; margin-right: 7px; border-radius: 50%; background: #39ae75; box-shadow: 0 0 0 4px #dff4e9; }.online { margin-left: 10px; padding: 4px 8px; border-radius: 9px; font-size: 12px; }.online.success{color:#2a875f;background:#e9f7f0}.online.info{color:#267f99;background:#e7f5f8}.online.warning{color:#a46823;background:#fff3df}.online.danger{color:#b84d4d;background:#fdecec}
 .user-area { display: flex; align-items: center; gap: 10px; }.avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--accent); }
-.notification-btn{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;color:#4f6b61;background:#f8fbf9;cursor:pointer}.notification-btn:hover{border-color:var(--accent);color:var(--accent)}
-.font-trigger{width:38px;height:34px;display:flex;align-items:baseline;justify-content:center;gap:2px;border:1px solid var(--line);border-radius:10px;color:#426458;background:#f8fbf9;cursor:pointer;transition:.2s}.font-trigger:hover{border-color:var(--accent);color:var(--accent);background:#f0f8f4}.font-trigger span{font-size:16px;font-weight:700}.font-trigger .font-small{font-size:10px;font-weight:600}.font-control{padding:2px}.font-control-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.font-control-head strong,.font-control-head small{display:block}.font-control-head strong{color:#29473d;font-size:14px}.font-control-head small{margin-top:4px;color:#8a9893;font-size:11px}.font-slider{display:grid;grid-template-columns:18px 1fr 18px;align-items:center;gap:10px;margin:18px 2px 14px;color:#70847b;font-size:11px}.font-preview{position:relative;padding:12px 13px;border:1px solid #e2eee8;border-radius:11px;background:#f5faf7}.font-preview span{color:#85a096;font-size:10px}.font-preview p{margin:5px 0 0;color:#315347;font-size:var(--app-font-size);font-weight:600}.font-preview em{position:absolute;right:10px;top:10px;color:#5c927a;font-size:10px;font-style:normal}
-.role-switch { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; color: #385249; background: #f8fbf9; cursor: pointer; }.role-switch:hover { border-color: var(--accent); color: var(--accent); }.single-role { padding: 6px 9px; border-radius: 8px; color: var(--accent); background: #f0f6f3; font-size: 13px; }.current-role { color: var(--accent); font-weight: 600; }
+.notification-btn{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;color:#725643;background:#fff9f3;cursor:pointer}.notification-btn:hover{border-color:var(--accent);color:var(--accent)}
+.font-trigger{width:38px;height:34px;display:flex;align-items:baseline;justify-content:center;gap:2px;border:1px solid var(--line);border-radius:10px;color:#704b32;background:#fff9f3;cursor:pointer;transition:.2s}.font-trigger:hover{border-color:var(--accent);color:var(--accent);background:#fff1e4}.font-trigger span{font-size:16px;font-weight:700}.font-trigger .font-small{font-size:10px;font-weight:600}.font-control{padding:2px}.font-control-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.font-control-head strong,.font-control-head small{display:block}.font-control-head strong{color:#59351f;font-size:14px}.font-control-head small{margin-top:4px;color:#9a897e;font-size:11px}.font-slider{display:grid;grid-template-columns:18px 1fr 18px;align-items:center;gap:10px;margin:18px 2px 14px;color:#806f64;font-size:11px}.font-preview{position:relative;padding:12px 13px;border:1px solid #f0dfd0;border-radius:11px;background:#fff8f0}.font-preview span{color:#a28d7e;font-size:10px}.font-preview p{margin:5px 0 0;color:#694126;font-size:var(--app-font-size);font-weight:600}.font-preview em{position:absolute;right:10px;top:10px;color:#b0642e;font-size:10px;font-style:normal}
+.role-switch { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; color: #65452f; background: #fff9f3; cursor: pointer; }.role-switch:hover { border-color: var(--accent); color: var(--accent); }.single-role { padding: 6px 9px; border-radius: 8px; color: var(--accent); background: #fff1e4; font-size: 13px; }.current-role { color: var(--accent); font-weight: 600; }
 .content { padding: 28px; }
 @media (max-width: 900px) { .sidebar { width: 72px; }.sidebar .brand > div:last-child, .collapse-btn span, .nav :deep(.el-menu-item span) { display: none; }.nav :deep(.el-menu-item) { justify-content: center; padding: 0 !important; }.workspace { margin-left: 72px; }.topbar { padding: 0 16px; }.topbar > div:first-child, .display-name { display:none; }.content { padding: 18px; } }
 </style>

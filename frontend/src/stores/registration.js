@@ -21,8 +21,8 @@ const normalizeApplication = (item) => ({
   plotIds: (item.plotIds || item.plot_ids || []).map(String),
   farmIds: (item.farmIds || item.farm_ids || []).map(String),
   status: statusText[item.status] || item.status || '待审核',
-  createdAt: item.createdAt || item.created_at || '',
-  reviewedAt: item.reviewedAt || item.reviewed_at || '',
+  createdAt: formatDateTime(item.createdAt || item.created_at, ''),
+  reviewedAt: formatDateTime(item.reviewedAt || item.reviewed_at, ''),
   rejectReason: item.rejectReason || item.reject_reason || '',
 })
 

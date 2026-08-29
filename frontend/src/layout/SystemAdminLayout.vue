@@ -14,4 +14,4 @@ const menu = [
 ]
 const contextStatus = computed(() => platformStore.loadError ? '数据加载异常' : platformStore.offlineDevices || platformStore.unhandledAlerts ? '存在待处理事项' : '运行正常')
 </script>
-<template><AppShell title="系统管理平台" subtitle="SYSTEM ADMIN" context-label="全系统运行中心" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" :menu="menu" accent="#6b5bb5" /></template>
+<template><AppShell title="橙心如意" subtitle="SYSTEM ADMIN" context-label="脐橙平台运行中心" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" :menu="menu" accent="#c85f18" /></template>

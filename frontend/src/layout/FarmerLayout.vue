@@ -57,4 +57,4 @@ const contextStatusTone = computed(() => {
   return 'success'
 })
 </script>
-<template><AppShell title="智慧农业平台" subtitle="SMART AGRICULTURE" :menu="menu" :context-label="contextLabel" :context-status="contextStatus" :context-status-tone="contextStatusTone" /></template>
+<template><AppShell title="橙心如意" subtitle="FENGJIE ORANGE" :menu="menu" :context-label="contextLabel" :context-status="contextStatus" :context-status-tone="contextStatusTone" /></template>

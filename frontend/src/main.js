@@ -12,5 +12,5 @@ const app = createApp(App)
 for (const [name, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(name, component)
 }
-
+//安装插件（Pinia、路由等）,挂载到 #app
 app.use(createPinia()).use(router).use(ElementPlus).mount('#app')

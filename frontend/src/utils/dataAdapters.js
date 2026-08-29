@@ -49,7 +49,7 @@ export function normalizeFarm(row = {}) {
     city: firstDefined(row.city, ''),
     address: firstDefined(row.address, row.location, ''),
     active: Boolean(firstDefined(row.active, row.Active, true)),
-    createdAt: firstDefined(row.createdAt, row.created_at, ''),
+    createdAt: formatDateTime(firstDefined(row.createdAt, row.created_at, ''), ''),
   }
 }
 
@@ -60,6 +60,8 @@ export function normalizeDevice(row = {}, options = {}) {
   const online = firstDefined(row.online, row.deviceOnline, statusOnline, isHeartbeatOnline(lastHeartbeat, options.offlineMinutes))
   const rawType = firstDefined(row.type, row.deviceType, row.device_type, '未知设备')
   const type = typeMap[rawType] || rawType
+  const rawWorkStatus = firstDefined(row.workStatus, row.work_status, row.running === true ? 'running' : undefined, online ? 'running' : 'stopped')
+  const running = ['running', '运行中'].includes(rawWorkStatus)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo))
   return {
     ...row,
@@ -72,8 +74,12 @@ export function normalizeDevice(row = {}, options = {}) {
     type,
     online: Boolean(online),
     status: online ? '在线' : '离线',
-    lastHeartbeat,
-    createdAt: firstDefined(row.createdAt, row.created_at, ''),
+    workStatusCode: running ? 'running' : 'stopped',
+    workStatus: running ? '运行中' : '已停止采集',
+    running,
+    lastHeartbeatRaw: lastHeartbeat,
+    lastHeartbeat: formatDateTime(lastHeartbeat, ''),
+    createdAt: formatDateTime(firstDefined(row.createdAt, row.created_at, ''), ''),
     latestValue: firstDefined(row.latestValue, row.latest_value, row.value, '-'),
   }
 }
@@ -86,41 +92,59 @@ export function normalizeThreshold(row = {}) {
     irrigationDuration: Number(firstDefined(row.irrigationDuration, row.irrigationLengthMinutes, row.irrigation_length_minutes, row.maxDuration, 30)),
     irrigationInterval: Number(firstDefined(row.irrigationInterval, row.irrigationIntervalMinutes, row.irrigation_interval_minutes, row.cooldown, 60)),
     updatedBy: normalizeId(firstDefined(row.updatedBy, row.updated_by)),
-    updatedAt: firstDefined(row.updatedAt, row.updated_at, ''),
+    updatedAt: formatDateTime(firstDefined(row.updatedAt, row.updated_at, ''), ''),
   }
 }
 
 export function normalizeReport(row = {}) {
+  const createdAt = firstDefined(row.createdAt, row.created_at, row.updateTime, '')
   return {
     reportId: normalizeId(firstDefined(row.reportId, row.report_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id)),
     humidity: Number(firstDefined(row.humidity, row.plotMoisture, row.plot_moisture, 0)),
     temperature: Number(firstDefined(row.temperature, 0)),
-    createdAt: firstDefined(row.createdAt, row.created_at, row.updateTime, ''),
+    createdAtRaw: createdAt,
+    createdAt: formatDateTime(createdAt, ''),
   }
 }
 
 export function normalizeIrrigationRecord(row = {}) {
-  const startTime = firstDefined(row.startTime, row.start_time, row.requestedAt, row.requested_at, '')
-  const endTime = firstDefined(row.endTime, row.end_time, row.executedAt, row.executed_at, '')
+  const startTime = firstDefined(row.startTime, row.start_time, row.startedAt, row.started_at, row.requestedAt, row.requested_at, '')
+  const endTime = firstDefined(row.endTime, row.end_time, row.endedAt, row.ended_at, '')
   const start = parseDate(startTime)
   const end = parseDate(endTime)
-  const statusMap = { pending: '待确认', success: '成功', failed: '失败', timeout: '超时', 执行中: '进行中' }
+  const statusMap = { pending: '待确认', in_progress: '进行中', success: '成功', failed: '失败', timeout: '超时', 执行中: '进行中' }
   const actionMap = { irrigation_on: '开启', irrigation_off: '关闭', on: '开启', off: '关闭' }
+  const activationMap = { manual: '手动', auto: '自动' }
+  const plannedDuration = firstDefined(row.plannedDuration, row.planned_duration, null)
+  const rawActualDuration = firstDefined(
+    row.actualDuration,
+    row.actual_duration,
+    row.duration === '-' ? null : row.duration,
+    start && end ? Math.round(((end - start) / 60000) * 100) / 100 : null,
+  )
+  const actualDuration = rawActualDuration === undefined || rawActualDuration === null || rawActualDuration === '' ? null : rawActualDuration
+  const durationText = actualDuration !== null
+    ? `${plannedDuration ? `计划 ${plannedDuration} / ` : ''}实际 ${actualDuration} 分钟`
+    : plannedDuration ? `计划 ${plannedDuration} / ${endTime ? '暂无实际值' : '进行中'}` : '-'
   return {
     ...row,
     recordId: normalizeId(firstDefined(row.recordId, row.record_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
     operationType: actionMap[firstDefined(row.operationType, row.action, row.actionType, row.action_type, '')] || firstDefined(row.operationType, row.action, row.actionType, row.action_type, ''),
-    activationType: firstDefined(row.activationType, row.activation_type, row.source, '手动'),
+    activationType: activationMap[firstDefined(row.activationType, row.activation_type, row.source)] || firstDefined(row.activationType, row.activation_type, row.source, '手动'),
     operatorId: normalizeId(firstDefined(row.operatorId, row.operator_id)),
     operator: firstDefined(row.operator, row.operatorName, row.operator_name, row.operatorUsername, '系统'),
-    startTime,
-    endTime,
-    duration: firstDefined(row.duration, start && end ? Math.max(0, Math.round((end - start) / 60000)) : '-'),
+    startTimeRaw: startTime,
+    endTimeRaw: endTime,
+    startTime: formatDateTime(startTime, ''),
+    endTime: formatDateTime(endTime, ''),
+    plannedDuration,
+    duration: actualDuration ?? '-',
+    durationText,
     status: statusMap[row.status] || firstDefined(row.status, '失败'),
-    source: firstDefined(row.source, row.activationType, row.activation_type, '手动'),
+    source: activationMap[firstDefined(row.source, row.activationType, row.activation_type)] || firstDefined(row.source, row.activationType, row.activation_type, '手动'),
   }
 }
 
@@ -159,7 +183,7 @@ export function normalizePlot(row = {}, related = {}) {
   const threshold = normalizeThreshold(related.threshold || row.thresholdConfig || row.threshold_config || row)
   const deviceRows = related.devices || row.devices || []
   const devices = Array.isArray(deviceRows) ? deviceRows.map((item) => normalizeDevice(item, related)) : Object.values(deviceRows).map((item) => normalizeDevice(item, related))
-  const irrigationRecords = (related.irrigationRecords || row.irrigationRecords || []).map(normalizeIrrigationRecord).sort((a, b) => (parseDate(b.startTime)?.getTime() || 0) - (parseDate(a.startTime)?.getTime() || 0))
+  const irrigationRecords = (related.irrigationRecords || row.irrigationRecords || []).map(normalizeIrrigationRecord).sort((a, b) => (parseDate(b.startTimeRaw || b.startTime)?.getTime() || 0) - (parseDate(a.startTimeRaw || a.startTime)?.getTime() || 0))
   const alerts = (related.alerts || row.alerts || []).map(normalizeAlert)
   const deviceByType = {
     temperature: devices.find((item) => item.type.includes('温度')),
@@ -173,7 +197,7 @@ export function normalizePlot(row = {}, related = {}) {
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.id))
   const humidity = Number(firstDefined(row.humidity, report.humidity, 0))
   const status = !allOnline ? 'offline' : activeIrrigation ? 'irrigating' : humidity < threshold.threshold ? 'alert' : 'normal'
-  const heartbeatTimes = devices.map((item) => parseDate(item.lastHeartbeat)).filter(Boolean).sort((a, b) => b - a)
+  const heartbeatTimes = devices.map((item) => parseDate(item.lastHeartbeatRaw || item.lastHeartbeat)).filter(Boolean).sort((a, b) => b - a)
   return {
     ...row,
     plotId,
@@ -194,8 +218,9 @@ export function normalizePlot(row = {}, related = {}) {
     maxDuration: threshold.irrigationDuration,
     deviceOnline: allOnline,
     onlineDeviceCount: devices.filter((item) => item.online).length,
+    runningDeviceCount: devices.filter((item) => item.running).length,
     deviceCount: devices.length,
-    dataState: row.dataState || (report.createdAt && isHeartbeatOnline(report.createdAt, related.staleDataMinutes || 15) ? 'realtime' : 'delayed'),
+    dataState: row.dataState || (report.createdAtRaw && isHeartbeatOnline(report.createdAtRaw, related.staleDataMinutes || 15) ? 'realtime' : 'delayed'),
     irrigating: Boolean(activeIrrigation || row.irrigating),
     status: row.status || status,
     lastHeartbeat: heartbeatTimes[0] ? formatDateTime(heartbeatTimes[0]) : '',
@@ -211,7 +236,7 @@ export function normalizePlot(row = {}, related = {}) {
 }
 
 export function reportsToTrend(rows = [], threshold) {
-  const reports = rows.map(normalizeReport).sort((a, b) => (parseDate(a.createdAt)?.getTime() || 0) - (parseDate(b.createdAt)?.getTime() || 0))
+  const reports = rows.map(normalizeReport).sort((a, b) => (parseDate(a.createdAtRaw || a.createdAt)?.getTime() || 0) - (parseDate(b.createdAtRaw || b.createdAt)?.getTime() || 0))
   return {
     times: reports.map((item) => formatDateTime(item.createdAt).slice(5, 16)),
     temperature: reports.map((item) => item.temperature),
@@ -233,17 +258,29 @@ export function overviewMetricsToReport(metrics = [], plotId = '') {
   }
 }
 
-export function metricSeriesToTrend(temperatureRows = [], humidityRows = [], threshold = 35) {
+export function metricSeriesToTrend(temperatureRows = [], humidityRows = [], threshold = 35, irrigationRows = []) {
   const temperatureByTime = new Map(temperatureRows.map((item) => [item.ts, Number(item.value)]))
   const humidityByTime = new Map(humidityRows.map((item) => [item.ts, Number(item.value)]))
   const timestamps = [...new Set([...temperatureByTime.keys(), ...humidityByTime.keys()])]
     .filter((value) => parseDate(value))
     .sort((a, b) => parseDate(a) - parseDate(b))
+  const timestampValues = timestamps.map((value) => parseDate(value).getTime())
+  const eventsByIndex = new Map()
+  irrigationRows.map(normalizeIrrigationRecord)
+    .filter((record) => record.operationType === '开启' && ['成功', '进行中'].includes(record.status))
+    .forEach((record) => {
+      const eventTime = parseDate(record.startTime)?.getTime()
+      if (!eventTime || !timestampValues.length || eventTime < timestampValues[0] || eventTime > timestampValues[timestampValues.length - 1]) return
+      const index = timestampValues.reduce((nearest, current, currentIndex) => (
+        Math.abs(current - eventTime) < Math.abs(timestampValues[nearest] - eventTime) ? currentIndex : nearest
+      ), 0)
+      eventsByIndex.set(index, { index, label: `灌溉 ${formatDateTime(record.startTime).slice(5, 16)}` })
+    })
   return {
     times: timestamps.map((value) => formatDateTime(value).slice(5, 16)),
     temperature: timestamps.map((value) => temperatureByTime.get(value) ?? null),
     soilHumidity: timestamps.map((value) => humidityByTime.get(value) ?? null),
-    events: [],
+    events: [...eventsByIndex.values()],
     threshold,
   }
 }

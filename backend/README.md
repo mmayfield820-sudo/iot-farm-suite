@@ -29,6 +29,8 @@ Other than health and login, requests need `Authorization: Bearer <token>`.
 
 The service subscribes to `farm/telemetry/+`, `farm/status/+`, and `farm/command_result/+` when it starts. Telemetry is deduplicated by device and `msgId`; a `plot_report` is saved only after both humidity and temperature readings arrive within `TELEMETRY_PAIR_TIMEOUT_SECONDS`. An unpaired reading after that timeout creates a `device_fault` alert.
 
+Device communication and collection states are independent. Any valid device heartbeat sets `status=online`; the reported `switch` sets `work_status=running|stopped`. Devices with no heartbeat for `DEVICE_OFFLINE_TIMEOUT_SECONDS` (90 seconds by default) are marked `offline` and `stopped`.
+
 Run one local telemetry cycle after starting the backend:
 
 ```powershell

@@ -9,3 +9,7 @@
 mysql -h 127.0.0.1 -P 3306 -u farm -p farm < database/schema/001_schema.sql
 
 003_mqtt_tracking.sql adds persistent MQTT message deduplication and the command_id field needed to match device command-result messages.
+
+008_device_runtime_status.sql separates device communication and collection/work states.
+
+009_irrigation_duration.sql stores the planned duration for irrigation-on commands; actual duration is calculated from the paired on/off execution times.

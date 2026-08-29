@@ -301,6 +301,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Alert'
+  /chat/health:
+    get:
+      tags: [Chat]
+      summary: 查询农业智能体及模型是否可用
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 智能体健康状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, modelEnabled, searchEnabled]
+                properties:
+                  available:
+                    type: boolean
+                  modelEnabled:
+                    type: boolean
+                  searchEnabled:
+                    type: boolean
+
   /chat/sessions/{sessionId}/messages:
     post:
       tags: [Chat]
@@ -779,6 +800,9 @@ components:
         status:
           type: string
           enum: [online, offline]
+        workStatus:
+          type: string
+          enum: [running, stopped]
         lastSeenAt:
           type: string
           format: date-time
@@ -812,6 +836,9 @@ components:
         status:
           type: string
           enum: [online, offline]
+        workStatus:
+          type: string
+          enum: [running, stopped]
         lastSeenAt:
           type: string
           format: date-time
@@ -837,6 +864,12 @@ components:
         action:
           type: string
           enum: [irrigation_on, irrigation_off]
+        plannedDuration:
+          type: integer
+          minimum: 1
+          maximum: 240
+          nullable: true
+          description: 开启灌溉时的计划时长；关闭指令不传。
     Command:
       type: object
       properties:
@@ -1034,9 +1067,13 @@ components:
           format: date-time
           nullable: true
         duration:
-          type: integer
+          type: number
           nullable: true
           description: 分钟；执行中时为 null。
+        plannedDuration:
+          type: integer
+          nullable: true
+          description: 开启灌溉时选择的计划时长（分钟）。
         status:
           type: string
           enum: [进行中, 成功, 失败, 超时]
