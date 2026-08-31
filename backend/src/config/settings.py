@@ -21,6 +21,17 @@ class DatabaseSettings:
     name: str
 
 
+@dataclass(frozen=True)
+class MqttSettings:
+    """MQTT Broker 连接配置。"""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    keepalive: int = 60
+
+
 def _required_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -38,6 +49,18 @@ def get_database_settings() -> DatabaseSettings:
         user=_required_env("DB_USER"),
         password=_required_env("DB_PASSWORD"),
         name=os.getenv("DB_NAME", "smart_agriculture"),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_mqtt_settings() -> MqttSettings:
+    """读取并缓存 MQTT Broker 配置。"""
+    return MqttSettings(
+        host=os.getenv("MQTT_HOST", "127.0.0.1"),
+        port=int(os.getenv("MQTT_PORT", "1883")),
+        username=os.getenv("MQTT_USERNAME", ""),
+        password=os.getenv("MQTT_PASSWORD", ""),
+        keepalive=int(os.getenv("MQTT_KEEPALIVE", "60")),
     )
 
 

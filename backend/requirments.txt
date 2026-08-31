@@ -9,3 +9,4 @@ FastAPI
 uvicorn
 bcrypt
 PyJWT
+paho-mqtt
