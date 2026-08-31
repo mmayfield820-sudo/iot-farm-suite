@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
 import { useUserStore } from '@/stores/user'
+import { formatDateTime } from '@/utils/dataAdapters'
 
 const DEVICE_TYPES = ['温度传感器', '湿度传感器', '灌溉设备']
 const store = usePlatformStore()
@@ -34,7 +35,7 @@ const devices = computed(() => store.devices.filter((item) =>
 ))
 const plots = computed(() => store.plots.filter((item) => farmIds.value.includes(String(item.farmId))))
 const logs = computed(() => store.auditLogs.filter((item) => ['设备管理', '设备绑定'].includes(item.module)).slice(0, 8))
-const latestHeartbeat = computed(() => devices.value.map((item) => item.lastHeartbeat).filter(Boolean).sort().at(-1) || '暂无')
+const formatTimestamp = (value) => value ? formatDateTime(value, '-') : '暂无'
 const validImportCount = computed(() => importRows.value.filter((item) => item.valid).length)
 let excelModule
 
@@ -192,18 +193,14 @@ async function downloadTemplate() {
 <template>
   <div class="farmer-page">
     <div class="page-head">
-      <div><h1 class="page-title">设备管理</h1><p class="page-subtitle">录入设备并维护数据库中的设备编号、类型、所属地块和最后心跳。</p></div>
-      <div class="page-actions">
-        <el-button plain @click="openImport"><el-icon><Upload /></el-icon>Excel 批量导入</el-button>
-        <el-button type="primary" @click="add"><el-icon><Plus /></el-icon>录入设备</el-button>
-      </div>
+      <div><h1 class="page-title">设备管理</h1><p class="page-subtitle">录入设备，并维护设备类型和所属地块。</p></div>
+      <div class="page-actions"><el-button plain @click="openImport"><el-icon><Upload /></el-icon>Excel 批量导入</el-button><el-button type="primary" @click="add"><el-icon><Plus /></el-icon>录入设备</el-button></div>
     </div>
 
     <section class="farmer-stat-grid">
       <div class="farmer-stat"><div class="stat-symbol"><el-icon><Connection/></el-icon></div><div><label>在线设备</label><strong>{{ devices.filter(x => x.status === '在线').length }}</strong><small>心跳正常</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol red"><el-icon><Warning/></el-icon></div><div><label>异常设备</label><strong>{{ devices.filter(x => ['异常','离线'].includes(x.status)).length }}</strong><small>需要检查</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol orange"><el-icon><Remove/></el-icon></div><div><label>未绑定设备</label><strong>{{ devices.filter(x => !x.plotNo).length }}</strong><small>可绑定到地块</small></div></div>
-      <div class="farmer-stat"><div class="stat-symbol blue"><el-icon><MessageBox/></el-icon></div><div><label>最近设备心跳</label><strong class="heartbeat-value">{{ latestHeartbeat.slice(11) || latestHeartbeat }}</strong><small>随设备上报动态变化</small></div></div>
     </section>
 
     <section class="content-panel device-table">
@@ -213,17 +210,14 @@ async function downloadTemplate() {
         <el-select v-model="status" clearable placeholder="全部状态"><el-option v-for="item in ['在线','异常','离线']" :key="item" :label="item" :value="item"/></el-select>
       </div>
       <el-table :data="devices" class="compact-table">
-        <el-table-column prop="id" label="设备ID" width="85"/>
         <el-table-column prop="deviceNo" label="设备编号" min-width="125"/>
         <el-table-column prop="type" label="设备类型" min-width="120"/>
         <el-table-column prop="plotNo" label="所属地块" width="100"><template #default="scope">{{ scope.row.plotNo || '未绑定' }}</template></el-table-column>
         <el-table-column prop="status" label="状态" width="90"><template #default="scope"><span :class="['status-pill',scope.row.status === '异常' ? 'danger' : '']">{{ scope.row.status }}</span></template></el-table-column>
-        <el-table-column prop="lastHeartbeat" label="最后心跳" min-width="170"/>
         <el-table-column label="操作" fixed="right" width="160"><template #default="scope"><el-button link type="primary" @click="openBind(scope.row)">{{ scope.row.plotNo ? '换绑' : '绑定' }}</el-button><el-button v-if="scope.row.plotNo" link type="danger" @click="unbind(scope.row)">解绑</el-button></template></el-table-column>
       </el-table>
     </section>
 
-    <section class="content-panel logs"><div class="section-head"><div><h3>设备操作记录</h3><p>记录设备录入、绑定、换绑和解绑操作</p></div></div><el-table :data="logs" class="compact-table"><el-table-column prop="time" label="时间" min-width="170"/><el-table-column prop="user" label="操作人" min-width="130"/><el-table-column prop="module" label="类型" width="110"/><el-table-column prop="action" label="操作内容" min-width="260"/><el-table-column prop="result" label="结果" width="90"/></el-table></section>
 
     <el-dialog v-model="dialog" title="录入设备" width="520px"><el-form label-position="top"><el-form-item label="设备编号"><el-input v-model="form.deviceNo" placeholder="例如 SENSOR-010"/></el-form-item><el-form-item label="设备 UUID"><el-input v-model="form.deviceUuid" placeholder="例如 123e4567-e89b-42d3-a456-426614174000"/></el-form-item><el-form-item label="设备类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="item in DEVICE_TYPES" :key="item" :label="item" :value="item"/></el-select></el-form-item><el-form-item label="所属地块"><el-select v-model="form.plotNo" style="width:100%" placeholder="请选择所属地块"><el-option v-for="item in plots" :key="item.plotNo" :label="`${item.plotNo} · ${item.name}`" :value="item.plotNo"/></el-select></el-form-item></el-form><template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template></el-dialog>
 

@@ -9,9 +9,11 @@ const userStore = useUserStore()
 onMounted(() => platformStore.loadData().catch(() => ElMessage.error(platformStore.loadError || '农场数据加载失败')))
 const menu = [
   { label: '多地块总览', path: '/farm/dashboard', icon: 'DataLine' },
-  { label: '设备状态', path: '/farm/status', icon: 'Monitor' },
+  { label: '地块设备监测', path: '/farm/status', icon: 'Monitor' },
   { label: '设备管理', path: '/farm/devices', icon: 'Cpu' },
   { label: '告警日志', path: '/farm/alerts', icon: 'Bell' },
+  { label: '年度生产管理', path: '/farm/production', icon: 'Calendar' },
+  { label: '下一生产年度方案', path: '/farm/cycle-draft', icon: 'EditPen' },
 ]
 const farmIds = computed(() => {
   const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)

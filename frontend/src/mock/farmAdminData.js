@@ -24,7 +24,7 @@ export const mockPlots = [
       humidity: { deviceId: 'D002', deviceNo: 'SENSOR-002', online: true },
       irrigation: { deviceId: 'D003', deviceNo: 'SENSOR-003', online: true }
     },
-    cropName: '番茄'
+    cropName: '脐橙'
   },
   {
     plotId: 'P002',
@@ -46,7 +46,7 @@ export const mockPlots = [
       humidity: { deviceId: 'D005', deviceNo: 'SENSOR-005', online: true },
       irrigation: { deviceId: 'D006', deviceNo: 'SENSOR-006', online: true }
     },
-    cropName: '辣椒'
+    cropName: '脐橙'
   },
   {
     plotId: 'P003',
@@ -68,7 +68,7 @@ export const mockPlots = [
       humidity: { deviceId: 'D008', deviceNo: 'SENSOR-008', online: true },
       irrigation: { deviceId: 'D009', deviceNo: 'SENSOR-009', online: true }
     },
-    cropName: '空心菜'
+    cropName: '脐橙'
   },
   {
     plotId: 'P004',
@@ -90,7 +90,7 @@ export const mockPlots = [
       humidity: { deviceId: 'D011', deviceNo: 'SENSOR-011', online: true },
       irrigation: { deviceId: 'D012', deviceNo: 'SENSOR-012', online: true }
     },
-    cropName: '番茄幼苗'
+    cropName: '脐橙'
   },
   {
     plotId: 'P005',
@@ -112,7 +112,7 @@ export const mockPlots = [
       humidity: { deviceId: 'D014', deviceNo: 'SENSOR-014', online: false },
       irrigation: { deviceId: 'D015', deviceNo: 'SENSOR-015', online: false }
     },
-    cropName: '试验作物'
+    cropName: '脐橙'
   }
 ]
 

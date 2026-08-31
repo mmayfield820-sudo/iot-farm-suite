@@ -62,7 +62,7 @@ function normalizeUser(raw = {}) {
   return {
     id: String(raw.id || raw.userId || raw.user_id || ''),
     username: raw.username || '',
-    displayName: raw.displayName || raw.realName || raw.username || '',
+    displayName: raw.displayName || raw.name || raw.realName || raw.username || '',
     email: raw.email || '',
     phone: raw.phone || raw.Phone || '',
     status: raw.active === false || raw.Active === false ? 'disabled' : raw.status || 'normal',
@@ -109,6 +109,9 @@ export const useUserStore = defineStore('user', () => {
       token = `mock-token-${account.id}`
     } else {
       const response = await loginApi({ username: payload.username.trim(), password: payload.password })
+      if (response.requiresProfileCompletion) {
+        return { requiresProfileCompletion: true, profileSetupToken: response.profileSetupToken }
+      }
       profile = response.user || response.data?.user || response.data || response
       token = response.token || response.data?.token
     }
@@ -124,7 +127,7 @@ export const useUserStore = defineStore('user', () => {
     }
     persistUser()
     if (token) localStorage.setItem('smart-agriculture-token', token)
-    return ROLE_HOME[user.value.activeRole]
+    return { home: ROLE_HOME[user.value.activeRole] }
   }
 
   function switchRole(nextRole) {

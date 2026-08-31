@@ -6,7 +6,7 @@ import math
 import os
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +14,11 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import text
 
 from .db import engine, utc_isoformat
+from .moisture_alerts import evaluate_moisture_alerts
+from .plan_adjustment_reminders import (
+    recover_plan_adjustment_reminder,
+    sync_device_offline_reminder,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -202,19 +207,7 @@ class MqttService:
             if inserted.rowcount == 0:
                 return
 
-            connection.execute(
-                text(
-                    """
-                    UPDATE device
-                    SET status = 'online', last_heartbeat = :last_heartbeat
-                    WHERE device_id = :device_id
-                    """
-                ),
-                {
-                    "last_heartbeat": timestamp,
-                    "device_id": device["device_id"],
-                },
-            )
+            self._touch_device(connection, device_uuid, timestamp, device)
 
         reading = Reading(
             device_id=device["device_id"],
@@ -452,30 +445,14 @@ class MqttService:
                 {"plot_id": plot_id},
             ).scalar()
 
-            if threshold is not None and humidity.value < float(threshold):
-                self._open_alert(
-                    connection,
-                    plot_id=plot_id,
-                    device_id=humidity.device_id,
-                    alert_type="low_moisture",
-                    description="土壤湿度低于设定阈值",
-                    timestamp=report_time,
-                    value=humidity.value,
-                    threshold=float(threshold),
-                )
-            else:
-                connection.execute(
-                    text(
-                        """
-                        UPDATE alert
-                        SET alert_status = 'recovered', handled_at = :handled_at
-                        WHERE plot_id = :plot_id
-                          AND alert_type = 'low_moisture'
-                          AND alert_status IN ('active', 'acknowledged')
-                        """
-                    ),
-                    {"plot_id": plot_id, "handled_at": report_time},
-                )
+            evaluate_moisture_alerts(
+                connection,
+                plot_id=plot_id,
+                device_id=humidity.device_id,
+                moisture=humidity.value,
+                fallback_threshold=float(threshold) if threshold is not None else None,
+                timestamp=report_time,
+            )
 
     def _expire_unpaired_readings(self) -> None:
         while not self._stop_event.wait(5):
@@ -496,6 +473,7 @@ class MqttService:
                         "humidity" if metric_type == "temperature" else "temperature"
                     )
                     self._record_missing_reading_alert(plot_id, missing_type, now)
+                self._mark_stale_devices(now)
                 self._expire_pending_commands(now)
             except Exception:
                 logger.exception("Failed to run MQTT timeout checks")
@@ -558,6 +536,38 @@ class MqttService:
                 timestamp=timestamp,
             )
 
+    def _mark_stale_devices(self, timestamp: datetime) -> None:
+        offline_minutes = max(1, int(os.getenv("DEVICE_OFFLINE_MINUTES", "30")))
+        cutoff = timestamp - timedelta(minutes=offline_minutes)
+        with engine.begin() as connection:
+            devices = connection.execute(
+                text(
+                    "SELECT device_id, device_code, plot_id FROM device "
+                    "WHERE plot_id IS NOT NULL AND status = 'online' "
+                    "AND (last_heartbeat IS NULL OR last_heartbeat < :cutoff)"
+                ),
+                {"cutoff": cutoff},
+            ).mappings().all()
+            for device in devices:
+                connection.execute(
+                    text("UPDATE device SET status = 'offline' WHERE device_id = :device"),
+                    {"device": device["device_id"]},
+                )
+                self._open_alert(
+                    connection,
+                    plot_id=device["plot_id"],
+                    device_id=device["device_id"],
+                    alert_type="device_offline",
+                    description=f"设备 {device['device_code']} 超过 {offline_minutes} 分钟未上报心跳",
+                    timestamp=timestamp,
+                )
+                sync_device_offline_reminder(
+                    connection,
+                    plot_id=device["plot_id"],
+                    device_code=device["device_code"],
+                    timestamp=timestamp,
+                )
+
     def _open_alert(
         self,
         connection: Any,
@@ -614,6 +624,19 @@ class MqttService:
             )
 
     @staticmethod
+    def _recover_device_offline_alert(
+        connection: Any, *, plot_id: int, device_id: int, timestamp: datetime
+    ) -> None:
+        connection.execute(
+            text(
+                "UPDATE alert SET alert_status = 'recovered', handled_at = :timestamp "
+                "WHERE plot_id = :plot AND device_id = :device AND alert_type = 'device_offline' "
+                "AND alert_status IN ('active', 'acknowledged')"
+            ),
+            {"plot": plot_id, "device": device_id, "timestamp": timestamp},
+        )
+
+    @staticmethod
     def _find_device(
         connection: Any,
         device_uuid: str,
@@ -622,7 +645,7 @@ class MqttService:
         device = connection.execute(
             text(
                 """
-                SELECT device_id, device_code, device_type, plot_id
+                SELECT device_id, device_code, device_type, plot_id, status
                 FROM device
                 WHERE device_uuid = :device_uuid
                 """
@@ -698,6 +721,7 @@ class MqttService:
         if device is None:
             logger.warning("Ignored message from unknown device %s", device_uuid)
             return None
+        was_offline = device["status"] == "offline"
         connection.execute(
             text(
                 """
@@ -708,4 +732,22 @@ class MqttService:
             ),
             {"last_heartbeat": timestamp, "device_id": device["device_id"]},
         )
+        if was_offline and device["plot_id"] is not None:
+            self._recover_device_offline_alert(
+                connection,
+                plot_id=device["plot_id"],
+                device_id=device["device_id"],
+                timestamp=timestamp,
+            )
+            remaining_offline = connection.execute(
+                text("SELECT 1 FROM device WHERE plot_id = :plot AND status = 'offline' LIMIT 1"),
+                {"plot": device["plot_id"]},
+            ).scalar()
+            if remaining_offline is None:
+                recover_plan_adjustment_reminder(
+                    connection,
+                    plot_id=device["plot_id"],
+                    reminder_type="device_offline",
+                    timestamp=timestamp,
+                )
         return device

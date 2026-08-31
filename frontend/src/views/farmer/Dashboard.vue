@@ -1,116 +1,152 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFarmerStore } from '@/stores/farmer'
-import * as Icons from '@element-plus/icons-vue'
-import TrendChart from '@/components/TrendChart.vue'
-import tomatoBg from '@/assets/crops/tomato.png'
-import pepperBg from '@/assets/crops/pepper.png'
-import waterSpinachBg from '@/assets/crops/water-spinach.png'
-import cucumberBg from '@/assets/crops/cucumber.png'
-import lettuceBg from '@/assets/crops/lettuce.png'
-import cornBg from '@/assets/crops/corn.png'
-import strawberryBg from '@/assets/crops/strawberry.png'
-import FarmWheel from '@/components/FarmWheel.vue'
+import { getPlotProductionContext } from '@/api/production'
+import { listTasks } from '@/api/task'
 
 const router = useRouter()
 const store = useFarmerStore()
-const plotScroller = ref(null)
-const cropBackgrounds = {
-  番茄: tomatoBg,
-  辣椒: pepperBg,
-  空心菜: waterSpinachBg,
-  黄瓜: cucumberBg,
-  生菜: lettuceBg,
-  玉米: cornBg,
-  草莓: strawberryBg,
-}
-const plotBackgroundStyle = (cropName) => ({
-  '--plot-bg': `url(${cropBackgrounds[cropName] || tomatoBg})`,
-})
 const plot = computed(() => store.currentPlot)
 const weather = computed(() => store.weather || { rainProbability: 0 })
-const trend = computed(() => store.getTrend(plot.value?.plotId, '24h'))
-const latestAlerts = computed(() => store.visibleAlerts.filter((item) => item.status === '未处理').slice(0, 3))
-const onlineDeviceCount = computed(() => store.accessiblePlots.reduce((total, item) => {
-  const deviceCount = Object.values(item.devices || {}).filter(Boolean).length
-  return total + (item.onlineDeviceCount ?? (item.deviceOnline ? deviceCount : 0))
-}, 0))
-const activeAlertCount = computed(() => store.visibleAlerts.filter((item) => ['未处理', '处理中'].includes(item.status)).length)
-const todayIrrigationCount = computed(() => {
-  const today = new Date().toLocaleDateString('sv-SE')
-  return store.visibleRecords.filter((item) => item.operationType === '开启' && item.startTime?.startsWith(today)).length
-})
-const dashboardStats = computed(() => [
-  { label: '地块总数', value: store.accessiblePlots.length, unit: '块', icon: 'Grid', tone: 'green' },
-  { label: '在线设备', value: onlineDeviceCount.value, unit: '台', icon: 'Connection', tone: 'lime' },
-  { label: '当前告警', value: activeAlertCount.value, unit: '条', icon: 'BellFilled', tone: 'orange' },
-  { label: '今日灌溉', value: todayIrrigationCount.value, unit: '次', icon: 'Drizzling', tone: 'blue' },
-])
+const productionContext = ref(null)
+const todayTasks = ref([])
+const taskLoading = ref(true)
+
+const actionableTasks = computed(() => todayTasks.value
+  .filter((task) => !['completed', 'cancelled'].includes(task.status))
+  .slice(0, 3))
+const latestAlerts = computed(() => store.visibleAlerts
+  .filter((item) => ['未处理', '处理中'].includes(item.status))
+  .slice(0, 2))
 const recommendation = computed(() => {
   if (!plot.value) return null
-  const rain = weather.value.rainProbability ?? 0
-  const needsWater = plot.value.humidity < plot.value.threshold
+  const stage = productionContext.value?.stage
+  const minimum = stage?.moistureMin ?? plot.value.threshold
+  const maximum = stage?.moistureMax ?? null
+  const humidity = Number(plot.value.humidity ?? 0)
+  const needsWater = humidity < minimum
+  const tooWet = maximum !== null && humidity > maximum
+  const unavailable = !plot.value.deviceOnline
+  let action = '暂不需要灌溉'
+  let tone = 'normal'
+  if (plot.value.irrigating) { action = '灌溉进行中'; tone = 'info' }
+  else if (needsWater && unavailable) { action = '请先检查灌溉设备'; tone = 'danger' }
+  else if (needsWater && weather.value.rainProbability < 40) { action = '建议短时灌溉'; tone = 'warning' }
+  else if (needsWater) { action = '暂缓灌溉，关注降雨'; tone = 'warning' }
+  else if (tooWet) { action = '土壤湿度偏高，暂不灌溉'; tone = 'info' }
   return {
-    action: needsWater && rain < 40 ? '建议短时灌溉' : plot.value.irrigating ? '灌溉进行中' : '暂不需要灌溉',
-    risk: needsWater ? '中风险' : '低风险',
+    action,
+    tone,
     duration: Math.min(20, plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30),
-    reasons: [`当前湿度 ${plot.value.humidity}%${needsWater ? `，低于阈值 ${plot.value.threshold}%` : `，高于阈值 ${plot.value.threshold}%`}`, `未来 24 小时降雨概率 ${rain}%`, `设备当前${plot.value.deviceOnline ? '在线' : '离线'}`],
+    current: humidity,
+    target: maximum === null ? `不低于 ${minimum}%` : `${minimum}% - ${maximum}%`,
+    stageName: stage?.name || plot.value.cropStage || '当前生产阶段',
   }
 })
+const fieldStatus = computed(() => {
+  if (!plot.value || !recommendation.value) return []
+  return [
+    { label: '土壤湿度', value: `${recommendation.value.current}%`, detail: `目标 ${recommendation.value.target}`, tone: recommendation.value.tone === 'warning' ? 'warning' : 'green' },
+    { label: '环境温度', value: `${plot.value.temperature ?? '-'}℃`, detail: weather.value.condition || '实时环境数据', tone: 'blue' },
+    { label: '灌溉设备', value: plot.value.deviceOnline ? '在线' : '离线', detail: plot.value.irrigating ? '正在灌溉' : '等待指令', tone: plot.value.deviceOnline ? 'green' : 'danger' },
+  ]
+})
 
-function openPlot(plotId) {
-  router.push({ path: '/farmer/management', query: { plotId } })
+function taskStatus(task) {
+  return ({ overdue: '已逾期', in_progress: '进行中', pending: '待处理' })[task.status] || '待处理'
 }
-function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction * 620, behavior: 'smooth' }) }
+function taskTone(task) {
+  return task.status === 'overdue' ? 'danger' : task.status === 'in_progress' ? 'warning' : 'normal'
+}
+async function loadProductionContext(plotId) {
+  productionContext.value = null
+  if (!plotId) return
+  try {
+    productionContext.value = await getPlotProductionContext(plotId)
+  } catch {
+    // The dashboard remains useful when the production profile has not been published yet.
+  }
+}
+async function loadTodayTasks() {
+  taskLoading.value = true
+  try {
+    todayTasks.value = await listTasks({ scope: 'today' })
+  } catch {
+    todayTasks.value = []
+  } finally {
+    taskLoading.value = false
+  }
+}
+function openIrrigation() {
+  if (!plot.value || !recommendation.value) return
+  router.push({
+    path: '/farmer/irrigation',
+    query: { plotId: plot.value.plotId, suggestedMinutes: String(recommendation.value.duration), source: 'recommendation' },
+  })
+}
+function openTasks() { router.push('/farmer/tasks') }
+
+watch(() => plot.value?.plotId, loadProductionContext, { immediate: true })
+onMounted(loadTodayTasks)
 </script>
 
 <template>
   <div class="farmer-page dashboard-page">
-    <div class="dashboard-motto">
-      <span class="motto-copy">顺天时，量地利，则用力少而成功多</span>
-      <svg class="motto-sprig" viewBox="0 0 150 54" aria-hidden="true">
-        <path class="sprig-stem" d="M3 45 C35 40, 60 27, 88 13 C106 5, 126 7, 146 2" />
-        <path class="sprig-stem light" d="M52 31 C76 37, 104 34, 132 24" />
-        <path class="sprig-leaf green" d="M29 38 C20 25, 23 17, 28 12 C36 21, 36 30, 29 38Z" />
-        <path class="sprig-leaf green soft" d="M43 33 C39 21, 44 14, 51 10 C56 21, 52 29, 43 33Z" />
-        <path class="sprig-leaf gold" d="M67 26 C63 17, 67 11, 75 7 C78 16, 75 23, 67 26Z" />
-        <path class="sprig-leaf gold soft" d="M82 20 C81 12, 87 7, 95 5 C95 13, 91 18, 82 20Z" />
-        <path class="sprig-leaf gold" d="M96 32 C101 23, 109 21, 117 23 C112 31, 105 34, 96 32Z" />
-        <path class="sprig-leaf gold soft" d="M118 25 C124 18, 132 17, 140 20 C134 27, 126 29, 118 25Z" />
-      </svg>
-    </div>
-
-    <section class="overview-stat-grid">
-      <div v-for="item in dashboardStats" :key="item.label" class="overview-stat">
-        <span :class="['overview-stat-icon', item.tone]"><el-icon><component :is="Icons[item.icon]" /></el-icon></span>
-        <div><label>{{ item.label }}</label><strong>{{ item.value }}<small>{{ item.unit }}</small></strong></div>
+    <header class="dashboard-head">
+      <div>
+        <p class="dashboard-kicker">今日工作台</p>
+        <h1>{{ plot?.plotName || '我的地块' }}</h1>
+        <p class="dashboard-subtitle">{{ plot?.farmName || '当前授权地块' }}<span v-if="productionContext?.plannedPlantingDate"> · 计划定植 {{ productionContext.plannedPlantingDate }}</span><span v-else-if="productionContext?.plantingDate"> · 实际定植 {{ productionContext.plantingDate }}</span><span v-if="recommendation"> · {{ recommendation.stageName }}</span></p>
       </div>
-    </section>
+      <el-select v-if="store.accessiblePlots.length > 1" class="dashboard-plot-select" :model-value="store.selectedPlotId" @change="store.selectPlot">
+        <el-option v-for="item in store.accessiblePlots" :key="item.plotId" :label="`${item.farmName} · ${item.plotName}`" :value="item.plotId" />
+      </el-select>
+    </header>
 
-    <FarmWheel v-if="store.accessiblePlots.length" :plots="store.accessiblePlots" />
+    <template v-if="plot && recommendation">
+      <section class="work-grid">
+        <article class="content-panel task-panel">
+          <div class="section-head task-panel-head">
+            <div><h3>今天要做什么</h3><p>优先完成计划内农事，现场工作可在农事页补充登记。</p></div>
+            <el-button text type="success" @click="openTasks">查看全部<el-icon><ArrowRight /></el-icon></el-button>
+          </div>
+          <el-skeleton v-if="taskLoading" :rows="3" animated />
+          <div v-else-if="actionableTasks.length" class="today-task-list">
+            <button v-for="task in actionableTasks" :key="task.id" class="today-task" @click="openTasks">
+              <span :class="['task-state', taskTone(task)]"></span>
+              <span class="today-task-copy"><strong>{{ task.title }}</strong><small>{{ task.plotName }} · {{ task.taskType || '农事任务' }}</small></span>
+              <span :class="['task-status', taskTone(task)]">{{ taskStatus(task) }}</span>
+              <el-icon><ArrowRight /></el-icon>
+            </button>
+          </div>
+          <el-empty v-else :image-size="54" description="今天没有待办农事" />
+        </article>
 
-    <!--
-    !<section class="content-panel plot-overview">
-      <div class="section-head"><div><h3>我的地块</h3><p>共 {{ store.accessiblePlots.length }} 块，仅展示当前账号有权访问的地块</p></div><div class="plot-scroll-actions"><button type="button" aria-label="向左滚动地块" @click="scrollPlots(-1)"><el-icon><ArrowLeft /></el-icon></button><button type="button" aria-label="向右滚动地块" @click="scrollPlots(1)"><el-icon><ArrowRight /></el-icon></button></div></div>
-      <div ref="plotScroller" class="plot-card-track"><article v-for="item in store.accessiblePlots" :key="item.plotId" :style="plotBackgroundStyle(item.cropName)" @click="openPlot(item.plotId)"><div class="plot-card-head"><span><strong>{{ item.plotName }}</strong><small>{{ item.cropName }} · {{ item.cropStage }}</small></span><el-icon><ArrowRight /></el-icon></div><div class="mini-metrics"><span>湿度<b>{{ item.humidity }}%</b></span><span>温度<b>{{ item.temperature }}℃</b></span><span>设备<b>{{ item.deviceOnline ? '在线' : '离线' }}</b></span></div></article></div>
-    </section>
-    -->
+        <article :class="['content-panel', 'irrigation-card', recommendation.tone]">
+          <div class="irrigation-title"><span class="irrigation-icon"><el-icon><Drizzling /></el-icon></span><div><p>灌溉建议</p><h2>{{ recommendation.action }}</h2></div></div>
+          <dl class="irrigation-facts"><div><dt>当前湿度</dt><dd>{{ recommendation.current }}%</dd></div><div><dt>目标范围</dt><dd>{{ recommendation.target }}</dd></div><div><dt>天气</dt><dd>降雨 {{ weather.rainProbability ?? 0 }}%</dd></div></dl>
+          <el-button type="success" @click="openIrrigation">{{ plot.irrigating ? '查看灌溉状态' : '查看并处理' }}</el-button>
+        </article>
+      </section>
 
-    <section v-if="plot" class="dashboard-trend">
-      <div class="content-panel"><div class="section-head"><div><h3>{{ plot.plotName }} 环境趋势</h3><p>湿度阈值和灌溉事件已叠加显示</p></div><el-button text type="success" @click="router.push('/farmer/management?tab=history')">查看历史</el-button></div><TrendChart :data="trend" /></div>
-    </section>
+      <section class="field-status" aria-label="当前地块状态">
+        <article v-for="item in fieldStatus" :key="item.label" :class="['field-status-item', item.tone]">
+          <span class="field-status-dot"></span><div><span>{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.detail }}</small></div>
+        </article>
+        <button class="field-detail-link" @click="router.push('/farmer/management')">查看地块详情<el-icon><ArrowRight /></el-icon></button>
+      </section>
 
-    <section v-if="plot" class="two-column bottom-row">
-      <div class="content-panel suggestion"><div class="suggestion-icon"><el-icon><MagicStick /></el-icon></div><div class="suggestion-copy"><div class="suggestion-title"><h3>今日灌溉建议</h3><span class="status-pill warning">{{ recommendation.risk }}</span></div><h2>{{ recommendation.action }}</h2><p>建议时长 {{ recommendation.duration }} 分钟，所有控制操作均需二次确认。</p><div class="evidence-list"><div v-for="reason in recommendation.reasons" :key="reason" class="evidence-item"><el-icon><CircleCheck /></el-icon><span>{{ reason }}</span></div></div></div><el-button type="success" @click="router.push('/farmer/irrigation')">查看并处理</el-button></div>
-      <div class="content-panel attention-panel"><div class="section-head attention-head"><div><span class="eyebrow">FIELD NOTICE</span><h3>待处理事项</h3><p>及时关注农田状态，轻松安排今日工作</p></div><el-button class="all-alerts" text @click="router.push('/farmer/alarm')">全部告警 <el-icon><ArrowRight /></el-icon></el-button></div><div v-if="latestAlerts.length" class="alert-list"><button v-for="alert in latestAlerts" :key="alert.alertId" class="alert-item" @click="router.push('/farmer/alarm')"><span class="alert-icon"><el-icon><Warning /></el-icon></span><span class="alert-copy"><span class="alert-title"><strong>{{ alert.plotName }}</strong><i>{{ alert.type }}</i></span><small>{{ alert.reason }}</small><span class="alert-device">{{ alert.deviceId }} · {{ alert.occurTime.slice(0,10) }}</span></span><span class="alert-meta"><strong>{{ alert.value }}</strong><em>{{ alert.occurTime.slice(11,16) }}</em><el-icon><ArrowRight /></el-icon></span></button></div><el-empty v-else :image-size="70" description="田间状态良好，暂无待处理事项" /></div>
-    </section>
+      <section v-if="latestAlerts.length" class="content-panel notice-panel">
+        <div class="section-head"><div><h3>需要关注</h3><p>异常会影响今天的灌溉和农事安排。</p></div><el-button text type="success" @click="router.push('/farmer/alarm')">告警中心<el-icon><ArrowRight /></el-icon></el-button></div>
+        <div class="notice-list"><button v-for="alert in latestAlerts" :key="alert.alertId" class="notice-item" @click="router.push('/farmer/alarm')"><span class="notice-icon"><el-icon><Warning /></el-icon></span><span><strong>{{ alert.plotName }} · {{ alert.type }}</strong><small>{{ alert.reason }}</small></span><el-icon><ArrowRight /></el-icon></button></div>
+      </section>
+    </template>
 
+    <el-empty v-else description="暂无可用地块" />
   </div>
 </template>
 
 <style scoped>
-.dashboard-motto{position:relative;width:max-content;max-width:100%;display:flex;align-items:center;isolation:isolate;margin:2px 0 22px;padding:3px 10px 7px 0}.dashboard-motto::before{position:absolute;z-index:-1;top:48%;left:58%;width:86px;height:42px;content:'';border-radius:50%;background:radial-gradient(ellipse,rgba(238,190,89,.18),rgba(238,190,89,0) 70%);transform:translate(-50%,-50%)}.dashboard-motto::after{position:absolute;z-index:-1;right:88px;bottom:2px;width:44%;height:7px;content:'';border-radius:50%;background:linear-gradient(90deg,transparent,rgba(115,166,104,.16),rgba(225,184,82,.12),transparent);filter:blur(2px)}.motto-copy{color:#155b3d;font-family:"STKaiti","KaiTi","FangSong","Noto Serif SC",serif;font-size:clamp(24px,2.35vw,35px);font-weight:700;line-height:1.35;letter-spacing:1.5px;text-shadow:0 1px 0 rgba(255,255,255,.9),0 3px 10px rgba(36,96,65,.08)}.motto-sprig{width:132px;height:48px;flex:0 0 132px;margin-left:7px;overflow:visible;transform:rotate(-4deg);transform-origin:left center}.sprig-stem{fill:none;stroke:#d8b457;stroke-linecap:round;stroke-width:1.6}.sprig-stem.light{stroke:#e7cc86;stroke-width:1}.sprig-leaf{stroke-linejoin:round;stroke-width:.6}.sprig-leaf.green{fill:#8cbf78;stroke:#75a962}.sprig-leaf.gold{fill:#e4c56e;stroke:#d1ac4f}.sprig-leaf.soft{opacity:.58}.overview-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px}.overview-stat{min-height:112px;display:flex;align-items:center;justify-content:center;gap:16px;padding:20px;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(36,86,64,.06)}.overview-stat-icon{width:48px;height:48px;display:grid;place-items:center;flex:0 0 48px;border-radius:50%;font-size:23px}.overview-stat-icon.green{color:#4f942b;background:#edf7e7}.overview-stat-icon.lime{color:#73a932;background:#f0f8e8}.overview-stat-icon.orange{color:#e08a18;background:#fff3df}.overview-stat-icon.blue{color:#2e9bb5;background:#e5f7fa}.overview-stat label{display:block;color:#52675f;font-size:13px;font-weight:600}.overview-stat strong{display:block;margin-top:7px;color:#1f2f29;font-size:27px;line-height:1}.overview-stat small{margin-left:4px;font-size:13px;font-weight:600}.plot-overview{margin-bottom:18px}.plot-scroll-actions{display:flex;gap:8px}.plot-scroll-actions button{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;color:#3f6b59;background:#f8fbf9;cursor:pointer}.plot-scroll-actions button:hover{border-color:var(--accent);color:var(--accent);background:#eef7f2}.plot-card-track{display:flex;gap:13px;padding:2px 2px 8px;overflow-x:auto;scroll-behavior:smooth;scroll-snap-type:x proximity;scrollbar-width:thin;scrollbar-color:#b8cec4 transparent}.plot-card-track article{position:relative;min-width:270px;min-height:154px;display:flex;flex:0 0 270px;flex-direction:column;justify-content:space-between;overflow:hidden;padding:17px;border:1px solid rgba(255,255,255,.42);border-radius:15px;background-image:linear-gradient(105deg,rgba(18,55,43,.9),rgba(25,75,57,.57)),var(--plot-bg);background-position:center;background-size:cover;box-shadow:0 8px 20px rgba(28,76,58,.12);color:#fff;cursor:pointer;scroll-snap-align:start;transition:.2s}.plot-card-track article:hover{border-color:rgba(255,255,255,.76);box-shadow:0 13px 28px rgba(25,72,54,.2);transform:translateY(-3px)}.plot-card-head{display:flex;justify-content:space-between}.plot-card-head>.el-icon{color:rgba(255,255,255,.92)}.plot-card-head strong,.plot-card-head small{display:block;text-shadow:0 1px 4px rgba(0,0,0,.28)}.plot-card-head strong{font-size:15px}.plot-card-head small{margin-top:5px;color:rgba(255,255,255,.83);font-size:11px}.mini-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:24px}.mini-metrics span{padding:8px 9px;border:1px solid rgba(255,255,255,.2);border-radius:9px;color:rgba(255,255,255,.78);background:rgba(10,44,33,.32);font-size:10px;backdrop-filter:blur(5px)}.mini-metrics b{display:block;margin-top:3px;color:#fff;font-size:13px;text-shadow:0 1px 3px rgba(0,0,0,.24)}.bottom-row{grid-template-columns:minmax(0,1.4fr) minmax(310px,.8fr)}.suggestion{display:flex;align-items:flex-start;gap:16px;background:linear-gradient(125deg,#f1faf5,#fff)}.suggestion-icon{width:52px;height:52px;display:grid;place-items:center;flex:0 0 52px;border-radius:15px;color:#27835d;background:#dcf2e7;font-size:25px}.suggestion-copy{min-width:0;flex:1}.suggestion-title{display:flex;align-items:center;gap:10px}.suggestion-title h3{margin:0;font-size:14px}.suggestion h2{margin:9px 0 5px;font-size:20px}.suggestion p{margin:0;color:#71807b;font-size:12px}.suggestion>.el-button{align-self:flex-end}.attention-panel{overflow:hidden;background:linear-gradient(145deg,#fff 25%,#f6fbf8);border-color:#dfece5}.attention-head{margin-bottom:14px}.eyebrow{display:block;margin-bottom:5px;color:#74a48e;font-size:9px;font-weight:750;letter-spacing:1.5px}.all-alerts{color:#4d806a}.alert-list{display:grid;gap:9px}.alert-item{width:100%;display:flex;align-items:center;gap:12px;padding:13px;border:1px solid #e8eee9;border-radius:14px;background:rgba(255,255,255,.82);color:inherit;text-align:left;cursor:pointer;transition:border-color .2s,box-shadow .2s,transform .2s}.alert-item:hover{border-color:#b9d7c8;box-shadow:0 8px 20px rgba(52,105,81,.08);transform:translateY(-1px)}.alert-icon{width:38px;height:38px;display:grid;place-items:center;flex:0 0 38px;border-radius:12px;color:#b97742;background:#fff3e8;font-size:17px}.alert-copy{min-width:0;flex:1}.alert-title{display:flex;align-items:center;gap:7px}.alert-title strong{color:#294b3e;font-size:13px}.alert-title i{padding:3px 7px;border-radius:10px;color:#a76338;background:#fff0e3;font-size:9px;font-style:normal;font-weight:650}.alert-copy small{display:block;margin-top:5px;overflow:hidden;color:#75877f;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.alert-device{display:block;margin-top:5px;color:#a0ada7;font-size:9px}.alert-meta{display:grid;grid-template-columns:auto 12px;align-items:center;gap:3px 8px;flex:0 0 auto;text-align:right}.alert-meta strong{grid-row:1;color:#a65f36;font-size:14px}.alert-meta em{grid-row:2;color:#9aa9a2;font-size:10px;font-style:normal}.alert-meta .el-icon{grid-column:2;grid-row:1/3;color:#a9bbb2;font-size:12px}
-@media(max-width:1100px){.overview-stat-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:1000px){.bottom-row{grid-template-columns:1fr}}@media(max-width:650px){.overview-stat-grid{grid-template-columns:1fr 1fr;gap:10px}.overview-stat{min-height:92px;padding:14px;justify-content:flex-start}.overview-stat-icon{width:42px;height:42px;flex-basis:42px}.overview-stat strong{font-size:23px}.plot-card-track article{min-width:240px;flex-basis:240px}.suggestion{flex-wrap:wrap}.suggestion>.el-button{margin-left:68px}}@media(max-width:430px){.overview-stat-grid{grid-template-columns:1fr}}
-@media(max-width:650px){.dashboard-motto{align-items:flex-end;margin-bottom:18px}.motto-copy{font-size:clamp(22px,6vw,28px);letter-spacing:.5px}.motto-sprig{width:86px;height:38px;flex-basis:86px;margin-left:2px}}@media(max-width:430px){.motto-sprig{display:none}.dashboard-motto::after{right:0;width:62%}}
+.dashboard-page{max-width:1220px}.dashboard-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}.dashboard-kicker{margin:0 0 6px;color:#378363;font-size:12px;font-weight:700}.dashboard-head h1{margin:0;color:#203b31;font-size:26px;line-height:1.25}.dashboard-subtitle{margin:7px 0 0;color:#778981;font-size:13px}.dashboard-plot-select{width:240px}.work-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(310px,.85fr);gap:18px;margin-bottom:18px}.task-panel{min-height:248px}.task-panel-head{margin-bottom:12px}.today-task-list{display:grid}.today-task{display:grid;grid-template-columns:9px minmax(0,1fr) auto 14px;align-items:center;gap:12px;width:100%;min-height:56px;padding:9px 2px;border:0;border-top:1px solid #edf2ef;color:inherit;background:transparent;text-align:left;cursor:pointer}.today-task:first-child{border-top:0}.today-task:hover strong{color:#25815d}.task-state{width:8px;height:8px;border-radius:50%;background:#7bab92}.task-state.warning{background:#d99235}.task-state.danger{background:#ca6262}.today-task-copy{min-width:0}.today-task-copy strong,.today-task-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.today-task-copy strong{color:#29483c;font-size:14px}.today-task-copy small{margin-top:4px;color:#86968f;font-size:11px}.task-status{padding:4px 7px;border-radius:6px;color:#5c776c;background:#f0f5f2;font-size:11px}.task-status.warning{color:#a46d28;background:#fff3df}.task-status.danger{color:#b84f4f;background:#fceaea}.today-task>.el-icon{color:#a3b2ac}.irrigation-card{display:flex;flex-direction:column;border-color:#d8e9df;background:#f7fcf9}.irrigation-card.warning{border-color:#f0dfc4;background:#fffdf8}.irrigation-card.danger{border-color:#efd4d4;background:#fffafa}.irrigation-title{display:flex;align-items:flex-start;gap:12px}.irrigation-icon{width:42px;height:42px;display:grid;place-items:center;flex:0 0 42px;border-radius:11px;color:#277e5b;background:#dff2e7;font-size:21px}.irrigation-card.warning .irrigation-icon{color:#af742b;background:#fff0d8}.irrigation-card.danger .irrigation-icon{color:#bd5858;background:#fbe7e7}.irrigation-title p{margin:1px 0 5px;color:#668176;font-size:12px;font-weight:650}.irrigation-title h2{margin:0;color:#234537;font-size:20px;line-height:1.3}.irrigation-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:18px 0}.irrigation-facts div{min-width:0}.irrigation-facts dt{color:#8a9993;font-size:10px}.irrigation-facts dd{margin:5px 0 0;overflow:hidden;color:#355548;font-size:13px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}.irrigation-card>.el-button{width:100%;margin-top:auto}.field-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:stretch;margin-bottom:18px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 5px 18px rgba(20,69,53,.035)}.field-status-item{display:flex;align-items:center;gap:11px;min-width:0;padding:14px 16px;border-right:1px solid #edf2ef}.field-status-item>div{min-width:0}.field-status-item span:not(.field-status-dot),.field-status-item strong,.field-status-item small{display:block}.field-status-item span:not(.field-status-dot){color:#81918a;font-size:11px}.field-status-item strong{margin:3px 0;color:#29473d;font-size:16px}.field-status-item small{overflow:hidden;color:#99a6a1;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.field-status-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#43a477;box-shadow:0 0 0 4px #e6f5ed}.field-status-item.warning .field-status-dot{background:#dd983e;box-shadow:0 0 0 4px #fff3e3}.field-status-item.danger .field-status-dot{background:#ca6262;box-shadow:0 0 0 4px #fceaea}.field-status-item.blue .field-status-dot{background:#4e93b4;box-shadow:0 0 0 4px #eaf4f8}.field-detail-link{display:flex;align-items:center;gap:5px;padding:0 17px;border:0;color:#2b805d;background:transparent;font-size:12px;font-weight:650;white-space:nowrap;cursor:pointer}.field-detail-link:hover{background:#f4faf7}.notice-panel{margin-bottom:18px}.notice-list{display:grid;gap:8px}.notice-item{display:grid;grid-template-columns:38px minmax(0,1fr) 14px;align-items:center;gap:12px;width:100%;padding:10px;border:1px solid #edf1ef;border-radius:8px;color:inherit;background:#fff;text-align:left;cursor:pointer}.notice-item:hover{border-color:#c5dfd0;background:#fbfefc}.notice-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:9px;color:#b87837;background:#fff2e2}.notice-item span:nth-child(2){min-width:0}.notice-item strong,.notice-item small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notice-item strong{color:#3a5349;font-size:13px}.notice-item small{margin-top:4px;color:#899790;font-size:11px}.notice-item>.el-icon{color:#a7b6af}@media(max-width:900px){.work-grid{grid-template-columns:1fr}.field-status{grid-template-columns:repeat(3,1fr)}.field-detail-link{grid-column:1/-1;justify-content:center;min-height:42px;border-top:1px solid #edf2ef}}@media(max-width:620px){.dashboard-head{align-items:stretch;flex-direction:column}.dashboard-plot-select{width:100%}.field-status{grid-template-columns:1fr}.field-status-item{border-right:0;border-bottom:1px solid #edf2ef}.field-detail-link{grid-column:auto;border-top:0}.irrigation-facts{grid-template-columns:repeat(3,minmax(0,1fr))}.content-panel{padding:16px}}@media(max-width:390px){.irrigation-facts{grid-template-columns:1fr 1fr}.irrigation-facts div:last-child{grid-column:1/-1}}
 </style>

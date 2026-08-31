@@ -181,7 +181,7 @@ CREATE TABLE alert (
   CONSTRAINT fk_alert_device FOREIGN KEY (device_id, plot_id)
     REFERENCES device (device_id, plot_id),
   CONSTRAINT fk_alert_handler FOREIGN KEY (handled_by) REFERENCES users (user_id),
-  CONSTRAINT chk_alert_type CHECK (alert_type IN ('low_moisture', 'device_offline', 'device_fault', 'irrigation_failed')),
+  CONSTRAINT chk_alert_type CHECK (alert_type IN ('low_moisture', 'high_moisture', 'device_offline', 'device_fault', 'irrigation_failed')),
   CONSTRAINT chk_alert_status CHECK (alert_status IN ('active', 'acknowledged', 'recovered'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

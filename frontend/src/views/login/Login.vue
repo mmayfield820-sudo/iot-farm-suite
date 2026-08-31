@@ -4,22 +4,45 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Lock, User } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { completeFirstLogin } from '@/api/auth'
 
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
+const setupLoading = ref(false)
+const setupToken = ref('')
 const form = reactive({ username: '', password: '', remember: true })
+const setupForm = reactive({ password: '', confirmPassword: '', phone: '', email: '' })
 
 async function submit() {
   if (!form.username.trim() || !form.password) return ElMessage.warning('请输入用户名和密码')
   loading.value = true
   try {
-    const home = await userStore.login(form)
-    await router.replace(home)
+    const result = await userStore.login(form)
+    if (result.requiresProfileCompletion) {
+      setupToken.value = result.profileSetupToken
+      return
+    }
+    await router.replace(result.home)
     ElMessage.success('登录成功')
   } catch (error) {
     ElMessage.error(error?.response?.data?.message || error.message || '登录失败，请稍后重试')
   } finally { loading.value = false }
+}
+
+async function submitSetup() {
+  if (setupForm.password.length < 6) return ElMessage.warning('请设置至少 6 位的新密码')
+  if (setupForm.password !== setupForm.confirmPassword) return ElMessage.warning('两次输入的密码不一致')
+  setupLoading.value = true
+  try {
+    await completeFirstLogin({ profileSetupToken: setupToken.value, password: setupForm.password, phone: setupForm.phone || null, email: setupForm.email || null })
+    form.password = setupForm.password
+    const result = await userStore.login(form)
+    await router.replace(result.home)
+    ElMessage.success('账号已启用')
+  } catch (error) {
+    ElMessage.error(error?.message || '账号启用失败')
+  } finally { setupLoading.value = false }
 }
 </script>
 
@@ -37,7 +60,7 @@ async function submit() {
     </section>
 
     <section class="login-panel">
-      <form class="login-card" @submit.prevent="submit">
+      <form v-if="!setupToken" class="login-card" @submit.prevent="submit">
         <div class="mobile-logo">禾</div>
         <p class="eyebrow panel-eyebrow">WELCOME BACK</p>
         <h2>欢迎回来</h2>
@@ -50,11 +73,23 @@ async function submit() {
         <div class="form-meta"><el-checkbox v-model="form.remember">记住我</el-checkbox><button type="button" @click="ElMessage.info('请联系系统管理员重置密码')">忘记密码？</button></div>
         <el-button class="submit" size="large" native-type="submit" :loading="loading">登录平台</el-button>
 
-        <div class="register-entry">
-          <span>还没有账号？</span><button type="button" @click="router.push('/register')">立即注册</button>
-          <small>仅开放农户与农场管理员注册</small>
-        </div>
+        <div class="register-entry"><span>账号由系统管理员预置</span><small>使用工号和初始密码登录</small></div>
         <p class="demo-note">演示账号：zhangsan / 123456（拥有三个角色）</p>
+      </form>
+      <form v-else class="login-card" @submit.prevent="submitSetup">
+        <div class="mobile-logo">禾</div>
+        <p class="eyebrow panel-eyebrow">ACCOUNT SETUP</p>
+        <h2>设置正式密码</h2>
+        <p class="hint">首次登录后完成账号信息。</p>
+        <label for="new-password">新密码</label>
+        <el-input id="new-password" v-model="setupForm.password" size="large" type="password" show-password placeholder="至少 6 位" :prefix-icon="Lock" />
+        <label for="confirm-password">确认新密码</label>
+        <el-input id="confirm-password" v-model="setupForm.confirmPassword" size="large" type="password" show-password placeholder="再次输入新密码" :prefix-icon="Lock" />
+        <label for="phone">手机号</label>
+        <el-input id="phone" v-model="setupForm.phone" size="large" placeholder="选填" :prefix-icon="User" />
+        <label for="email">邮箱</label>
+        <el-input id="email" v-model="setupForm.email" size="large" placeholder="选填" :prefix-icon="User" />
+        <el-button class="submit setup-submit" size="large" native-type="submit" :loading="setupLoading">完成并进入平台</el-button>
       </form>
     </section>
   </div>

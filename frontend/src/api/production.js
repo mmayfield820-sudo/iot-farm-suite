@@ -1,0 +1,17 @@
+import request from './request'
+
+export const listFarms = () => request.get('/farms')
+export const listCropTemplates = () => request.get('/crop-templates')
+export const createCropTemplate = (data) => request.post('/crop-templates', data)
+export const getFarmCycleDraft = (farmId) => request.get(`/farms/${farmId}/cycle-draft`)
+export const createFarmCycleDraft = (templateId, farmId, data) => request.post(`/crop-templates/${templateId}/drafts?farmId=${farmId}`, data)
+export const updateFarmCycleDraft = (draftId, data) => request.put(`/crop-template-drafts/${draftId}`, data)
+export const publishFarmCycleDraft = (draftId) => request.post(`/crop-template-drafts/${draftId}/publish`)
+export const getFarmProductionProfile = (farmId) => request.get(`/farms/${farmId}/production-profile`)
+export const getFarmAnnualProduction = (farmId, params) => request.get(`/farms/${farmId}/annual-production`, { params })
+export const saveFarmAnnualProduction = (farmId, data) => request.put(`/farms/${farmId}/annual-production`, data)
+export const getFarmPlantingSchedule = (farmId) => request.get(`/farms/${farmId}/planting-schedule`)
+export const saveFarmPlantingSchedule = (farmId, data) => request.put(`/farms/${farmId}/planting-schedule`, data)
+export const getPlotProductionContext = (plotId) => request.get(`/plots/${plotId}/production-context`)
+export const saveFarmProductionProfile = (farmId, data) => request.put(`/farms/${farmId}/production-profile`, data)
+export const generateFarmPlans = (farmId, data) => request.post(`/farms/${farmId}/plans`, data)

@@ -1,6 +1,6 @@
 export const farmerPlots = [
   {
-    plotId: 'P001', plotName: '一号温室', farmId: 'F001', farmName: '二号示范农场', location: '东区 1 号棚', cropName: '番茄', cropStage: '结果期',
+    plotId: 'P001', plotName: '东坡一号地块', farmId: 'F001', farmName: '奉节脐橙示范园', location: '东坡 1 号地块', cropName: '脐橙', cropStage: '果实膨大期',
     temperature: 25.6, humidity: 28.5, threshold: 35, cooldown: 30, maxDuration: 60, status: 'alert', irrigating: false,
     deviceOnline: true, dataState: 'realtime', updateTime: '2026-08-22 10:25:18', sensorId: 'SENSOR-001', valveId: 'VALVE-001', lastHeartbeat: '2026-08-22 10:25:20',
     devices: {
@@ -11,7 +11,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-22 08:00:00', lastIrrigationDuration: 20, unhandledAlerts: 2,
   },
   {
-    plotId: 'P002', plotName: '二号大棚', farmId: 'F001', farmName: '一号示范农场', location: '东区 2 号棚', cropName: '辣椒', cropStage: '开花期',
+    plotId: 'P002', plotName: '东坡二号地块', farmId: 'F001', farmName: '奉节脐橙示范园', location: '东坡 2 号地块', cropName: '脐橙', cropStage: '开花坐果期',
     temperature: 27.2, humidity: 42, threshold: 35, cooldown: 30, maxDuration: 45, status: 'irrigating', irrigating: true,
     deviceOnline: true, dataState: 'realtime', updateTime: '2026-08-22 10:24:46', sensorId: 'SENSOR-002', valveId: 'VALVE-002', lastHeartbeat: '2026-08-22 10:25:05',
     devices: {
@@ -22,7 +22,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-22 09:00:00', lastIrrigationDuration: null, unhandledAlerts: 0,
   },
   {
-    plotId: 'P003', plotName: '三号露地', farmId: 'F001', farmName: '一号示范农场', location: '西区露地', cropName: '空心菜', cropStage: '生长期',
+    plotId: 'P003', plotName: '西坡一号地块', farmId: 'F001', farmName: '奉节脐橙示范园', location: '西坡 1 号地块', cropName: '脐橙', cropStage: '春梢生长期',
     temperature: 30.1, humidity: 22, threshold: 30, cooldown: 30, maxDuration: 60, status: 'dry', irrigating: false,
     deviceOnline: true, dataState: 'delayed', updateTime: '2026-08-22 10:02:00', sensorId: 'SENSOR-003', valveId: 'VALVE-003', lastHeartbeat: '2026-08-22 10:20:00',
     devices: {
@@ -33,7 +33,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-21 18:10:00', lastIrrigationDuration: 25, unhandledAlerts: 1,
   },
   {
-    plotId: 'P004', plotName: '四号温室', farmId: 'F001', farmName: '一号示范农场', location: '南区 1 号棚', cropName: '黄瓜', cropStage: '爬蔓期',
+    plotId: 'P004', plotName: '南坡一号地块', farmId: 'F001', farmName: '奉节脐橙示范园', location: '南坡 1 号地块', cropName: '脐橙', cropStage: '转色采收期',
     temperature: 26.8, humidity: 46, threshold: 34, cooldown: 30, maxDuration: 50, status: 'normal', irrigating: false,
     deviceOnline: true, dataState: 'realtime', updateTime: '2026-08-24 09:58:20', sensorId: 'SENSOR-010', valveId: 'VALVE-004', lastHeartbeat: '2026-08-24 09:58:22',
     devices: {
@@ -44,7 +44,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-24 07:20:00', lastIrrigationDuration: 18, unhandledAlerts: 0,
   },
   {
-    plotId: 'P005', plotName: '五号育苗棚', farmId: 'F002', farmName: '西区生态农场', location: '南区育苗棚', cropName: '生菜', cropStage: '幼苗期',
+    plotId: 'P005', plotName: '江北一号地块', farmId: 'F002', farmName: '长江北岸脐橙园', location: '江北 1 号地块', cropName: '脐橙', cropStage: '采收期',
     temperature: 24.3, humidity: 51, threshold: 40, cooldown: 25, maxDuration: 35, status: 'normal', irrigating: false,
     deviceOnline: true, dataState: 'realtime', updateTime: '2026-08-24 09:57:42', sensorId: 'SENSOR-013', valveId: 'VALVE-005', lastHeartbeat: '2026-08-24 09:57:45',
     devices: {
@@ -55,7 +55,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-23 18:00:00', lastIrrigationDuration: 12, unhandledAlerts: 0,
   },
   {
-    plotId: 'P006', plotName: '六号试验田', farmId: 'F002', farmName: '西区生态农场', location: '北区试验田', cropName: '玉米', cropStage: '拔节期',
+    plotId: 'P006', plotName: '江北二号地块', farmId: 'F002', farmName: '长江北岸脐橙园', location: '江北 2 号地块', cropName: '脐橙', cropStage: '采后清园期',
     temperature: 31.2, humidity: 26, threshold: 32, cooldown: 30, maxDuration: 70, status: 'alert', irrigating: false,
     deviceOnline: false, dataState: 'delayed', updateTime: '2026-08-24 09:18:05', sensorId: 'SENSOR-016', valveId: 'VALVE-006', lastHeartbeat: '2026-08-24 09:18:06',
     devices: {
@@ -66,7 +66,7 @@ export const farmerPlots = [
     lastIrrigation: '2026-08-23 17:30:00', lastIrrigationDuration: 30, unhandledAlerts: 1,
   },
   {
-    plotId: 'P007', plotName: '七号生态棚', farmId: 'F002', farmName: '西区生态农场', location: '西南生态区', cropName: '草莓', cropStage: '花果期',
+    plotId: 'P007', plotName: '江北三号地块', farmId: 'F002', farmName: '长江北岸脐橙园', location: '江北 3 号地块', cropName: '脐橙', cropStage: '冬季管护期',
     temperature: 23.9, humidity: 43, threshold: 38, cooldown: 30, maxDuration: 40, status: 'irrigating', irrigating: true,
     deviceOnline: true, dataState: 'realtime', updateTime: '2026-08-24 09:59:11', sensorId: 'SENSOR-019', valveId: 'VALVE-007', lastHeartbeat: '2026-08-24 09:59:15',
     devices: {

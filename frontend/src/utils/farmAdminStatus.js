@@ -21,6 +21,7 @@ export const getHumidityStatus = (humidity, threshold) => {
 export const ALERT_TYPE_CONFIG = {
   '超过阈值': { color: '#F56C6C', type: 'danger' },
   '湿度过低': { color: '#F56C6C', type: 'danger' },
+  '湿度偏高': { color: '#E6A23C', type: 'warning' },
   '长期没被访问': { color: '#909399', type: 'info' },
   '设备故障': { color: '#E6A23C', type: 'warning' },
   '设备离线': { color: '#E6A23C', type: 'warning' },

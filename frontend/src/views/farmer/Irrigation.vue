@@ -1,38 +1,23 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useFarmerStore } from '@/stores/farmer'
 import { useUserStore } from '@/stores/user'
+import { formatDateTime } from '@/utils/dataAdapters'
 
 const store = useFarmerStore()
 const userStore = useUserStore()
-const control = reactive({ loading: false, state: 'idle', message: '等待操作' })
+const route = useRoute()
+const control = reactive({ loading: false, state: 'idle', message: '请选择操作后确认下发。' })
 const activeCommand = ref(null)
 const selectedAction = ref('open')
 const plannedDuration = ref(20)
 const plot = computed(() => store.currentPlot)
-const weather = computed(() => store.weather || { rainProbability: 0 })
 const controlDevice = computed(() => plot.value?.devices?.irrigation || null)
 const controlOnline = computed(() => Boolean(controlDevice.value && (controlDevice.value.online ?? plot.value?.deviceOnline)))
 const records = computed(() => store.visibleRecords.filter((item) => item.plotId === plot.value?.plotId))
-const commandLogs = computed(() => store.commandLogs.filter((item) => item.plotId === plot.value?.plotId))
-
-const advice = computed(() => {
-  if (!plot.value) return {}
-  const dry = plot.value.humidity < plot.value.threshold
-  return {
-    action: dry && weather.value.rainProbability < 40 ? '建议进行短时灌溉' : plot.value.irrigating ? '当前正在灌溉' : '暂不建议灌溉',
-    risk: dry ? '中' : '低',
-    duration: Math.min(20, plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30),
-    evidence: [
-      `当前湿度 ${plot.value.humidity}%${dry ? '低于' : '高于'}阈值 ${plot.value.threshold}%`,
-      store.serviceStatus.weather ? `未来 24 小时降雨概率 ${weather.value.rainProbability}%` : '天气服务不可用，本次建议未使用天气数据',
-      `灌溉控制器${controlOnline.value ? '在线，可以接收控制指令' : '离线或未绑定，禁止远程控制'}`,
-      `最近一次灌溉：${plot.value.lastIrrigation || '暂无记录'}`,
-    ],
-  }
-})
-
+const suggestedEntry = computed(() => route.query.source === 'recommendation' && typeof route.query.suggestedMinutes === 'string')
 const durationOptions = computed(() => {
   if (!plot.value) return []
   const limit = plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30
@@ -40,41 +25,33 @@ const durationOptions = computed(() => {
   if (!values.includes(limit)) values.push(limit)
   return [...new Set(values)].sort((a, b) => a - b)
 })
-
 const commandDisabled = computed(() => {
   if (!userStore.can('irrigation_record', 'control')) return true
   if (!controlOnline.value) return true
   return selectedAction.value === 'open' ? plot.value.irrigating : !plot.value.irrigating
 })
-
-const humidityAngle = computed(() => `${Math.min(100, Math.max(0, plot.value?.humidity || 0)) * 3.6}deg`)
-const progressSteps = ['创建命令', '下发指令', '设备响应', '命令成功']
-const currentStep = computed(() => ({ idle: -1, sending: 1, executing: 2, success: 3, failed: 2 }[control.state] ?? -1))
-const commandSuccessLabel = computed(() => {
-  if (activeCommand.value?.action === 'irrigation_on') return '开启命令成功'
-  if (activeCommand.value?.action === 'irrigation_off') return '关闭命令成功'
-  return '命令执行成功'
-})
-const progressLabel = computed(() => {
-  if (control.state === 'success') return commandSuccessLabel.value
-  return { idle: '等待操作', sending: '正在下发指令', executing: '等待设备响应', failed: '命令执行失败' }[control.state]
-})
-
-function progressState(index) {
-  if (control.state === 'failed' && index === currentStep.value) return 'error'
-  if (index < currentStep.value || control.state === 'success') return 'done'
-  if (index === currentStep.value) return 'active'
-  return 'pending'
-}
+const commandLabel = computed(() => ({ idle: '等待操作', sending: '正在下发', executing: '等待设备响应', success: '设备已确认', failed: '执行失败' })[control.state])
+const formatTimestamp = (value) => formatDateTime(value, '-')
 
 watch(
   () => plot.value?.plotId,
   () => {
     if (!plot.value) return
     selectedAction.value = plot.value.irrigating ? 'close' : 'open'
-    plannedDuration.value = Math.min(20, plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30)
+    const maximum = plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30
+    const suggestedMinutes = Number(route.query.suggestedMinutes)
+    plannedDuration.value = route.query.plotId === plot.value.plotId && Number.isFinite(suggestedMinutes) && suggestedMinutes > 0
+      ? Math.min(suggestedMinutes, maximum)
+      : Math.min(20, maximum)
     control.state = 'idle'
-    control.message = '等待操作'
+    control.message = '请选择操作后确认下发。'
+  },
+  { immediate: true },
+)
+watch(
+  [() => route.query.plotId, () => store.accessiblePlots.length],
+  ([plotId]) => {
+    if (typeof plotId === 'string' && store.accessiblePlots.some((item) => item.plotId === plotId)) store.selectPlot(plotId)
   },
   { immediate: true },
 )
@@ -94,8 +71,8 @@ async function execute(action) {
     activeCommand.value = store.beginCommand(plot.value.plotId, action)
     control.state = 'sending'
     control.message = `正在下发${verb}灌溉指令…`
-    control.state = 'executing'
     const submitted = await store.sendControl(activeCommand.value)
+    control.state = 'executing'
     control.message = '指令已下发，正在等待设备响应…'
     const response = await store.waitCommandResult(submitted.commandId)
     const result = ['success', '成功'].includes(response?.result || response?.status) ? 'success' : response?.status === 'timeout' ? 'timeout' : 'failed'
@@ -126,116 +103,40 @@ async function execute(action) {
 <template>
   <div class="farmer-page irrigation-page">
     <div class="page-head">
-      <div>
-        <h1 class="page-title">智慧灌溉</h1>
-        <p class="page-subtitle">依据实时农情和天气生成可解释建议，控制操作必须二次确认。</p>
-      </div>
-      <div class="page-actions">
-        <div class="filter-control plot-filter">
-          <span class="filter-label"><el-icon><Location /></el-icon> 当前地块</span>
-          <el-select class="plot-select" size="large" :model-value="store.selectedPlotId" @change="store.selectPlot">
-            <el-option v-for="item in store.accessiblePlots" :key="item.plotId" :label="`${item.farmName} · ${item.plotName}`" :value="item.plotId" />
-          </el-select>
-        </div>
-      </div>
+      <div><h1 class="page-title">智慧灌溉</h1><p class="page-subtitle">确认后才会向设备下发指令，执行结果会保留在灌溉记录中。</p></div>
+      <div class="page-actions"><div class="filter-control plot-filter"><span class="filter-label"><el-icon><Location /></el-icon> 当前地块</span><el-select class="plot-select" size="large" :model-value="store.selectedPlotId" @change="store.selectPlot"><el-option v-for="item in store.accessiblePlots" :key="item.plotId" :label="`${item.farmName} · ${item.plotName}`" :value="item.plotId" /></el-select></div></div>
     </div>
 
     <template v-if="plot">
-      <section class="irrigation-main">
-        <div class="content-panel advice-card">
-          <div class="advice-top">
-            <div class="advice-icon"><el-icon><MagicStick /></el-icon></div>
-            <div><span>智能建议 · 风险等级 {{ advice.risk }}</span><h2>{{ advice.action }}</h2><p>建议灌溉时长 {{ advice.duration }} 分钟</p></div>
-          </div>
-          <div class="evidence-list">
-            <div v-for="item in advice.evidence" :key="item" class="evidence-item"><el-icon><CircleCheck /></el-icon><span>{{ item }}</span></div>
-          </div>
-          <el-alert v-if="!store.serviceStatus.weather" title="天气数据暂不可用，当前建议仅依据农田数据生成" type="warning" show-icon :closable="false" />
+      <section class="content-panel irrigation-control">
+        <div class="section-head"><div><h3>灌溉控制</h3><p>{{ controlDevice?.deviceNo || '未绑定灌溉控制器' }}</p></div><span :class="['status-pill', controlOnline ? '' : 'danger']">{{ controlOnline ? '控制器在线' : '控制器不可用' }}</span></div>
+        <div class="control-summary"><div><span>当前湿度</span><strong>{{ plot.humidity }}%</strong><small>参考阈值 {{ plot.threshold }}%</small></div><div><span>当前状态</span><strong>{{ plot.irrigating ? '灌溉中' : '未灌溉' }}</strong><small>单次上限 {{ plot.irrigationDuration ?? plot.maxDuration }} 分钟</small></div><div><span>最近灌溉</span><strong>{{ plot.lastIrrigation ? formatTimestamp(plot.lastIrrigation) : '暂无记录' }}</strong><small>仅可操作授权地块</small></div></div>
+        <el-alert v-if="suggestedEntry" title="已按首页建议预填地块和灌溉时长" type="success" :closable="false" show-icon />
+        <el-alert v-if="!controlOnline" title="灌溉控制器离线或未绑定，无法远程控制" description="请检查设备绑定状态和最后心跳。" type="error" :closable="false" show-icon />
+        <div class="command-form">
+          <div class="action-choice" role="group" aria-label="灌溉操作"><button :class="{ active: selectedAction === 'open' }" @click="selectedAction = 'open'">开启灌溉</button><button :class="{ active: selectedAction === 'close' }" @click="selectedAction = 'close'">关闭灌溉</button></div>
+          <label class="duration-field"><span>预计时长</span><el-select v-model="plannedDuration" :disabled="selectedAction === 'close'"><el-option v-for="minutes in durationOptions" :key="minutes" :label="`${minutes} 分钟`" :value="minutes" /></el-select></label>
+          <el-button type="success" size="large" :loading="control.loading" :disabled="commandDisabled" @click="execute(selectedAction)">{{ selectedAction === 'open' ? '确认并开启灌溉' : '确认并关闭灌溉' }}</el-button>
         </div>
-
-        <div class="content-panel control-console">
-          <div class="console-head">
-            <div><span>控制设备</span><strong>{{ controlDevice?.deviceNo || '未绑定' }}</strong><small>单次灌溉配置 {{ plot.irrigationDuration ?? plot.maxDuration }} 分钟</small></div>
-            <span :class="['status-pill', controlOnline ? '' : 'danger']">{{ controlOnline ? '控制器在线' : '控制器不可用' }}</span>
-          </div>
-
-          <div class="console-body">
-            <aside class="status-column">
-              <div class="humidity-card">
-                <span>当前土壤湿度</span>
-                <div class="humidity-gauge" :style="{ '--humidity-angle': humidityAngle }"><div><strong>{{ plot.humidity }}</strong><small>%</small></div></div>
-                <em>目标阈值 {{ plot.threshold }}%</em>
-              </div>
-              <div class="mini-status"><span>控制器状态</span><strong :class="{ danger: !controlOnline }">{{ controlOnline ? '在线' : controlDevice ? '离线' : '未绑定' }}</strong></div>
-              <div class="mini-status"><span>当前灌溉状态</span><strong>{{ plot.irrigating ? '灌溉中' : '未灌溉' }}</strong></div>
-            </aside>
-
-            <div class="switch-column">
-              <h3>灌溉开关</h3>
-              <div class="action-tabs">
-                <button :class="{ active: selectedAction === 'open' }" @click="selectedAction = 'open'">开启</button>
-                <button :class="{ active: selectedAction === 'close' }" @click="selectedAction = 'close'">关闭</button>
-              </div>
-              <button class="control-dial" :class="selectedAction" :aria-label="selectedAction === 'open' ? '选择开启灌溉' : '选择关闭灌溉'" @click="selectedAction = selectedAction === 'open' ? 'close' : 'open'">
-                <span class="dial-marker"></span><el-icon><SwitchButton /></el-icon>
-              </button>
-              <div class="dial-labels"><span>开启灌溉</span><span>关闭灌溉</span></div>
-
-              <div class="duration-row">
-                <label>预计灌溉时长</label>
-                <el-select v-model="plannedDuration" :disabled="selectedAction === 'close'">
-                  <el-option v-for="minutes in durationOptions" :key="minutes" :label="`${minutes} 分钟`" :value="minutes" />
-                </el-select>
-              </div>
-              <p class="duration-note">当前地块单次灌溉配置：{{ plot.irrigationDuration ?? plot.maxDuration }} 分钟</p>
-              <el-button class="confirm-command" type="success" size="large" :loading="control.loading" :disabled="commandDisabled" @click="execute(selectedAction)">
-                {{ selectedAction === 'open' ? '确认并开启灌溉' : '确认并关闭灌溉' }}
-              </el-button>
-            </div>
-          </div>
-
-          <div class="command-progress">
-            <div class="progress-head"><h4>灌溉指令状态</h4><span :class="['progress-result', control.state]"><el-icon v-if="control.state === 'success'"><CircleCheckFilled /></el-icon><el-icon v-else-if="control.state === 'failed'"><CircleCloseFilled /></el-icon>{{ progressLabel }}</span></div>
-            <div class="progress-track">
-              <div v-for="(item, index) in progressSteps" :key="item" :class="['progress-step', progressState(index)]">
-                <span class="progress-dot"><el-icon v-if="progressState(index) === 'done'"><Check /></el-icon><el-icon v-else-if="progressState(index) === 'error'"><Close /></el-icon></span>
-                <strong>{{ item }}</strong>
-              </div>
-            </div>
-            <p>{{ control.message }}</p>
-          </div>
-  <el-alert v-if="!controlOnline" title="灌溉控制器离线或未绑定，禁止远程控制" description="请先检查设备绑定状态和最后心跳。" type="error" show-icon :closable="false" />
-        </div>
-      </section>
-
-      <section v-if="commandLogs.length" class="content-panel command-panel">
-        <div class="section-head"><div><h3>控制指令记录</h3><p>记录设备对开启或关闭命令的执行结果。</p></div></div>
-        <el-table :data="commandLogs" class="compact-table">
-          <el-table-column prop="commandId" label="指令编号" min-width="155" />
-          <el-table-column prop="deviceId" label="设备编号" min-width="120" />
-          <el-table-column prop="action" label="动作" min-width="120" />
-          <el-table-column prop="sentAt" label="下发时间" min-width="165" />
-          <el-table-column prop="resultAt" label="结果时间" min-width="165" />
-          <el-table-column prop="status" label="状态" width="100"><template #default="scope"><span :class="['status-pill', scope.row.status === '失败' || scope.row.status === '超时' ? 'danger' : scope.row.status === '下发中' ? 'warning' : '']">{{ scope.row.status }}</span></template></el-table-column>
-        </el-table>
+        <div v-if="control.state !== 'idle'" :class="['command-feedback', control.state]"><span :class="['feedback-dot', control.state]"></span><strong>{{ commandLabel }}</strong><p>{{ control.message }}</p></div>
       </section>
 
       <section class="content-panel record-panel">
-        <div class="section-head"><div><h3>灌溉执行记录</h3><p>记录操作人、操作类型、起止时间和执行结果</p></div></div>
+        <div class="section-head"><div><h3>灌溉执行记录</h3><p>查看当前地块的操作人、执行时间与结果。</p></div></div>
         <el-table :data="records" class="compact-table">
-          <el-table-column prop="startTime" label="开始时间" min-width="165" />
-          <el-table-column prop="endTime" label="结束时间" min-width="165"><template #default="scope">{{ scope.row.endTime || '进行中' }}</template></el-table-column>
+          <el-table-column label="开始时间" min-width="165"><template #default="scope">{{ formatTimestamp(scope.row.startTime) }}</template></el-table-column>
+          <el-table-column label="结束时间" min-width="165"><template #default="scope">{{ scope.row.endTime ? formatTimestamp(scope.row.endTime) : '进行中' }}</template></el-table-column>
           <el-table-column prop="operationType" label="操作" width="80" />
-          <el-table-column prop="duration" label="计划/实际时长" min-width="120" />
-          <el-table-column prop="operator" label="操作人" width="100" />
-          <el-table-column prop="source" label="来源" min-width="120" />
-          <el-table-column prop="status" label="执行状态" width="110"><template #default="scope"><span :class="['status-pill', scope.row.status === '失败' ? 'danger' : scope.row.status === '进行中' ? 'info' : '']">{{ scope.row.status }}</span></template></el-table-column>
+          <el-table-column prop="duration" label="时长" width="90" />
+          <el-table-column prop="operator" label="执行人" width="100" />
+          <el-table-column prop="status" label="状态" width="100"><template #default="scope"><span :class="['status-pill', scope.row.status === '失败' ? 'danger' : scope.row.status === '进行中' ? 'info' : '']">{{ scope.row.status }}</span></template></el-table-column>
         </el-table>
+        <el-empty v-if="!records.length" :image-size="58" description="暂无灌溉记录" />
       </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.irrigation-main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.advice-card{background:linear-gradient(135deg,#eff9f4,#fff)}.advice-top{display:flex;align-items:center;gap:14px}.advice-icon{width:52px;height:52px;display:grid;place-items:center;flex:0 0 52px;border-radius:16px;color:#247b58;background:#dcf2e7;font-size:25px}.advice-top span{color:#408064;font-size:12px;font-weight:650}.advice-top h2{margin:6px 0 4px;font-size:20px}.advice-top p{margin:0;color:#81918b;font-size:12px}.control-console{padding:18px 20px}.console-head{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;padding-bottom:14px;border-bottom:1px solid #e5eee9}.console-head div>span,.console-head div>strong,.console-head div>small{display:block}.console-head div>span{color:#7f9189;font-size:11px}.console-head div>strong{margin-top:3px;color:#25483a;font-size:19px}.console-head div>small{margin-top:4px;color:#91a098;font-size:11px}.console-body{display:grid;grid-template-columns:190px minmax(0,1fr);gap:22px;padding-top:16px}.status-column{display:grid;gap:10px;padding:12px;border-radius:17px;background:linear-gradient(180deg,#257655,#1b5b43)}.humidity-card,.mini-status{border-radius:12px;background:#f9fcfa}.humidity-card{padding:13px;text-align:center}.humidity-card>span{display:block;color:#4e665d;font-size:11px;font-weight:650}.humidity-gauge{width:92px;height:92px;display:grid;place-items:center;margin:10px auto 6px;border-radius:50%;background:conic-gradient(#2c9368 0 var(--humidity-angle),#e8eee9 var(--humidity-angle) 360deg)}.humidity-gauge>div{width:68px;height:68px;display:grid;place-content:center;border-radius:50%;background:#fff}.humidity-gauge strong{font-size:24px}.humidity-gauge small{font-size:11px}.humidity-card em{color:#8a9992;font-size:10px;font-style:normal}.mini-status{padding:12px}.mini-status span,.mini-status strong{display:block}.mini-status span{color:#7e8f88;font-size:10px}.mini-status strong{margin-top:5px;color:#24533f;font-size:15px}.mini-status strong.danger{color:#c45353}.switch-column{min-width:0}.switch-column h3{margin:0 0 8px;color:#29473d}.action-tabs{display:flex;justify-content:center;gap:8px}.action-tabs button{padding:5px 14px;border:0;border-radius:14px;color:#83918c;background:#f0f4f2;cursor:pointer}.action-tabs button.active{color:#fff;background:#2e8b63}.control-dial{width:142px;height:142px;position:relative;display:grid;place-items:center;margin:10px auto 4px;border:12px solid #eef1ef;border-radius:50%;color:#fff;background:linear-gradient(145deg,#a9b1ad,#737c78);box-shadow:inset 0 0 0 3px #fff,0 8px 18px rgba(28,71,54,.2);font-size:36px;cursor:pointer}.control-dial::before{position:absolute;inset:-12px;content:'';border-radius:50%;border:8px solid transparent;border-top-color:#2f9368;transform:rotate(-45deg)}.control-dial.close::before{border-top-color:#d8894b;transform:rotate(135deg)}.dial-marker{width:8px;height:31px;position:absolute;top:12px;border-radius:5px;background:#fff;transform-origin:4px 47px;transition:.25s}.control-dial.open .dial-marker{transform:rotate(-46deg)}.control-dial.close .dial-marker{transform:rotate(46deg)}.dial-labels{display:flex;justify-content:space-around;color:#5f716a;font-size:11px}.duration-row{display:grid;grid-template-columns:125px 1fr;align-items:center;gap:10px;margin-top:14px}.duration-row label{color:#334f45;font-size:12px;font-weight:650}.duration-row .el-select{width:100%}.duration-note{margin:7px 0 10px;color:#9a8874;font-size:10px;text-align:right}.confirm-command{width:100%;border-radius:12px}.command-progress{margin-top:14px;padding:13px 15px;border-radius:12px;background:#f6faf8}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.progress-head h4{margin:0;color:#334f45;font-size:12px}.progress-result{display:flex;align-items:center;gap:5px;color:#7c8c85;font-size:11px;font-weight:650}.progress-result.sending,.progress-result.executing{color:#bd7b2f}.progress-result.success{color:#27875e}.progress-result.failed{color:#c45353}.progress-track{display:grid;grid-template-columns:repeat(4,1fr);margin-top:14px}.progress-step{position:relative;display:flex;align-items:center;justify-content:center;padding-top:20px;color:#9aa7a2}.progress-step::before{height:3px;position:absolute;top:6px;left:0;right:0;content:'';background:#dfe7e3}.progress-step:first-child::before{left:50%}.progress-step:last-child::before{right:50%}.progress-dot{width:13px;height:13px;position:absolute;top:1px;z-index:1;display:grid;place-items:center;border:2px solid #cbd6d1;border-radius:50%;background:#fff;font-size:8px}.progress-step strong{font-size:10px}.progress-step.done::before,.progress-step.active::before{background:#35a273}.progress-step.done .progress-dot{border-color:#35a273;color:#fff;background:#35a273}.progress-step.active{color:#a86b22}.progress-step.active .progress-dot{border-color:#e09a44;background:#fff3df;box-shadow:0 0 0 4px #fff5e8}.progress-step.error{color:#c45353}.progress-step.error .progress-dot{border-color:#cf5d5d;color:#fff;background:#cf5d5d}.command-progress>p{margin:11px 0 0;color:#6f8179;font-size:10px;text-align:center}.command-panel,.record-panel{margin-top:18px}@media(max-width:1200px){.irrigation-main{grid-template-columns:1fr}.console-body{grid-template-columns:210px minmax(0,1fr)}}@media(max-width:700px){.console-body{grid-template-columns:1fr}.status-column{grid-template-columns:1fr 1fr}.humidity-card{grid-row:span 2}.duration-row{grid-template-columns:1fr}.irrigation-main{display:block}.advice-card{margin-bottom:18px}}@media(max-width:480px){.status-column{grid-template-columns:1fr}.humidity-card{grid-row:auto}.control-dial{width:126px;height:126px}}
+.irrigation-control{margin-bottom:18px}.control-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:18px;border:1px solid #e6eee9;border-radius:8px;overflow:hidden}.control-summary>div{padding:13px 15px;background:#fbfdfc}.control-summary span,.control-summary strong,.control-summary small{display:block}.control-summary span{color:#84938d;font-size:11px}.control-summary strong{margin:5px 0;color:#29483c;font-size:17px;line-height:1.25}.control-summary small{overflow:hidden;color:#9ba7a2;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.irrigation-control>.el-alert{margin-bottom:12px}.command-form{display:grid;grid-template-columns:minmax(230px,1fr) 180px auto;align-items:end;gap:14px;margin-top:18px;padding-top:18px;border-top:1px solid #edf2ef}.action-choice{display:grid;grid-template-columns:1fr 1fr;padding:3px;border:1px solid #dce9e3;border-radius:8px;background:#f4f8f6}.action-choice button{height:36px;border:0;border-radius:6px;color:#647a70;background:transparent;font-size:13px;cursor:pointer}.action-choice button.active{color:#fff;background:#277e5b;box-shadow:0 2px 6px rgba(30,107,76,.16)}.duration-field{display:grid;gap:6px}.duration-field>span{color:#5d7369;font-size:12px;font-weight:650}.command-form>.el-button{min-width:174px}.command-feedback{display:flex;align-items:center;gap:8px;margin-top:16px;padding:11px 13px;border-radius:8px;color:#60776c;background:#f4f8f6;font-size:12px}.command-feedback strong{font-size:12px}.command-feedback p{margin:0;color:#73867d}.feedback-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#93a59c}.feedback-dot.sending,.feedback-dot.executing{background:#d69439}.feedback-dot.success{background:#38a06f}.feedback-dot.failed{background:#c35a5a}.record-panel{margin-top:18px}@media(max-width:850px){.command-form{grid-template-columns:1fr 180px}.command-form>.el-button{grid-column:1/-1}}@media(max-width:620px){.control-summary{grid-template-columns:1fr}.control-summary>div{border-bottom:1px solid #edf2ef}.control-summary>div:last-child{border-bottom:0}.command-form{grid-template-columns:1fr}.command-form>.el-button{grid-column:auto;width:100%}.command-feedback{align-items:flex-start;flex-wrap:wrap}.command-feedback p{width:100%;margin-left:16px}}
 </style>

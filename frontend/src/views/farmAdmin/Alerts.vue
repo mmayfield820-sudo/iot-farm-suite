@@ -19,6 +19,7 @@
           <div class="header-right">
             <el-select v-model="filterForm.type" placeholder="告警类型" clearable style="width: 150px;">
               <el-option label="湿度过低" value="湿度过低" />
+              <el-option label="湿度偏高" value="湿度偏高" />
               <el-option label="设备离线" value="设备离线" />
               <el-option label="数据未更新" value="数据未更新" />
             </el-select>
@@ -63,7 +64,6 @@
         highlight-current-row
       >
         <el-table-column type="index" label="序号" width="60" align="center" />
-        <el-table-column prop="alertId" label="告警ID" width="100" />
         <el-table-column prop="alertType" label="告警类型" width="120">
           <template #default="scope">
             <el-tag :type="ALERT_TYPE_CONFIG[scope.row.alertType]?.type || 'info'" size="small" effect="dark">
@@ -72,11 +72,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="plotName" label="关联地块" width="120" />
-        <el-table-column prop="deviceId" label="设备ID" width="120">
-          <template #default="scope">
-            <el-link type="primary" :underline="false">{{ scope.row.deviceId }}</el-link>
-          </template>
-        </el-table-column>
         <el-table-column prop="reason" label="告警原因" min-width="200" show-overflow-tooltip>
           <template #default="scope">
             <span style="color: #606266;">{{ scope.row.reason }}</span>
@@ -91,10 +86,10 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="occurTime" label="发生时间" width="160" sortable />
-        <el-table-column prop="handledAt" label="处理时间" width="160">
+        <el-table-column label="发生时间" width="160" sortable><template #default="scope">{{ formatTimestamp(scope.row.occurTime) }}</template></el-table-column>
+        <el-table-column label="处理时间" width="160">
           <template #default="scope">
-            <span v-if="scope.row.handledAt" class="recover-time">{{ scope.row.handledAt }}</span>
+            <span v-if="scope.row.handledAt" class="recover-time">{{ formatTimestamp(scope.row.handledAt) }}</span>
             <span v-else class="no-recover">尚未处理</span>
           </template>
         </el-table-column>
@@ -147,9 +142,9 @@
         <el-descriptions-item label="设备ID">{{ detailDialog.data.deviceId }}</el-descriptions-item>
         <el-descriptions-item label="触发值">{{ detailDialog.data.triggerValue }}</el-descriptions-item>
         <el-descriptions-item label="阈值">{{ detailDialog.data.threshold }}</el-descriptions-item>
-        <el-descriptions-item label="发生时间">{{ detailDialog.data.occurTime }}</el-descriptions-item>
+        <el-descriptions-item label="发生时间">{{ formatTimestamp(detailDialog.data.occurTime) }}</el-descriptions-item>
         <el-descriptions-item label="处理时间">
-          {{ detailDialog.data.handledAt || '尚未处理' }}
+          {{ detailDialog.data.handledAt ? formatTimestamp(detailDialog.data.handledAt) : '尚未处理' }}
         </el-descriptions-item>
         <el-descriptions-item label="告警原因" :span="2">{{ detailDialog.data.reason }}</el-descriptions-item>
       </el-descriptions>
@@ -162,7 +157,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ALERT_TYPE_CONFIG, ALERT_STATUS_CONFIG } from '@/utils/farmAdminStatus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { normalizeAlert, parseDate } from '@/utils/dataAdapters'
+import { formatDateTime, normalizeAlert, parseDate } from '@/utils/dataAdapters'
 import { usePlatformStore } from '@/stores/platform'
 import { acknowledgeAlert } from '@/api/alert'
 
@@ -188,6 +183,7 @@ const detailDialog = ref({
 
 const platformStore = usePlatformStore()
 const isMock = import.meta.env.VITE_USE_MOCK === 'true'
+const formatTimestamp = (value) => formatDateTime(value, '-')
 
 async function loadAlerts(force = false) {
   loading.value = true

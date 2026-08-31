@@ -131,6 +131,7 @@ export function normalizeAlert(row = {}) {
     humidity: '湿度过低',
     temperature: '温度异常',
     low_moisture: '湿度过低',
+    high_moisture: '湿度偏高',
     device_offline: '设备离线',
     device_fault: '设备故障',
     irrigation_failed: '灌溉失败',

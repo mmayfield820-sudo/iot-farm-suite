@@ -9,6 +9,7 @@ const menu = [
   { label: '运行概况', path: '/admin/dashboard', icon: 'DataBoard' },
   { label: '全局告警', path: '/admin/alerts', icon: 'Warning' },
   { label: '用户管理', path: '/admin/users', icon: 'UserFilled' },
+  { label: '品种模板', path: '/admin/templates', icon: 'CollectionTag' },
   { label: '系统参数', path: '/admin/settings', icon: 'Setting' },
   { label: '操作日志', path: '/admin/logs', icon: 'Document' },
 ]

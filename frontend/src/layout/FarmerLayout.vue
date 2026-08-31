@@ -30,9 +30,9 @@ onMounted(async () => {
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
 const menu = [
   { label: '农场首页', path: '/farmer/dashboard', icon: 'House' }, { label: '地块管理', path: '/farmer/management', icon: 'DataAnalysis' },
+  { label: '我的农事', path: '/farmer/tasks', icon: 'List' },
   { label: '智慧灌溉', path: '/farmer/irrigation', icon: 'Drizzling' },
   { label: '告警中心', path: '/farmer/alarm', icon: 'Warning' },
-  { label: 'AI 农业助手', path: '/farmer/ai', icon: 'ChatDotRound' },
 ]
 
 const contextLabel = computed(() => {

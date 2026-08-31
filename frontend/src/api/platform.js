@@ -1,7 +1,10 @@
 import request from './request'
 
 export const getFarmList = (params) => request.get('/farms', { params })
+export const getFarm = (farmId) => request.get(`/farms/${farmId}`)
+export const updateFarm = (farmId, data) => request.patch(`/farms/${farmId}`, data)
 export const getFarmOverview = (farmId) => request.get(`/farms/${farmId}/overview`)
+export const getFarmManagementStatistics = (farmId) => request.get(`/farms/${farmId}/management-statistics`)
 export const getAllDevices = (params) => request.get('/devices', { params })
 export const createDevice = (data) => request.post('/devices', data)
 export const bindDevice = (deviceId, plotId) => request.post(`/devices/${deviceId}/bind`, { plotId })

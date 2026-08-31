@@ -21,6 +21,18 @@ services:
       - ../database/schema/005_unbound_device_support.sql:/docker-entrypoint-initdb.d/005_unbound_device_support.sql:ro
       - ../database/schema/006_user_registration_and_scopes.sql:/docker-entrypoint-initdb.d/006_user_registration_and_scopes.sql:ro
       - ../database/schema/007_localize_demo_data.sql:/docker-entrypoint-initdb.d/007_localize_demo_data.sql:ro
+      - ../database/schema/008_phase2_account_and_master_data.sql:/docker-entrypoint-initdb.d/008_phase2_account_and_master_data.sql:ro
+      - ../database/schema/009_phase2_identity_initial_password.sql:/docker-entrypoint-initdb.d/009_phase2_identity_initial_password.sql:ro
+      - ../database/schema/010_phase2_templates_and_plans.sql:/docker-entrypoint-initdb.d/010_phase2_templates_and_plans.sql:ro
+      - ../database/schema/011_phase2_farm_production_profile.sql:/docker-entrypoint-initdb.d/011_phase2_farm_production_profile.sql:ro
+      - ../database/schema/012_phase2_template_draft_farm_scope.sql:/docker-entrypoint-initdb.d/012_phase2_template_draft_farm_scope.sql:ro
+      - ../database/schema/013_phase2_task_execution_history.sql:/docker-entrypoint-initdb.d/013_phase2_task_execution_history.sql:ro
+      - ../database/schema/014_phase2_stage_moisture_alerts.sql:/docker-entrypoint-initdb.d/014_phase2_stage_moisture_alerts.sql:ro
+      - ../database/schema/015_phase2_plan_adjustment_reminders.sql:/docker-entrypoint-initdb.d/015_phase2_plan_adjustment_reminders.sql:ro
+      - ../database/schema/016_phase2_plan_adjustment_disposition.sql:/docker-entrypoint-initdb.d/016_phase2_plan_adjustment_disposition.sql:ro
+      - ../database/schema/017_phase2_audit_logs.sql:/docker-entrypoint-initdb.d/017_phase2_audit_logs.sql:ro
+      - ../database/schema/018_farm_annual_production.sql:/docker-entrypoint-initdb.d/018_farm_annual_production.sql:ro
+      - ../database/schema/019_farm_planting_workflow.sql:/docker-entrypoint-initdb.d/019_farm_planting_workflow.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]

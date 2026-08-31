@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
+import re
 import secrets
+from io import BytesIO
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -12,14 +16,28 @@ from urllib.request import Request, urlopen
 from uuid import UUID
 
 import bcrypt
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook, load_workbook
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .auth import authenticate, create_access_token, current_user
+from .auth import (
+    authenticate,
+    authenticate_initial_password,
+    create_access_token,
+    create_profile_setup_token,
+    current_user,
+    profile_setup_user_id,
+)
 from .db import check_database, engine, parse_id, utc_isoformat, utc_naive
+from .moisture_alerts import evaluate_moisture_alerts
 from .mqtt import MqttService
+from .plan_adjustment_reminders import (
+    consecutive_rainy_days,
+    sync_continuous_rain_reminder,
+)
 
 
 mqtt_service = MqttService()
@@ -54,6 +72,142 @@ class RegistrationRequest(BaseModel):
     role_codes: list[str] = Field(min_length=1)
     farm_ids: list[str] = Field(default_factory=list)
     plot_ids: list[str] = Field(default_factory=list)
+
+
+class FirstLoginCompleteRequest(BaseModel):
+    profileSetupToken: str = Field(min_length=1)
+    password: str = Field(min_length=6, max_length=72)
+    phone: str | None = Field(default=None, max_length=20)
+    email: str | None = Field(default=None, max_length=100)
+
+
+class UserCreateRequest(BaseModel):
+    employeeNo: str = Field(min_length=1, max_length=50)
+    idCardNo: str = Field(min_length=15, max_length=18)
+    name: str = Field(min_length=1, max_length=50)
+    email: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    roleCodes: list[str] = Field(min_length=1)
+    farmIds: list[str] = Field(default_factory=list)
+    plotIds: list[str] = Field(default_factory=list)
+
+
+class UserUpdateRequest(BaseModel):
+    idCardNo: str | None = Field(default=None, min_length=15, max_length=18)
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    email: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    roleCodes: list[str] | None = None
+    farmIds: list[str] | None = None
+    plotIds: list[str] | None = None
+
+
+class UserStatusUpdateRequest(BaseModel):
+    status: str
+
+
+class FarmSaveRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    province: str = Field(min_length=1, max_length=50)
+    city: str = Field(min_length=1, max_length=50)
+    address: str | None = Field(default=None, max_length=255)
+    areaMu: float | None = Field(default=None, ge=0)
+    managerName: str | None = Field(default=None, max_length=50)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class FarmUpdateRequest(FarmSaveRequest):
+    status: str | None = None
+
+
+class PlotSaveRequest(BaseModel):
+    farmId: str
+    code: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=100)
+    areaMu: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=255)
+    irrigationMethod: str | None = None
+    status: str = "active"
+
+
+class PlotUpdateRequest(BaseModel):
+    farmId: str | None = None
+    code: str | None = Field(default=None, min_length=1, max_length=50)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    areaMu: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=255)
+    irrigationMethod: str | None = None
+    status: str | None = None
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    crop: str = Field(min_length=1, max_length=50)
+    province: str | None = Field(default=None, max_length=50)
+    city: str | None = Field(default=None, max_length=50)
+    versionDefinition: dict[str, Any]
+
+
+class TemplateDraftCreateRequest(BaseModel):
+    changeNote: str | None = Field(default=None, max_length=500)
+
+
+class TemplateDraftUpdateRequest(BaseModel):
+    versionDefinition: dict[str, Any]
+    changeNote: str | None = Field(default=None, max_length=500)
+
+
+class FarmPlanGenerateRequest(BaseModel):
+    regenerate: bool = False
+
+
+class TaskUpdateRequest(BaseModel):
+    scheduledDate: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    status: str | None = None
+
+
+class TaskCompletionRequest(BaseModel):
+    result: str = Field(min_length=1, max_length=255)
+    executedAt: datetime
+    executorName: str = Field(min_length=1, max_length=50)
+    note: str | None = Field(default=None, max_length=1000)
+    irrigationRecordId: str | None = None
+
+
+class AdHocTaskRequest(BaseModel):
+    taskType: str = Field(min_length=1, max_length=50)
+    title: str = Field(min_length=1, max_length=150)
+    executedAt: datetime
+    executorName: str = Field(min_length=1, max_length=50)
+    note: str | None = Field(default=None, max_length=1000)
+    irrigationRecordId: str | None = None
+
+
+class PlanAdjustmentReminderDispositionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=30)
+    note: str = Field(min_length=1, max_length=1000)
+
+
+class FarmProductionProfileRequest(BaseModel):
+    templateVersionId: str
+    plantingDate: str | None = None
+    treeAgeYears: float | None = Field(default=None, ge=0)
+    harvestCleanupCompletedAt: datetime | None = None
+    nextCycleStartsOn: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class FarmAnnualProductionRequest(BaseModel):
+    productionYear: int | None = Field(default=None, ge=2000, le=2100)
+    templateVersionId: str | None = None
+    extendYoungTrack: bool = False
+    trackOverrideReason: str | None = Field(default=None, max_length=500)
+
+
+class FarmPlantingScheduleRequest(BaseModel):
+    templateVersionId: str
+    plannedPlantingDate: str
 
 
 class UserSaveRequest(BaseModel):
@@ -154,6 +308,31 @@ def password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+def normalized_id_card(value: str) -> str:
+    normalized = value.strip().upper()
+    if re.fullmatch(r"\d{15}", normalized):
+        return normalized
+    if not re.fullmatch(r"\d{17}[\dX]", normalized):
+        raise HTTPException(status_code=400, detail="INVALID_ID_CARD_NO")
+    weights = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+    checks = "10X98765432"
+    expected = checks[sum(int(item) * weight for item, weight in zip(normalized[:17], weights)) % 11]
+    if normalized[-1] != expected:
+        raise HTTPException(status_code=400, detail="INVALID_ID_CARD_NO")
+    return normalized
+
+
+def id_card_hash(value: str) -> str:
+    secret = os.getenv("PII_HASH_SECRET") or os.getenv("JWT_SECRET")
+    if not secret:
+        raise RuntimeError("PII_HASH_SECRET or JWT_SECRET must be configured")
+    return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def id_card_masked(value: str) -> str:
+    return f"{value[:6]}{'*' * (len(value) - 10)}{value[-4:]}"
+
+
 def ensure_system_admin(user: dict[str, Any]) -> None:
     if user["role"] != "system_admin":
         raise HTTPException(status_code=403, detail="FORBIDDEN")
@@ -173,6 +352,15 @@ def device_payload(row: Any) -> dict[str, Any]:
         "status": value_of(row, "status"),
         "lastSeenAt": iso(value_of(row, "last_heartbeat")),
     }
+
+
+def farm_payload(row: Any) -> dict[str, Any]:
+    return {"id": business_id("F", row["farm_id"]), "name": row["farm_name"], "province": row["province"], "city": row["city"], "address": row["address"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "managerName": row["manager_name"], "note": row["note"], "plantingDate": row.get("planting_date").isoformat() if value_of(row, "planting_date") else None, "plannedPlantingDate": row.get("planned_planting_date").isoformat() if value_of(row, "planned_planting_date") else None, "status": row["farm_status"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+
+
+def plot_payload(row: Any) -> dict[str, Any]:
+    farmer_user_id = value_of(row, "scoped_farmer_user_id")
+    return {"id": business_id("P", row["plot_id"]), "farmId": business_id("F", row["farm_id"]), "code": row["plot_code"], "name": row["plot_name"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "location": row["location"], "irrigationMethod": row["irrigation_method"], "status": row["plot_status"], "farmerUserId": business_id("U", farmer_user_id) if farmer_user_id is not None else None, "farmerName": value_of(row, "farmer_name"), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
 
 
 def accessible_farm_ids(user: dict[str, Any]) -> set[int] | None:
@@ -204,6 +392,44 @@ def ensure_farm_access(user: dict[str, Any], farm_id: int) -> None:
     allowed_farms = accessible_farm_ids(user)
     if allowed_farms is not None and farm_id not in allowed_farms:
         raise HTTPException(status_code=403, detail="FORBIDDEN")
+
+
+def ensure_farm_admin_access(user: dict[str, Any], farm_id: int) -> None:
+    if user["role"] != "farm_admin":
+        raise HTTPException(status_code=403, detail="FORBIDDEN")
+    ensure_farm_access(user, farm_id)
+
+
+def record_audit_log(
+    connection: Any,
+    user: dict[str, Any],
+    module: str,
+    action: str,
+    *,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Write a successful key operation in the caller's transaction."""
+    connection.execute(
+        text(
+            """
+            INSERT INTO audit_log (
+                actor_user_id, module_code, action_code, target_type, target_id, detail
+            ) VALUES (
+                :actor_user_id, :module_code, :action_code, :target_type, :target_id, :detail
+            )
+            """
+        ),
+        {
+            "actor_user_id": user["user_id"],
+            "module_code": module,
+            "action_code": action,
+            "target_type": target_type,
+            "target_id": target_id,
+            "detail": detail,
+        },
+    )
 
 
 def parse_resource_id(value: str, prefix: str) -> int:
@@ -427,65 +653,35 @@ def alert_payload(row: Any) -> dict[str, Any]:
     }
 
 
-def sync_low_moisture_alert(
-    connection: Any,
-    *,
-    plot_id: int,
-    device_id: int,
-    moisture: float,
-    threshold: float,
-    timestamp: datetime,
-) -> None:
-    if moisture < threshold:
-        existing_alert = connection.execute(
-            text(
-                """
-                SELECT alert_id FROM alert
-                WHERE plot_id = :plot_id
-                  AND device_id <=> :device_id
-                  AND alert_type = 'low_moisture'
-                  AND alert_status IN ('active', 'acknowledged')
-                LIMIT 1
-                """
-            ),
-            {"plot_id": plot_id, "device_id": device_id},
-        ).scalar()
-        if existing_alert is None:
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO alert (
-                        plot_id, device_id, alert_type, alert_description,
-                        alert_value, alert_threshold, alert_datetime, alert_status
-                    ) VALUES (
-                        :plot_id, :device_id, 'low_moisture',
-                        '土壤湿度低于设定阈值',
-                        :moisture, :threshold, :timestamp, 'active'
-                    )
-                    """
-                ),
-                {
-                    "plot_id": plot_id,
-                    "device_id": device_id,
-                    "moisture": moisture,
-                    "threshold": threshold,
-                    "timestamp": timestamp,
-                },
-            )
-        return
-
-    connection.execute(
-        text(
-            """
-            UPDATE alert
-            SET alert_status = 'recovered', handled_at = :handled_at
-            WHERE plot_id = :plot_id
-              AND alert_type = 'low_moisture'
-              AND alert_status IN ('active', 'acknowledged')
-            """
+def plan_adjustment_reminder_payload(row: Any, tasks: list[Any]) -> dict[str, Any]:
+    return {
+        "id": business_id("PR", value_of(row, "reminder_id")),
+        "plotId": business_id("P", value_of(row, "plot_id")),
+        "plotName": value_of(row, "plot_name"),
+        "type": value_of(row, "reminder_type"),
+        "description": value_of(row, "reminder_description"),
+        "status": value_of(row, "reminder_status"),
+        "dispositionAction": value_of(row, "disposition_action"),
+        "dispositionNote": value_of(row, "disposition_note"),
+        "disposedBy": (
+            business_id("U", value_of(row, "disposed_by"))
+            if value_of(row, "disposed_by") is not None
+            else None
         ),
-        {"plot_id": plot_id, "handled_at": timestamp},
-    )
+        "disposedByName": value_of(row, "disposed_by_name"),
+        "disposedAt": iso(value_of(row, "disposed_at")),
+        "triggeredAt": iso(value_of(row, "triggered_at")),
+        "recoveredAt": iso(value_of(row, "recovered_at")),
+        "affectedTasks": [
+            {
+                "id": business_id("MT", value_of(task, "task_id")),
+                "title": value_of(task, "task_title"),
+                "type": value_of(task, "task_type"),
+                "scheduledDate": value_of(task, "scheduled_date").isoformat(),
+            }
+            for task in tasks
+        ],
+    }
 
 
 def evaluate_latest_moisture(
@@ -505,12 +701,12 @@ def evaluate_latest_moisture(
     ).mappings().first()
     if latest_report is None:
         return
-    sync_low_moisture_alert(
+    evaluate_moisture_alerts(
         connection,
         plot_id=plot_id,
         device_id=value_of(latest_report, "soil_moisture_device_id"),
         moisture=float(value_of(latest_report, "plot_moisture")),
-        threshold=threshold,
+        fallback_threshold=threshold,
         timestamp=datetime.now(UTC).replace(tzinfo=None),
     )
 
@@ -544,7 +740,8 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     user = connection.execute(
         text(
             """
-            SELECT user_id, username, real_name, email, phone, user_status
+            SELECT user_id, employee_no, id_card_masked, username, real_name, email, phone,
+                   user_status, activated_at, created_at, updated_at
             FROM users WHERE user_id = :user_id
             """
         ),
@@ -564,8 +761,7 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     farm_ids = connection.execute(
         text(
             """
-            SELECT farm_id FROM farm WHERE admin_user_id = :user_id
-            UNION SELECT farm_id FROM farm_admin_scope WHERE user_id = :user_id
+            SELECT farm_id FROM farm_admin_scope WHERE user_id = :user_id
             ORDER BY 1
             """
         ),
@@ -574,8 +770,7 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     plot_ids = connection.execute(
         text(
             """
-            SELECT plot_id FROM plot WHERE farmer_user_id = :user_id
-            UNION SELECT plot_id FROM farmer_plot_scope WHERE user_id = :user_id
+            SELECT plot_id FROM farmer_plot_scope WHERE user_id = :user_id
             ORDER BY 1
             """
         ),
@@ -583,16 +778,22 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     ).scalars().all()
     return {
         "id": business_id("U", user["user_id"]),
+        "employeeNo": user["employee_no"],
+        "idCardMasked": user["id_card_masked"],
         "username": user["username"],
-        "name": user["real_name"] or user["username"],
-        "displayName": user["real_name"] or user["username"],
+        "name": user["real_name"] or user["employee_no"],
+        "displayName": user["real_name"] or user["employee_no"],
         "email": user["email"],
         "phone": user["phone"],
         "active": user["user_status"] == "active",
+        "status": user["user_status"],
         "roles": [FRONTEND_ROLE_CODES[role] for role in roles],
         "roleCodes": roles,
         "farmIds": [business_id("F", value) for value in farm_ids],
         "plotIds": [business_id("P", value) for value in plot_ids],
+        "activatedAt": iso(user["activated_at"]),
+        "createdAt": iso(user["created_at"]),
+        "updatedAt": iso(user["updated_at"]),
     }
 
 
@@ -669,7 +870,12 @@ def ensure_existing_resources(connection: Any, farm_ids: list[int], plot_ids: li
             raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
 
 
-def ensure_plots_available_for_farmer(connection: Any, plot_ids: list[int]) -> None:
+def ensure_plots_available_for_farmer(
+    connection: Any,
+    plot_ids: list[int],
+    *,
+    excluding_user_id: int | None = None,
+) -> None:
     if not plot_ids:
         return
     occupied_plot_ids = connection.execute(
@@ -679,15 +885,15 @@ def ensure_plots_available_for_farmer(connection: Any, plot_ids: list[int]) -> N
             FROM plot AS p
             WHERE p.plot_id IN :plot_ids
               AND (
-                p.farmer_user_id IS NOT NULL
-                OR EXISTS (
+                EXISTS (
                     SELECT 1 FROM farmer_plot_scope AS s
                     WHERE s.plot_id = p.plot_id
+                      AND (:excluding_user_id IS NULL OR s.user_id <> :excluding_user_id)
                 )
               )
             """
         ).bindparams(bindparam("plot_ids", expanding=True)),
-        {"plot_ids": plot_ids},
+        {"plot_ids": plot_ids, "excluding_user_id": excluding_user_id},
     ).scalars().all()
     if occupied_plot_ids:
         raise HTTPException(status_code=409, detail="PLOT_ALREADY_ASSIGNED")
@@ -706,7 +912,13 @@ def health() -> dict[str, str]:
 def login(request: LoginRequest) -> dict[str, Any]:
     user = authenticate(request.username, request.password)
     if user is None:
-        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+        pending_user = authenticate_initial_password(request.username.strip(), request.password)
+        if pending_user is None:
+            raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+        return {
+            "requiresProfileCompletion": True,
+            "profileSetupToken": create_profile_setup_token(pending_user["user_id"]),
+        }
     with engine.connect() as connection:
         profile = user_payload(connection, user["user_id"])
     return {
@@ -715,108 +927,52 @@ def login(request: LoginRequest) -> dict[str, Any]:
     }
 
 
-@app.get("/api/registration-resources")
-def registration_resources() -> dict[str, list[dict[str, Any]]]:
-    """Public, read-only identifiers used by the registration form."""
-    with engine.connect() as connection:
-        farms = connection.execute(
-            text("SELECT farm_id, farm_name, city, address FROM farm ORDER BY farm_id")
-        ).mappings().all()
-        plots = connection.execute(
+@app.get("/api/registration-resources", include_in_schema=False)
+def registration_resources() -> None:
+    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
+
+
+@app.post("/api/auth/first-login/complete")
+def complete_first_login(request: FirstLoginCompleteRequest) -> dict[str, Any]:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    user_id = profile_setup_user_id(request.profileSetupToken)
+    with engine.begin() as connection:
+        employee = connection.execute(
             text(
                 """
-                SELECT plot_id, farm_id, plot_name, crop_name, description
-                FROM plot AS p
-                WHERE p.farmer_user_id IS NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM farmer_plot_scope AS s
-                    WHERE s.plot_id = p.plot_id
-                  )
-                ORDER BY plot_id
+                SELECT user_id, password_hash
+                FROM users
+                WHERE user_id = :user_id AND user_status = 'pending_activation'
+                FOR UPDATE
                 """
-            )
-        ).mappings().all()
-    return {
-        "farms": [
-            {
-                "id": business_id("F", row["farm_id"]),
-                "name": row["farm_name"],
-                "city": row["city"],
-                "address": row["address"],
-                "active": True,
-            }
-            for row in farms
-        ],
-        "plots": [
-            {
-                "id": business_id("P", row["plot_id"]),
-                "plotNo": business_id("P", row["plot_id"]),
-                "farmId": business_id("F", row["farm_id"]),
-                "name": row["plot_name"],
-                "crop": row["crop_name"],
-                "note": row["description"],
-            }
-            for row in plots
-        ],
-    }
-
-
-@app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
-def register(request: RegistrationRequest) -> dict[str, Any]:
-    role_codes = canonical_role_codes(request.role_codes)
-    if "system_admin" in role_codes:
-        raise HTTPException(status_code=400, detail="SYSTEM_ADMIN_REGISTRATION_NOT_ALLOWED")
-    farm_ids = resource_ids(request.farm_ids, "F")
-    plot_ids = resource_ids(request.plot_ids, "P")
-    if "farm_admin" in role_codes and not farm_ids:
-        raise HTTPException(status_code=400, detail="FARM_SCOPE_REQUIRED")
-    if "farmer" in role_codes and not plot_ids:
-        raise HTTPException(status_code=400, detail="PLOT_SCOPE_REQUIRED")
-    with engine.begin() as connection:
-        ensure_existing_resources(connection, farm_ids, plot_ids)
-        if "farmer" in role_codes:
-            ensure_plots_available_for_farmer(connection, plot_ids)
-        if connection.execute(
-            text("SELECT 1 FROM users WHERE username = :username"),
-            {"username": request.username},
-        ).scalar():
-            raise HTTPException(status_code=409, detail="USERNAME_ALREADY_EXISTS")
-        if connection.execute(
-            text("SELECT 1 FROM registration_application WHERE username = :username"),
-            {"username": request.username},
-        ).scalar():
-            raise HTTPException(status_code=409, detail="REGISTRATION_ALREADY_EXISTS")
+            ),
+            {"user_id": user_id},
+        ).mappings().first()
+        if employee is None:
+            raise HTTPException(status_code=400, detail="FIRST_LOGIN_INVALID")
+        if bcrypt.checkpw(request.password.encode("utf-8"), employee["password_hash"].encode("utf-8")):
+            raise HTTPException(status_code=400, detail="PASSWORD_MUST_CHANGE")
         try:
-            result = connection.execute(
+            connection.execute(
                 text(
                     """
-                    INSERT INTO registration_application (
-                        username, password_hash, real_name, email, phone,
-                        role_codes, farm_ids, plot_ids
-                    ) VALUES (
-                        :username, :password_hash, :real_name, :email, :phone,
-                        :role_codes, :farm_ids, :plot_ids
-                    )
+                    UPDATE users SET password_hash = :password_hash,
+                        phone = :phone, email = :email, user_status = 'active',
+                        activated_at = :activated_at
+                    WHERE user_id = :user_id
                     """
                 ),
                 {
-                    "username": request.username,
                     "password_hash": password_hash(request.password),
-                    "real_name": request.real_name.strip(),
-                    "email": request.email or None,
                     "phone": request.phone or None,
-                    "role_codes": json.dumps(role_codes),
-                    "farm_ids": json.dumps(farm_ids),
-                    "plot_ids": json.dumps(plot_ids),
+                    "email": request.email or None,
+                    "activated_at": now,
+                    "user_id": employee["user_id"],
                 },
             )
         except IntegrityError as error:
-            raise HTTPException(status_code=409, detail="REGISTRATION_ALREADY_EXISTS") from error
-        row = connection.execute(
-            text("SELECT * FROM registration_application WHERE application_id = :application_id"),
-            {"application_id": result.lastrowid},
-        ).mappings().one()
-    return registration_payload(row)
+            raise HTTPException(status_code=409, detail="USERNAME_OR_EMAIL_ALREADY_EXISTS") from error
+        return user_payload(connection, employee["user_id"])
 
 
 @app.get("/api/registration-applications")
@@ -832,6 +988,7 @@ def list_registration_applications(user: dict[str, Any] = Depends(current_user))
 @app.put("/api/registration-applications/{application_id}/approve")
 def approve_registration(application_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     ensure_system_admin(user)
+    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
     numeric_id = parse_resource_id(application_id, "REG")
     with engine.begin() as connection:
         application = connection.execute(
@@ -892,6 +1049,7 @@ def reject_registration(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     ensure_system_admin(user)
+    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
     numeric_id = parse_resource_id(application_id, "REG")
     with engine.begin() as connection:
         result = connection.execute(
@@ -914,7 +1072,7 @@ def reject_registration(
     return registration_payload(row)
 
 
-@app.get("/api/users")
+@app.get("/api/_legacy/users", include_in_schema=False)
 def list_users(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     ensure_system_admin(user)
     with engine.connect() as connection:
@@ -989,7 +1147,7 @@ def save_user_record(
         return user_payload(connection, numeric_user_id), temporary_password
 
 
-@app.post("/api/users", status_code=status.HTTP_201_CREATED)
+@app.post("/api/_legacy/users", status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_user(
     request: UserSaveRequest,
     user: dict[str, Any] = Depends(current_user),
@@ -999,7 +1157,7 @@ def create_user(
     return {**saved, "temporaryPassword": temporary_password}
 
 
-@app.put("/api/users/{user_id}")
+@app.put("/api/_legacy/users/{user_id}", include_in_schema=False)
 def update_user(
     user_id: str,
     request: UserSaveRequest,
@@ -1011,7 +1169,7 @@ def update_user(
     return saved
 
 
-@app.put("/api/users/{user_id}/active")
+@app.put("/api/_legacy/users/{user_id}/active", include_in_schema=False)
 def update_user_active(
     user_id: str,
     request: UserActiveRequest,
@@ -1031,7 +1189,7 @@ def update_user_active(
         return user_payload(connection, numeric_user_id)
 
 
-@app.post("/api/users/{user_id}/reset-password")
+@app.post("/api/_legacy/users/{user_id}/reset-password", include_in_schema=False)
 def reset_user_password(
     user_id: str,
     user: dict[str, Any] = Depends(current_user),
@@ -1049,29 +1207,965 @@ def reset_user_password(
     return {"temporaryPassword": temporary_password}
 
 
+def validated_assignments(
+    connection: Any, role_codes: list[str], farm_values: list[str], plot_values: list[str], *, user_id: int | None = None
+) -> tuple[list[str], list[int], list[int]]:
+    roles = canonical_role_codes(role_codes)
+    farm_ids = resource_ids(farm_values, "F")
+    plot_ids = resource_ids(plot_values, "P")
+    if "farm_admin" in roles and not farm_ids:
+        raise HTTPException(status_code=400, detail="FARM_SCOPE_REQUIRED")
+    if "farmer" in roles and not plot_ids:
+        raise HTTPException(status_code=400, detail="PLOT_SCOPE_REQUIRED")
+    ensure_existing_resources(connection, farm_ids, plot_ids)
+    if "farmer" in roles:
+        ensure_plots_available_for_farmer(connection, plot_ids, excluding_user_id=user_id)
+    return roles, farm_ids, plot_ids
+
+
+IMPORT_HEADERS = ["工号", "姓名", "身份证号", "手机号", "邮箱", "角色", "授权橙园编号", "授权地块编号"]
+
+
+def import_values(value: Any) -> list[str]:
+    return [part.strip() for part in re.split(r"[,，;；\s]+", str(value or "")) if part.strip()]
+
+
+def import_job_payload(connection: Any, job_id: int) -> dict[str, Any]:
+    job = connection.execute(text("SELECT * FROM user_import_job WHERE import_job_id=:id"), {"id": job_id}).mappings().one()
+    rows = connection.execute(text("SELECT source_row_number, validation_errors FROM user_import_row WHERE import_job_id=:id AND row_status='invalid' ORDER BY source_row_number"), {"id": job_id}).mappings().all()
+    errors = [{"rowNumber": row["source_row_number"], **error} for row in rows for error in (json.loads(row["validation_errors"]) if row["validation_errors"] else [])]
+    return {"id": business_id("IMP", job_id), "status": job["job_status"], "totalRows": job["total_rows"], "validRows": job["valid_rows"], "invalidRows": job["invalid_rows"], "errors": errors, "createdAt": iso(job["created_at"]), "committedAt": iso(job["committed_at"])}
+
+
+def validate_template_definition(definition: dict[str, Any]) -> list[dict[str, Any]]:
+    stages = definition.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+
+    stage_codes: set[str] = set()
+    for stage in stages:
+        try:
+            code = str(stage["code"]).strip()
+            name = str(stage["name"]).strip()
+            duration = int(stage["durationDays"])
+            tasks = stage.get("tasks", [])
+            minimum = stage.get("moistureMin")
+            maximum = stage.get("moistureMax")
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION") from error
+        if not code or not name or len(code) > 50 or len(name) > 100 or duration <= 0 or code in stage_codes or not isinstance(tasks, list):
+            raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+        if minimum is not None and maximum is not None and float(minimum) > float(maximum):
+            raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+        stage_codes.add(code)
+        for task in tasks:
+            try:
+                title = str(task.get("title", "任务")).strip()
+                task_type = str(task.get("type", "other")).strip()
+                offset = int(task.get("offsetDays", 0))
+            except (AttributeError, TypeError, ValueError) as error:
+                raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION") from error
+            if not title or not task_type or len(title) > 150 or len(task_type) > 50 or offset < 0:
+                raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+            if task.get("track") not in {None, "young", "fruiting"}:
+                raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+    return stages
+
+
+def store_template_definition(connection: Any, version_id: int, definition: dict[str, Any]) -> None:
+    stages = validate_template_definition(definition)
+    for order, stage in enumerate(stages, start=1):
+        result = connection.execute(text("INSERT INTO growth_stage_template (template_version_id,stage_code,stage_name,sort_order,duration_days,moisture_min,moisture_max,management_focus) VALUES (:version,:code,:name,:order,:duration,:minimum,:maximum,:focus)"), {"version":version_id,"code":str(stage["code"]).strip(),"name":str(stage["name"]).strip(),"order":order,"duration":int(stage["durationDays"]),"minimum":stage.get("moistureMin"),"maximum":stage.get("moistureMax"),"focus":stage.get("managementFocus")})
+        for task in stage.get("tasks", []):
+            connection.execute(text("INSERT INTO management_task_template (stage_template_id,task_type,title,offset_days,suggested_time,note,track) VALUES (:stage,:type,:title,:offset,:suggested_time,:note,:track)"), {"stage":result.lastrowid,"type":str(task.get("type", "other")).strip(),"title":str(task.get("title", "任务")).strip(),"offset":int(task.get("offsetDays", 0)),"suggested_time":task.get("suggestedTime"),"note":task.get("note"),"track":task.get("track")})
+
+
+def template_definition(connection: Any, version_id: int) -> dict[str, Any]:
+    stages = connection.execute(text("SELECT stage_template_id,stage_code,stage_name,duration_days,moisture_min,moisture_max,management_focus FROM growth_stage_template WHERE template_version_id=:version ORDER BY sort_order"), {"version": version_id}).mappings().all()
+    definition: list[dict[str, Any]] = []
+    for stage in stages:
+        tasks = connection.execute(text("SELECT task_type,title,offset_days,suggested_time,note,track FROM management_task_template WHERE stage_template_id=:stage ORDER BY task_template_id"), {"stage": stage["stage_template_id"]}).mappings().all()
+        definition.append({"code": stage["stage_code"], "name": stage["stage_name"], "durationDays": stage["duration_days"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None, "managementFocus": stage["management_focus"], "tasks": [{"type": task["task_type"], "title": task["title"], "offsetDays": task["offset_days"], "suggestedTime": str(task["suggested_time"]) if task["suggested_time"] is not None else None, "note": task["note"], "track": task["track"]} for task in tasks]})
+    return {"stages": definition}
+
+
+def template_draft_payload(connection: Any, version: Any) -> dict[str, Any]:
+    return {"id": business_id("CTV", version["template_version_id"]), "templateId": business_id("CT", version["template_id"]), "farmId": business_id("F", version["farm_id"]), "versionNo": version["version_no"], "status": version["version_status"], "changeNote": version["change_note"], "versionDefinition": template_definition(connection, version["template_version_id"])}
+
+
+def maintenance_window_profile(connection: Any, farm_id: int, template_id: int, *, lock: bool = False) -> Any:
+    statement = "SELECT p.*,v.template_id FROM farm_production_profile p JOIN crop_template_version v ON v.template_version_id=p.template_version_id WHERE p.farm_id=:farm"
+    if lock:
+        statement += " FOR UPDATE"
+    profile = connection.execute(text(statement), {"farm": farm_id}).mappings().first()
+    today = date.today()
+    if profile is None or profile["template_id"] != template_id or profile["harvest_cleanup_completed_at"] is None or profile["next_cycle_starts_on"] is None or today >= profile["next_cycle_starts_on"]:
+        raise HTTPException(status_code=409, detail="TEMPLATE_EDIT_WINDOW_CLOSED")
+    return profile
+
+
+def production_year_for(day: date) -> int:
+    return day.year + 1 if day.month == 12 else day.year
+
+
+def production_year_bounds(production_year: int) -> tuple[date, date]:
+    return date(production_year - 1, 12, 1), date(production_year, 11, 30)
+
+
+def annual_stage_window(stage_code: str, production_year: int, fallback_start: date, duration_days: int) -> tuple[date, date]:
+    starts = {"S1": date(production_year - 1, 12, 1), "S2": date(production_year, 2, 1), "S3": date(production_year, 4, 1), "S4": date(production_year, 5, 1), "S5": date(production_year, 7, 1), "S6": date(production_year, 9, 1), "S7": date(production_year, 11, 1)}
+    ends = {"S1": date(production_year, 1, 31), "S2": date(production_year, 3, 31), "S3": date(production_year, 4, 30), "S4": date(production_year, 6, 30), "S5": date(production_year, 8, 31), "S6": date(production_year, 10, 31), "S7": date(production_year, 11, 30)}
+    code = stage_code.upper()
+    return (starts[code], ends[code]) if code in starts else (fallback_start, fallback_start + timedelta(days=duration_days - 1))
+
+
+def orchard_track(planting_date: date, production_year: int) -> tuple[int, str]:
+    tree_age_years = max(1, production_year - planting_date.year + 1)
+    return tree_age_years, "young" if tree_age_years <= 3 else "fruiting"
+
+
+def farm_plan_task_rules(connection: Any, template_version_id: int, production_year: int, track: str) -> list[dict[str, Any]]:
+    rows = connection.execute(text("SELECT s.stage_code,s.sort_order,s.duration_days,t.task_type,t.title,t.offset_days,t.note,t.track FROM growth_stage_template s LEFT JOIN management_task_template t ON t.stage_template_id=s.stage_template_id WHERE s.template_version_id=:version ORDER BY s.sort_order,t.offset_days,t.task_template_id"), {"version": template_version_id}).mappings().all()
+    rules: list[dict[str, Any]] = []
+    stage_starts: dict[int, date] = {}
+    fallback_start, _ = production_year_bounds(production_year)
+    for row in rows:
+        stage_order = row["sort_order"]
+        if stage_order not in stage_starts:
+            stage_start, _ = annual_stage_window(row["stage_code"], production_year, fallback_start, row["duration_days"])
+            stage_starts[stage_order] = stage_start
+            fallback_start = stage_start + timedelta(days=row["duration_days"])
+        if row["task_type"] is None:
+            continue
+        if row["track"] not in {None, track}:
+            continue
+        rules.append({"stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "scheduledDate": stage_starts[stage_order] + timedelta(days=row["offset_days"]), "note": row["note"]})
+    return rules
+
+
+def farm_production_context(connection: Any, plot: dict[str, Any]) -> dict[str, Any]:
+    farm = connection.execute(text("SELECT planting_date,planned_planting_date,planting_template_version_id FROM farm WHERE farm_id=:farm"), {"farm": plot["farm_id"]}).mappings().one()
+    if farm["planting_date"] is None:
+        template = None
+        if farm["planting_template_version_id"] is not None:
+            template = connection.execute(text("SELECT t.template_name,t.crop_name,v.version_no FROM crop_template_version v JOIN crop_template t ON t.template_id=v.template_id WHERE v.template_version_id=:version"), {"version": farm["planting_template_version_id"]}).mappings().first()
+        return {"plotId": business_id("P", plot["plot_id"]), "farmId": business_id("F", plot["farm_id"]), "plantingStatus": "planned" if farm["planned_planting_date"] else "not_scheduled", "plantingDate": None, "plannedPlantingDate": farm["planned_planting_date"].isoformat() if farm["planned_planting_date"] else None, "templateVersionId": business_id("CTV", farm["planting_template_version_id"]) if farm["planting_template_version_id"] else None, "templateName": template["template_name"] if template else None, "crop": template["crop_name"] if template else None, "versionNo": template["version_no"] if template else None, "stage": None, "stages": [], "suggestions": []}
+    return annual_production_context(connection, plot["farm_id"], plot_id=plot["plot_id"])
+
+
+def annual_production_context(connection: Any, farm_id: int, *, production_year: int | None = None, plot_id: int | None = None) -> dict[str, Any]:
+    today = date.today()
+    production_year = production_year or production_year_for(today)
+    farm = connection.execute(text("SELECT farm_id,farm_name,planting_date FROM farm WHERE farm_id=:farm"), {"farm": farm_id}).mappings().first()
+    if farm is None:
+        raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+    if farm["planting_date"] is None:
+        raise HTTPException(status_code=409, detail="ORCHARD_PLANTING_DATE_REQUIRED")
+    profile = connection.execute(text("SELECT p.template_version_id,t.template_name,t.crop_name,v.version_no FROM farm_production_profile p JOIN crop_template_version v ON v.template_version_id=p.template_version_id JOIN crop_template t ON t.template_id=v.template_id WHERE p.farm_id=:farm"), {"farm": farm_id}).mappings().first()
+    annual = connection.execute(text("SELECT * FROM farm_annual_production WHERE farm_id=:farm AND production_year=:year"), {"farm": farm_id, "year": production_year}).mappings().first()
+    if annual is None and profile is None:
+        raise HTTPException(status_code=404, detail="PRODUCTION_TEMPLATE_REQUIRED")
+    version_id = annual["template_version_id"] if annual else profile["template_version_id"]
+    template = connection.execute(text("SELECT t.template_name,t.crop_name,v.version_no FROM crop_template_version v JOIN crop_template t ON t.template_id=v.template_id WHERE v.template_version_id=:version"), {"version": version_id}).mappings().one()
+    tree_age_years, automatic_track = orchard_track(farm["planting_date"], production_year)
+    track = annual["orchard_track"] if annual else automatic_track
+    stages = connection.execute(text("SELECT stage_code,stage_name,duration_days,moisture_min,moisture_max,management_focus FROM growth_stage_template WHERE template_version_id=:version ORDER BY sort_order"), {"version": version_id}).mappings().all()
+    current_stage = None
+    timeline: list[dict[str, Any]] = []
+    fallback_start, _ = production_year_bounds(production_year)
+    for stage in stages:
+        starts_on, ends_on = annual_stage_window(stage["stage_code"], production_year, fallback_start, stage["duration_days"])
+        fallback_start = starts_on + timedelta(days=stage["duration_days"])
+        item = {"code": stage["stage_code"], "name": stage["stage_name"], "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat(), "managementFocus": stage["management_focus"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None}
+        timeline.append(item)
+        if starts_on <= today <= ends_on:
+            current_stage = item
+    selected_rules = farm_plan_task_rules(connection, version_id, production_year, track)
+    suggestions = [rule for rule in selected_rules if rule["stageCode"] == current_stage["code"]] if current_stage else []
+    return {"plotId": business_id("P", plot_id) if plot_id is not None else None, "farmId": business_id("F", farm_id), "farmName": farm["farm_name"], "productionYear": production_year, "productionYearStartsOn": production_year_bounds(production_year)[0].isoformat(), "productionYearEndsOn": production_year_bounds(production_year)[1].isoformat(), "templateVersionId": business_id("CTV", version_id), "templateName": template["template_name"], "crop": template["crop_name"], "versionNo": template["version_no"], "plantingDate": farm["planting_date"].isoformat(), "treeAgeYears": tree_age_years, "track": track, "trackSource": annual["track_source"] if annual else "auto", "trackOverrideReason": annual["track_override_reason"] if annual else None, "stage": current_stage, "stages": timeline, "suggestions": [{**rule, "scheduledDate": rule["scheduledDate"].isoformat()} for rule in suggestions]}
+
+
+def ensure_farmer_task_access(plot_id: int, user: dict[str, Any]) -> dict[str, Any]:
+    if user["role"] != "farmer":
+        raise HTTPException(status_code=403, detail="FORBIDDEN")
+    return plot_scope(plot_id, user)
+
+
+def task_row(connection: Any, task_id: int, *, lock: bool = False) -> Any:
+    statement = """SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_id=t.task_id WHERE t.task_id=:task"""
+    if lock:
+        statement += " FOR UPDATE"
+    row = connection.execute(text(statement), {"task": task_id}).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="TASK_NOT_FOUND")
+    return row
+
+
+def task_status_value(row: Any) -> str:
+    if row["task_status"] == "pending" and row["scheduled_date"] < date.today():
+        return "overdue"
+    return row["task_status"]
+
+
+def task_payload(row: Any, *, include_completion: bool = True) -> dict[str, Any]:
+    payload = {"id": business_id("MT", row["task_id"]), "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None, "plotId": business_id("P", row["plot_id"]), "plotName": row["plot_name"], "stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "source": row["source"], "scheduledDate": row["scheduled_date"].isoformat(), "status": task_status_value(row), "note": row["note"], "updatedAt": iso(row["updated_at"])}
+    if include_completion:
+        payload["completion"] = None if row["task_completion_id"] is None else {"id": business_id("TC", row["task_completion_id"]), "result": row["result"], "executedAt": iso(row["executed_at"]), "executorUserId": business_id("U", row["executor_user_id"]), "executorName": row["executor_name"], "note": row["completion_note"], "irrigationRecordId": business_id("IR", row["irrigation_record_id"]) if row["irrigation_record_id"] is not None else None}
+    return payload
+
+
+def finalize_farm_planting_if_ready(connection: Any, row: Any, completed_on: date, user: dict[str, Any]) -> None:
+    if row["source"] != "planting":
+        return
+    farm = connection.execute(text("SELECT planting_date,planned_planting_date,planting_template_version_id FROM farm WHERE farm_id=:farm FOR UPDATE"), {"farm": row["farm_id"]}).mappings().one()
+    if farm["planting_date"] is not None or farm["planned_planting_date"] is None or farm["planting_template_version_id"] is None:
+        return
+    pending = connection.execute(text("SELECT COUNT(*) FROM management_task t JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.source='planting' AND t.scheduled_date=:scheduled AND t.task_status IN ('pending','in_progress')"), {"farm": row["farm_id"], "scheduled": farm["planned_planting_date"]}).scalar()
+    if pending:
+        return
+    connection.execute(text("UPDATE farm SET planting_date=:actual,planned_planting_date=NULL,planting_template_version_id=NULL WHERE farm_id=:farm"), {"actual": completed_on, "farm": row["farm_id"]})
+    connection.execute(text("INSERT INTO farm_production_profile (farm_id,template_version_id,planting_date,tree_age_years,note,updated_by) VALUES (:farm,:version,:planting,NULL,:note,:user) ON DUPLICATE KEY UPDATE template_version_id=VALUES(template_version_id),planting_date=VALUES(planting_date),updated_by=VALUES(updated_by)"), {"farm": row["farm_id"], "version": farm["planting_template_version_id"], "planting": completed_on, "note": "定植任务全部完成后自动建立", "user": user["user_id"]})
+    record_audit_log(connection, user, "production_plan", "confirm_farm_planting", target_type="farm", target_id=business_id("F", row["farm_id"]), detail=f"Confirmed actual planting date: {completed_on.isoformat()}")
+
+
+def record_task_adjustment(connection: Any, task_id: int, user_id: int, adjustment_type: str, before: dict[str, Any], after: dict[str, Any]) -> None:
+    connection.execute(text("INSERT INTO management_task_adjustment (task_id,changed_by,adjustment_type,before_value,after_value) VALUES (:task,:user,:kind,:before,:after)"), {"task": task_id, "user": user_id, "kind": adjustment_type, "before": json.dumps(before), "after": json.dumps(after)})
+
+
+def task_irrigation_record_id(connection: Any, value: str | None, plot_id: int) -> int | None:
+    if value is None:
+        return None
+    record_id = parse_resource_id(value, "IR")
+    if not connection.execute(text("SELECT 1 FROM irrigation_record WHERE record_id=:record AND plot_id=:plot"), {"record": record_id, "plot": plot_id}).scalar():
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    return record_id
+
+
+@app.get("/api/users")
+def list_phase2_users(
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    keyword: str | None = None, role: str | None = None, status_value: str | None = Query(default=None, alias="status"),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    ensure_system_admin(user)
+    clauses, params = [], {"limit": page_size, "offset": (page - 1) * page_size}
+    if keyword:
+        clauses.append("(employee_no LIKE :keyword OR real_name LIKE :keyword OR phone LIKE :keyword)"); params["keyword"] = f"%{keyword}%"
+    if status_value:
+        clauses.append("user_status = :status"); params["status"] = status_value
+    if role:
+        clauses.append("EXISTS (SELECT 1 FROM user_role_rel ur JOIN roles r ON r.role_id = ur.role_id WHERE ur.user_id = users.user_id AND r.role_code = :role)"); params["role"] = role
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with engine.connect() as connection:
+        total = connection.execute(text(f"SELECT COUNT(*) FROM users {where}"), params).scalar_one()
+        ids = connection.execute(text(f"SELECT user_id FROM users {where} ORDER BY user_id LIMIT :limit OFFSET :offset"), params).scalars().all()
+        return {"items": [user_payload(connection, item) for item in ids], "page": page, "pageSize": page_size, "total": total}
+
+
+@app.post("/api/users", status_code=status.HTTP_201_CREATED)
+def create_phase2_user(request: UserCreateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    employee_no = request.employeeNo.strip()
+    id_card_no = normalized_id_card(request.idCardNo)
+    initial_password = id_card_no[-6:]
+    with engine.begin() as connection:
+        roles, farms, plots = validated_assignments(connection, request.roleCodes, request.farmIds, request.plotIds)
+        try:
+            initial_password_hash = password_hash(initial_password)
+            result = connection.execute(text("INSERT INTO users (employee_no, username, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employee_no, :username, :password_hash, :initial_password_hash, :id_card_hash, :id_card_masked, :name, :email, :phone, 'pending_activation')"), {"employee_no": employee_no, "username": employee_no, "password_hash": initial_password_hash, "initial_password_hash": initial_password_hash, "id_card_hash": id_card_hash(id_card_no), "id_card_masked": id_card_masked(id_card_no), "name": request.name.strip(), "email": request.email or None, "phone": request.phone or None})
+        except IntegrityError as error:
+            raise HTTPException(status_code=409, detail="EMPLOYEE_NO_OR_ID_CARD_EXISTS") from error
+        replace_user_assignments(connection, result.lastrowid, roles, farms, plots)
+        record_audit_log(connection, user, "account_access", "create_employee", target_type="user", target_id=business_id("U", result.lastrowid), detail=f"Pre-provisioned employee {employee_no}")
+        return user_payload(connection, result.lastrowid)
+
+
+@app.patch("/api/users/{user_id}")
+def update_phase2_user(user_id: str, request: UserUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(user_id, "U")
+    with engine.begin() as connection:
+        current = user_payload(connection, numeric_id)
+        roles, farms, plots = validated_assignments(connection, request.roleCodes or current["roleCodes"], request.farmIds if request.farmIds is not None else current["farmIds"], request.plotIds if request.plotIds is not None else current["plotIds"], user_id=numeric_id)
+        fields = request.model_fields_set
+        values = {"id": numeric_id, "name": request.name if request.name is not None else current["name"], "email": request.email if request.email is not None else current["email"], "phone": request.phone if request.phone is not None else current["phone"]}
+        assignments = ["real_name = :name", "email = :email", "phone = :phone"]
+        if "idCardNo" in fields:
+            if request.idCardNo is None:
+                raise HTTPException(status_code=400, detail="INVALID_ID_CARD_NO")
+            id_card_no = normalized_id_card(request.idCardNo)
+            initial_password_hash = password_hash(id_card_no[-6:])
+            values.update({"id_card_hash": id_card_hash(id_card_no), "id_card_masked": id_card_masked(id_card_no), "initial_password_hash": initial_password_hash, "password_hash": initial_password_hash})
+            assignments.extend(["id_card_hash = :id_card_hash", "id_card_masked = :id_card_masked", "initial_password_hash = :initial_password_hash", "password_hash = :password_hash", "user_status = 'pending_activation'", "activated_at = NULL"])
+        try:
+            result = connection.execute(text("UPDATE users SET " + ", ".join(assignments) + " WHERE user_id = :id"), values)
+        except IntegrityError as error:
+            raise HTTPException(status_code=409, detail="EMPLOYEE_NO_OR_ID_CARD_EXISTS") from error
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
+        replace_user_assignments(connection, numeric_id, roles, farms, plots)
+        record_audit_log(connection, user, "account_access", "update_employee", target_type="user", target_id=business_id("U", numeric_id), detail="Updated employee profile, role, or authorization scope")
+        return user_payload(connection, numeric_id)
+
+
+@app.patch("/api/users/{user_id}/status")
+def update_phase2_user_status(user_id: str, request: UserStatusUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(user_id, "U")
+    if request.status not in {"active", "disabled"}: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    if numeric_id == user["user_id"] and request.status == "disabled": raise HTTPException(status_code=400, detail="CANNOT_DISABLE_CURRENT_USER")
+    with engine.begin() as connection:
+        result = connection.execute(text("UPDATE users SET user_status = :status WHERE user_id = :id"), {"status": request.status, "id": numeric_id})
+        if result.rowcount == 0: raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
+        record_audit_log(connection, user, "account_access", "change_employee_status", target_type="user", target_id=business_id("U", numeric_id), detail=f"Set employee status to {request.status}")
+        return user_payload(connection, numeric_id)
+
+
+@app.post("/api/users/{user_id}/initial-password/reset")
+def reset_initial_password(user_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(user_id, "U")
+    with engine.begin() as connection:
+        result = connection.execute(text("UPDATE users SET password_hash = initial_password_hash, user_status = 'pending_activation', activated_at = NULL WHERE user_id = :id AND initial_password_hash IS NOT NULL"), {"id": numeric_id})
+        if result.rowcount == 0: raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
+        record_audit_log(connection, user, "account_access", "reset_initial_password", target_type="user", target_id=business_id("U", numeric_id), detail="Reset initial password and required first login")
+    return {"userId": business_id("U", numeric_id), "status": "pending_activation"}
+
+
+@app.get("/api/users/import-template")
+def download_user_import_template(user: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
+    ensure_system_admin(user)
+    workbook = Workbook(); sheet = workbook.active; sheet.title = "员工导入"
+    sheet.append(IMPORT_HEADERS)
+    sheet.append(["E2026001", "张三", "11010519491231002X", "13800138000", "zhangsan@example.com", "farmer", "", "P001,P002"])
+    for column in (1, 3, 4):
+        for cell in sheet.iter_cols(min_col=column, max_col=column):
+            for item in cell: item.number_format = "@"
+    sheet.freeze_panes = "A2"
+    data = BytesIO(); workbook.save(data); data.seek(0)
+    return StreamingResponse(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=employee-import-template.xlsx"})
+
+
+@app.post("/api/users/import-jobs", status_code=status.HTTP_201_CREATED)
+async def create_user_import_job(file: UploadFile = File(...), user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    if not (file.filename or "").lower().endswith(".xlsx"): raise HTTPException(status_code=400, detail="INVALID_IMPORT_FILE")
+    raw = await file.read()
+    if not raw or len(raw) > 5 * 1024 * 1024: raise HTTPException(status_code=400, detail="INVALID_IMPORT_FILE")
+    try:
+        sheet = load_workbook(BytesIO(raw), read_only=True, data_only=True).active
+        headers = [str(value or "").strip() for value in next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="INVALID_IMPORT_FILE") from error
+    if headers != IMPORT_HEADERS: raise HTTPException(status_code=400, detail="INVALID_IMPORT_HEADERS")
+    parsed_rows = [(number, dict(zip(IMPORT_HEADERS, values))) for number, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2) if any(value not in (None, "") for value in values)]
+    with engine.begin() as connection:
+        job_id = connection.execute(text("INSERT INTO user_import_job (original_filename, created_by) VALUES (:name,:user_id)"), {"name": (file.filename or "import.xlsx")[:255], "user_id": user["user_id"]}).lastrowid
+        seen_employees, seen_id_cards, seen_plots, valid_count, invalid_count = set(), set(), set(), 0, 0
+        for row_number, source in parsed_rows:
+            errors: list[dict[str, str]] = []
+            employee_no = str(source["工号"] or "").strip(); name = str(source["姓名"] or "").strip(); roles = import_values(source["角色"]); farms = import_values(source["授权橙园编号"]); plots = import_values(source["授权地块编号"])
+            try:
+                id_card = normalized_id_card(str(source["身份证号"] or "")); card_hash = id_card_hash(id_card)
+                if not employee_no or not name: raise HTTPException(status_code=400, detail="REQUIRED_FIELD_MISSING")
+                if employee_no in seen_employees or card_hash in seen_id_cards: raise HTTPException(status_code=409, detail="DUPLICATE_IMPORT_VALUE")
+                if connection.execute(text("SELECT 1 FROM users WHERE employee_no=:employee OR id_card_hash=:card LIMIT 1"), {"employee": employee_no, "card": card_hash}).scalar(): raise HTTPException(status_code=409, detail="EMPLOYEE_NO_OR_ID_CARD_EXISTS")
+                role_codes, farm_ids, plot_ids = validated_assignments(connection, roles, farms, plots)
+                if any(plot_id in seen_plots for plot_id in plot_ids): raise HTTPException(status_code=409, detail="PLOT_ALREADY_ASSIGNED")
+                seen_employees.add(employee_no); seen_id_cards.add(card_hash); seen_plots.update(plot_ids)
+            except HTTPException as error:
+                errors.append({"field": "导入行", "code": str(error.detail), "message": str(error.detail)}); card_hash = None; id_card = None; role_codes = []; farm_ids = []; plot_ids = []
+            source_data = {"employeeNo": employee_no, "name": name, "phone": str(source["手机号"] or "").strip() or None, "email": str(source["邮箱"] or "").strip() or None, "roleCodes": role_codes, "farmIds": farm_ids, "plotIds": plot_ids, "idCardHash": card_hash, "idCardMasked": id_card_masked(id_card) if id_card else None, "initialPasswordHash": password_hash(id_card[-6:]) if id_card else None}
+            row_status = "invalid" if errors else "valid"; valid_count += not errors; invalid_count += bool(errors)
+            connection.execute(text("INSERT INTO user_import_row (import_job_id, source_row_number, source_data, validation_errors, row_status) VALUES (:job,:row,:data,:errors,:status)"), {"job": job_id, "row": row_number, "data": json.dumps(source_data), "errors": json.dumps(errors) if errors else None, "status": row_status})
+        job_status = "ready" if parsed_rows and not invalid_count else "failed"
+        connection.execute(text("UPDATE user_import_job SET job_status=:status,total_rows=:total,valid_rows=:valid,invalid_rows=:invalid WHERE import_job_id=:id"), {"id": job_id, "status": job_status, "total": len(parsed_rows), "valid": valid_count, "invalid": invalid_count})
+        return import_job_payload(connection, job_id)
+
+
+@app.get("/api/users/import-jobs/{job_id}")
+def get_user_import_job(job_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(job_id, "IMP")
+    with engine.connect() as connection:
+        if not connection.execute(text("SELECT 1 FROM user_import_job WHERE import_job_id=:id"), {"id": numeric_id}).scalar(): raise HTTPException(status_code=404, detail="IMPORT_JOB_NOT_FOUND")
+        return import_job_payload(connection, numeric_id)
+
+
+@app.post("/api/users/import-jobs/{job_id}/commit")
+def commit_user_import_job(job_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(job_id, "IMP"); now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as connection:
+        job = connection.execute(text("SELECT job_status FROM user_import_job WHERE import_job_id=:id FOR UPDATE"), {"id": numeric_id}).mappings().first()
+        if job is None: raise HTTPException(status_code=404, detail="IMPORT_JOB_NOT_FOUND")
+        if job["job_status"] == "committed": return import_job_payload(connection, numeric_id)
+        if job["job_status"] != "ready": raise HTTPException(status_code=422, detail="IMPORT_VALIDATION_FAILED")
+        rows = connection.execute(text("SELECT import_row_id, source_data FROM user_import_row WHERE import_job_id=:id AND row_status='valid' ORDER BY source_row_number FOR UPDATE"), {"id": numeric_id}).mappings().all()
+        for row in rows:
+            data = json.loads(row["source_data"])
+            result = connection.execute(text("INSERT INTO users (employee_no, username, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employeeNo,:employeeNo,:initialPasswordHash,:initialPasswordHash,:idCardHash,:idCardMasked,:name,:email,:phone,'pending_activation')"), data)
+            replace_user_assignments(connection, result.lastrowid, data["roleCodes"], data["farmIds"], data["plotIds"])
+            connection.execute(text("UPDATE user_import_row SET row_status='imported', imported_user_id=:user_id WHERE import_row_id=:id"), {"id": row["import_row_id"], "user_id": result.lastrowid})
+        connection.execute(text("UPDATE user_import_job SET job_status='committed', committed_by=:user, committed_at=:now WHERE import_job_id=:id"), {"id": numeric_id, "user": user["user_id"], "now": now})
+        record_audit_log(connection, user, "account_access", "commit_employee_import", target_type="import_job", target_id=business_id("IMP", numeric_id), detail=f"Imported {len(rows)} employee accounts")
+        return import_job_payload(connection, numeric_id)
+
+
+@app.get("/api/audit-logs")
+def list_audit_logs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    module: str | None = None,
+    keyword: str | None = None,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    ensure_system_admin(user)
+    clauses: list[str] = []
+    params: dict[str, Any] = {"limit": page_size, "offset": (page - 1) * page_size}
+    if module:
+        clauses.append("a.module_code = :module")
+        params["module"] = module
+    if keyword:
+        clauses.append("(u.real_name LIKE :keyword OR u.employee_no LIKE :keyword OR a.action_code LIKE :keyword OR a.detail LIKE :keyword)")
+        params["keyword"] = f"%{keyword}%"
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with engine.connect() as connection:
+        total = connection.execute(
+            text("SELECT COUNT(*) FROM audit_log AS a JOIN users AS u ON u.user_id = a.actor_user_id" + where),
+            params,
+        ).scalar_one()
+        rows = connection.execute(
+            text(
+                """
+                SELECT a.audit_log_id, a.module_code, a.action_code, a.target_type,
+                       a.target_id, a.detail, a.created_at, u.real_name, u.employee_no
+                FROM audit_log AS a
+                JOIN users AS u ON u.user_id = a.actor_user_id
+                """
+                + where
+                + " ORDER BY a.created_at DESC, a.audit_log_id DESC LIMIT :limit OFFSET :offset"
+            ),
+            params,
+        ).mappings().all()
+    return {
+        "items": [
+            {
+                "id": business_id("AL", row["audit_log_id"]),
+                "occurredAt": iso(row["created_at"]),
+                "actorName": row["real_name"],
+                "actorEmployeeNo": row["employee_no"],
+                "module": row["module_code"],
+                "action": row["action_code"],
+                "targetType": row["target_type"],
+                "targetId": row["target_id"],
+                "detail": row["detail"],
+            }
+            for row in rows
+        ],
+        "page": page,
+        "pageSize": page_size,
+        "total": total,
+    }
+
+
 @app.get("/api/farms")
-def list_farms(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, str]]:
+def list_farms(status_value: str | None = Query(default=None, alias="status"), user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     allowed_farms = accessible_farm_ids(user)
     with engine.connect() as connection:
         if allowed_farms is None:
             rows = connection.execute(
-                text("SELECT farm_id, farm_name FROM farm ORDER BY farm_id")
-            ).fetchall()
+                text("SELECT * FROM farm WHERE (:status IS NULL OR farm_status = :status) ORDER BY farm_id"), {"status": status_value}
+            ).mappings().all()
         elif not allowed_farms:
             rows = []
         else:
             statement = text(
-                "SELECT farm_id, farm_name FROM farm "
-                "WHERE farm_id IN :farm_ids ORDER BY farm_id"
+                "SELECT * FROM farm WHERE farm_id IN :farm_ids "
+                "AND (:status IS NULL OR farm_status = :status) ORDER BY farm_id"
             ).bindparams(bindparam("farm_ids", expanding=True))
             rows = connection.execute(
-                statement, {"farm_ids": list(allowed_farms)}
-            ).fetchall()
+                statement, {"farm_ids": list(allowed_farms), "status": status_value}
+            ).mappings().all()
 
     return [
-        {"id": business_id("F", row.farm_id), "name": row.farm_name}
-        for row in rows
+        farm_payload(row) for row in rows
     ]
+
+
+@app.post("/api/crop-templates", status_code=status.HTTP_201_CREATED)
+def create_crop_template(request: TemplateCreateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as connection:
+        template = connection.execute(text("INSERT INTO crop_template (template_name,crop_name,province,city,created_by) VALUES (:name,:crop,:province,:city,:user)"), {"name":request.name.strip(),"crop":request.crop.strip(),"province":request.province,"city":request.city,"user":user["user_id"]})
+        version = connection.execute(text("INSERT INTO crop_template_version (template_id,version_no,version_status,published_at,published_by) VALUES (:template,1,'published',:now,:user)"), {"template":template.lastrowid,"now":now,"user":user["user_id"]})
+        store_template_definition(connection, version.lastrowid, request.versionDefinition)
+        return {"id":business_id("CT",template.lastrowid),"versionId":business_id("CTV",version.lastrowid),"versionNo":1,"status":"published"}
+
+
+@app.get("/api/crop-templates")
+def list_crop_templates(crop: str | None = None, province: str | None = None, city: str | None = None, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    clauses, params = ["t.template_status='active'", "v.version_status='published'"], {}
+    for field, value in (("crop_name", crop), ("province", province), ("city", city)):
+        if value: clauses.append(f"t.{field}=:{field}"); params[field] = value
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT t.template_id,t.template_name,t.crop_name,t.province,t.city,v.template_version_id,v.version_no FROM crop_template t JOIN crop_template_version v ON v.template_id=t.template_id WHERE " + " AND ".join(clauses) + " ORDER BY t.template_id,v.version_no DESC"), params).mappings().all()
+    return [{"id":business_id("CT",r["template_id"]),"name":r["template_name"],"crop":r["crop_name"],"province":r["province"],"city":r["city"],"versionId":business_id("CTV",r["template_version_id"]),"versionNo":r["version_no"]} for r in rows]
+
+
+@app.post("/api/crop-templates/{template_id}/drafts", status_code=status.HTTP_201_CREATED)
+def create_crop_template_draft(template_id: str, request: TemplateDraftCreateRequest, farm_id: str = Query(alias="farmId"), user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_template_id = parse_resource_id(template_id, "CT")
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    with engine.begin() as connection:
+        template = connection.execute(text("SELECT template_id FROM crop_template WHERE template_id=:template AND template_status='active' FOR UPDATE"), {"template": numeric_template_id}).mappings().first()
+        if template is None:
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        profile = maintenance_window_profile(connection, numeric_farm_id, numeric_template_id, lock=True)
+        existing = connection.execute(text("SELECT * FROM crop_template_version WHERE template_id=:template AND farm_id=:farm AND version_status='draft' FOR UPDATE"), {"template": numeric_template_id, "farm": numeric_farm_id}).mappings().first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="TEMPLATE_DRAFT_EXISTS")
+        version_no = connection.execute(text("SELECT COALESCE(MAX(version_no), 0) + 1 FROM crop_template_version WHERE template_id=:template"), {"template": numeric_template_id}).scalar_one()
+        version_id = connection.execute(text("INSERT INTO crop_template_version (template_id,farm_id,version_no,version_status,change_note) VALUES (:template,:farm,:version,'draft',:note)"), {"template": numeric_template_id, "farm": numeric_farm_id, "version": version_no, "note": request.changeNote}).lastrowid
+        store_template_definition(connection, version_id, template_definition(connection, profile["template_version_id"]))
+        version = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id"), {"id": version_id}).mappings().one()
+        return template_draft_payload(connection, version)
+
+
+@app.get("/api/farms/{farm_id}/cycle-draft")
+def get_farm_cycle_draft(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    with engine.connect() as connection:
+        draft = connection.execute(
+            text(
+                "SELECT * FROM crop_template_version "
+                "WHERE farm_id=:farm AND version_status='draft' "
+                "ORDER BY template_version_id DESC LIMIT 1"
+            ),
+            {"farm": numeric_farm_id},
+        ).mappings().first()
+        if draft is None:
+            raise HTTPException(status_code=404, detail="TEMPLATE_DRAFT_NOT_FOUND")
+        return template_draft_payload(connection, draft)
+
+
+@app.put("/api/crop-template-drafts/{draft_id}")
+def update_crop_template_draft(draft_id: str, request: TemplateDraftUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_draft_id = parse_resource_id(draft_id, "CTV")
+    validate_template_definition(request.versionDefinition)
+    with engine.begin() as connection:
+        draft = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id AND version_status='draft' FOR UPDATE"), {"id": numeric_draft_id}).mappings().first()
+        if draft is None or draft["farm_id"] is None:
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        ensure_farm_admin_access(user, draft["farm_id"])
+        maintenance_window_profile(connection, draft["farm_id"], draft["template_id"], lock=True)
+        connection.execute(text("DELETE mt FROM management_task_template mt JOIN growth_stage_template st ON st.stage_template_id=mt.stage_template_id WHERE st.template_version_id=:version"), {"version": numeric_draft_id})
+        connection.execute(text("DELETE FROM growth_stage_template WHERE template_version_id=:version"), {"version": numeric_draft_id})
+        store_template_definition(connection, numeric_draft_id, request.versionDefinition)
+        connection.execute(text("UPDATE crop_template_version SET change_note=:note WHERE template_version_id=:id"), {"note": request.changeNote, "id": numeric_draft_id})
+        version = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id"), {"id": numeric_draft_id}).mappings().one()
+        record_audit_log(connection, user, "production_plan", "update_cycle_draft", target_type="cycle_draft", target_id=business_id("CTV", numeric_draft_id), detail="Updated the next-cycle draft within the maintenance window")
+        return template_draft_payload(connection, version)
+
+
+@app.post("/api/crop-template-drafts/{draft_id}/publish")
+def publish_crop_template_draft(draft_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_draft_id = parse_resource_id(draft_id, "CTV")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with engine.begin() as connection:
+        draft = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id AND version_status='draft' FOR UPDATE"), {"id": numeric_draft_id}).mappings().first()
+        if draft is None or draft["farm_id"] is None:
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        ensure_farm_admin_access(user, draft["farm_id"])
+        maintenance_window_profile(connection, draft["farm_id"], draft["template_id"], lock=True)
+        connection.execute(text("UPDATE crop_template_version SET version_status='published', published_at=:now, published_by=:user WHERE template_version_id=:id"), {"now": now, "user": user["user_id"], "id": numeric_draft_id})
+        connection.execute(text("UPDATE farm_production_profile SET template_version_id=:version, updated_by=:user WHERE farm_id=:farm"), {"version": numeric_draft_id, "user": user["user_id"], "farm": draft["farm_id"]})
+        record_audit_log(connection, user, "production_plan", "publish_cycle_draft", target_type="cycle_draft", target_id=business_id("CTV", numeric_draft_id), detail=f"Published the next-cycle version for {business_id('F', draft['farm_id'])}")
+        return {"id": business_id("CTV", numeric_draft_id), "templateId": business_id("CT", draft["template_id"]), "farmId": business_id("F", draft["farm_id"]), "status": "published", "publishedAt": iso(now)}
+
+
+@app.post("/api/farms/{farm_id}/plans", status_code=status.HTTP_201_CREATED)
+def generate_farm_plans(farm_id: str, request: FarmPlanGenerateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Create plan/task snapshots for all active plots in one farm production cycle."""
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    today = date.today()
+    with engine.begin() as connection:
+        profile = connection.execute(text("SELECT * FROM farm_production_profile WHERE farm_id=:farm FOR UPDATE"), {"farm": numeric_farm_id}).mappings().first()
+        if profile is None:
+            raise HTTPException(status_code=409, detail="PRODUCTION_TEMPLATE_REQUIRED")
+        annual_context = annual_production_context(connection, numeric_farm_id)
+        plots = connection.execute(text("SELECT plot_id FROM plot WHERE farm_id=:farm AND plot_status='active' ORDER BY plot_id FOR UPDATE"), {"farm": numeric_farm_id}).mappings().all()
+        plot_ids = [row["plot_id"] for row in plots]
+        if not plot_ids:
+            return {"farmId": business_id("F", numeric_farm_id), "templateVersionId": business_id("CTV", profile["template_version_id"]), "regenerated": request.regenerate, "plans": [], "taskCount": 0}
+        active_statement = text("SELECT plan_id,plot_id FROM management_plan WHERE plan_status='active' AND plot_id IN :plot_ids FOR UPDATE").bindparams(bindparam("plot_ids", expanding=True))
+        previous_plans = connection.execute(active_statement, {"plot_ids": plot_ids}).mappings().all()
+        if previous_plans and not request.regenerate:
+            raise HTTPException(status_code=409, detail="PLAN_EXISTS")
+        annual_version_id = parse_resource_id(annual_context["templateVersionId"], "CTV")
+        task_rules = [rule for rule in farm_plan_task_rules(connection, annual_version_id, annual_context["productionYear"], annual_context["track"]) if rule["scheduledDate"] >= today]
+        generated: list[dict[str, Any]] = []
+        replacement_by_plot: dict[int, int] = {}
+        for plot_id in plot_ids:
+            plan_id = connection.execute(text("INSERT INTO management_plan (plot_id,template_version_id,plan_status,generated_by) VALUES (:plot,:version,'active',:user)"), {"plot": plot_id, "version": profile["template_version_id"], "user": user["user_id"]}).lastrowid
+            replacement_by_plot[plot_id] = plan_id
+            for task in task_rules:
+                connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:stage,:type,:title,'template',:scheduled,'pending',:note)"), {"plan": plan_id, "plot": plot_id, "stage": task["stageCode"], "type": task["taskType"], "title": task["title"], "scheduled": task["scheduledDate"], "note": task["note"]})
+            generated.append({"id": business_id("MP", plan_id), "plotId": business_id("P", plot_id), "taskCount": len(task_rules)})
+        for old_plan in previous_plans:
+            connection.execute(text("UPDATE management_plan SET plan_status='superseded', superseded_by=:replacement WHERE plan_id=:old"), {"replacement": replacement_by_plot[old_plan["plot_id"]], "old": old_plan["plan_id"]})
+        record_audit_log(connection, user, "production_plan", "generate_plans", target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Generated {len(generated)} plot plans and {len(task_rules) * len(generated)} tasks")
+    return {"farmId": business_id("F", numeric_farm_id), "templateVersionId": annual_context["templateVersionId"], "productionYear": annual_context["productionYear"], "track": annual_context["track"], "regenerated": request.regenerate, "plans": generated, "taskCount": len(task_rules) * len(generated)}
+
+
+@app.get("/api/tasks")
+def list_management_tasks(scope: str = Query(default="today"), plot_id: str | None = Query(default=None, alias="plotId"), status_value: str | None = Query(default=None, alias="status"), month: str | None = None, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    if scope not in {"today", "overdue", "next7days", "month"}:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    today = date.today()
+    clauses, params = [], {"today": today}
+    if scope == "today":
+        clauses.append("t.scheduled_date=:today")
+    elif scope == "overdue":
+        clauses.append("t.scheduled_date<:today AND t.task_status IN ('pending','in_progress')")
+    elif scope == "next7days":
+        clauses.append("t.scheduled_date>=:today AND t.scheduled_date<=:end_date"); params["end_date"] = today + timedelta(days=7)
+    else:
+        try:
+            month_start = date.fromisoformat(f"{month}-01") if month else None
+            if month_start is None or month_start.day != 1: raise ValueError
+            month_end = date(month_start.year + (month_start.month == 12), 1 if month_start.month == 12 else month_start.month + 1, 1)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+        clauses.append("t.scheduled_date>=:month_start AND t.scheduled_date<:month_end"); params.update({"month_start": month_start, "month_end": month_end})
+    if plot_id is not None:
+        numeric_plot_id = parse_resource_id(plot_id, "P"); plot_scope(numeric_plot_id, user); clauses.append("t.plot_id=:plot_id"); params["plot_id"] = numeric_plot_id
+    elif user["role"] == "farmer":
+        clauses.append("(p.farmer_user_id=:user_id OR EXISTS (SELECT 1 FROM farmer_plot_scope fps WHERE fps.plot_id=p.plot_id AND fps.user_id=:user_id))"); params["user_id"] = user["user_id"]
+    elif user["role"] == "farm_admin":
+        farm_ids = accessible_farm_ids(user)
+        if not farm_ids:
+            return []
+        clauses.append("p.farm_id IN :farm_ids"); params["farm_ids"] = list(farm_ids)
+    if status_value:
+        if status_value == "overdue": clauses.append("t.scheduled_date<:today AND t.task_status IN ('pending','in_progress')")
+        elif status_value in {"pending", "in_progress", "completed", "cancelled"}: clauses.append("t.task_status=:task_status"); params["task_status"] = status_value
+        else: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    clauses.append("(mp.plan_status IS NULL OR mp.plan_status='active')")
+    statement = text("SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_id=t.task_id WHERE " + " AND ".join(clauses) + " ORDER BY t.scheduled_date,t.task_id")
+    if "farm_ids" in params:
+        statement = statement.bindparams(bindparam("farm_ids", expanding=True))
+    with engine.connect() as connection:
+        rows = connection.execute(statement, params).mappings().all()
+    return [task_payload(row) for row in rows]
+
+
+@app.get("/api/tasks/{task_id}")
+def get_management_task(task_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_task_id = parse_resource_id(task_id, "MT")
+    with engine.connect() as connection:
+        row = task_row(connection, numeric_task_id)
+        plot_scope(row["plot_id"], user)
+        adjustments = connection.execute(text("SELECT task_adjustment_id,changed_by,adjustment_type,before_value,after_value,created_at FROM management_task_adjustment WHERE task_id=:task ORDER BY task_adjustment_id"), {"task": numeric_task_id}).mappings().all()
+    payload = task_payload(row)
+    payload["adjustments"] = [{"id": business_id("TA", item["task_adjustment_id"]), "changedBy": business_id("U", item["changed_by"]), "type": item["adjustment_type"], "before": json.loads(item["before_value"]) if isinstance(item["before_value"], str) else item["before_value"], "after": json.loads(item["after_value"]) if isinstance(item["after_value"], str) else item["after_value"], "createdAt": iso(item["created_at"])} for item in adjustments]
+    return payload
+
+
+@app.patch("/api/tasks/{task_id}")
+def update_management_task(task_id: str, request: TaskUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_task_id = parse_resource_id(task_id, "MT")
+    fields = request.model_fields_set
+    if not fields:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    with engine.begin() as connection:
+        row = task_row(connection, numeric_task_id, lock=True)
+        ensure_farmer_task_access(row["plot_id"], user)
+        if row["task_status"] in {"completed", "cancelled"} or row["plan_status"] == "superseded": raise HTTPException(status_code=409, detail="TASK_NOT_ADJUSTABLE")
+        before, after, updates = {}, {}, []
+        if "scheduledDate" in fields:
+            if request.scheduledDate is None: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+            try: scheduled = date.fromisoformat(request.scheduledDate)
+            except ValueError as error: raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+            before["scheduledDate"] = row["scheduled_date"].isoformat(); after["scheduledDate"] = scheduled.isoformat(); updates.append("scheduled_date=:scheduled")
+        else: scheduled = None
+        if "note" in fields:
+            before["note"] = row["note"]; after["note"] = request.note; updates.append("note=:note")
+        if "status" in fields:
+            if request.status not in {"pending", "in_progress", "cancelled"}: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+            before["status"] = task_status_value(row); after["status"] = request.status; updates.append("task_status=:status")
+        connection.execute(text("UPDATE management_task SET " + ", ".join(updates) + " WHERE task_id=:task"), {"task": numeric_task_id, "scheduled": scheduled, "note": request.note, "status": request.status})
+        record_task_adjustment(connection, numeric_task_id, user["user_id"], "task_update", before, after)
+        record_audit_log(connection, user, "production_plan", "adjust_task", target_type="task", target_id=business_id("MT", numeric_task_id), detail="Adjusted an uncompleted task")
+        return task_payload(task_row(connection, numeric_task_id))
+
+
+@app.post("/api/tasks/{task_id}/completions", status_code=status.HTTP_201_CREATED)
+def complete_management_task(task_id: str, request: TaskCompletionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_task_id = parse_resource_id(task_id, "MT")
+    try: executed_at = utc_naive(request.executedAt)
+    except ValueError as error: raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    with engine.begin() as connection:
+        row = task_row(connection, numeric_task_id, lock=True)
+        ensure_farmer_task_access(row["plot_id"], user)
+        if row["task_status"] in {"completed", "cancelled"} or row["plan_status"] == "superseded": raise HTTPException(status_code=409, detail="TASK_NOT_ADJUSTABLE")
+        irrigation_record_id = task_irrigation_record_id(connection, request.irrigationRecordId, row["plot_id"])
+        connection.execute(text("UPDATE management_task SET task_status='completed' WHERE task_id=:task"), {"task": numeric_task_id})
+        completion_id = connection.execute(text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id) VALUES (:task,:result,:executed,:user,:name,:note,:irrigation)"), {"task": numeric_task_id, "result": request.result.strip(), "executed": executed_at, "user": user["user_id"], "name": request.executorName.strip(), "note": request.note, "irrigation": irrigation_record_id}).lastrowid
+        finalize_farm_planting_if_ready(connection, row, executed_at.date(), user)
+        record_task_adjustment(connection, numeric_task_id, user["user_id"], "completion", {"status": task_status_value(row)}, {"status": "completed", "completionId": business_id("TC", completion_id)})
+        record_audit_log(connection, user, "task_execution", "complete_task", target_type="task", target_id=business_id("MT", numeric_task_id), detail=f"Recorded completion {business_id('TC', completion_id)}")
+        return task_payload(task_row(connection, numeric_task_id))
+
+
+@app.post("/api/plots/{plot_id}/ad-hoc-tasks", status_code=status.HTTP_201_CREATED)
+def create_ad_hoc_task(plot_id: str, request: AdHocTaskRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_plot_id = parse_resource_id(plot_id, "P")
+    try: executed_at = utc_naive(request.executedAt)
+    except ValueError as error: raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    with engine.begin() as connection:
+        ensure_farmer_task_access(numeric_plot_id, user)
+        irrigation_record_id = task_irrigation_record_id(connection, request.irrigationRecordId, numeric_plot_id)
+        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,NULL,:type,:title,'ad_hoc',:scheduled,'completed',:note)"), {"plot": numeric_plot_id, "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note}).lastrowid
+        connection.execute(text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id) VALUES (:task,'completed',:executed,:user,:name,:note,:irrigation)"), {"task": task_id, "executed": executed_at, "user": user["user_id"], "name": request.executorName.strip(), "note": request.note, "irrigation": irrigation_record_id})
+        record_audit_log(connection, user, "task_execution", "create_ad_hoc_task", target_type="task", target_id=business_id("MT", task_id), detail=f"Added completed ad-hoc task for {business_id('P', numeric_plot_id)}")
+        return task_payload(task_row(connection, task_id))
+
+
+@app.put("/api/farms/{farm_id}/production-profile")
+def save_farm_production_profile(farm_id: str, request: FarmProductionProfileRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    version_id = parse_resource_id(request.templateVersionId, "CTV")
+    try:
+        requested_planting_date = date.fromisoformat(request.plantingDate) if request.plantingDate else None
+        next_cycle = date.fromisoformat(request.nextCycleStartsOn) if request.nextCycleStartsOn else None
+    except ValueError as error: raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    if requested_planting_date is not None and requested_planting_date > date.today():
+        raise HTTPException(status_code=400, detail="ACTUAL_PLANTING_DATE_CANNOT_BE_FUTURE")
+    with engine.begin() as connection:
+        farm = connection.execute(text("SELECT planting_date FROM farm WHERE farm_id=:id"), {"id":numeric_farm_id}).mappings().first()
+        if farm is None: raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+        if farm["planting_date"] is None:
+            raise HTTPException(status_code=409, detail="PLANTING_TASK_REQUIRED")
+        planting_date = requested_planting_date or farm["planting_date"]
+        if planting_date is None: raise HTTPException(status_code=409, detail="ORCHARD_PLANTING_DATE_REQUIRED")
+        if not connection.execute(text("SELECT 1 FROM crop_template_version WHERE template_version_id=:id AND version_status='published'"), {"id":version_id}).scalar(): raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        if requested_planting_date is not None:
+            connection.execute(text("UPDATE farm SET planting_date=:planting WHERE farm_id=:farm"), {"planting": planting_date, "farm": numeric_farm_id})
+            annual_rows = connection.execute(text("SELECT annual_production_id,production_year,track_source FROM farm_annual_production WHERE farm_id=:farm FOR UPDATE"), {"farm": numeric_farm_id}).mappings().all()
+            for annual in annual_rows:
+                tree_age_years, automatic_track = orchard_track(planting_date, annual["production_year"])
+                keep_extension = annual["track_source"] == "extended_young" and automatic_track == "fruiting" and tree_age_years == 4
+                connection.execute(text("UPDATE farm_annual_production SET orchard_track=:track,track_source=:source,track_override_reason=CASE WHEN :keep_extension THEN track_override_reason ELSE NULL END WHERE annual_production_id=:id"), {"track": "young" if keep_extension else automatic_track, "source": "extended_young" if keep_extension else "auto", "keep_extension": keep_extension, "id": annual["annual_production_id"]})
+        connection.execute(text("INSERT INTO farm_production_profile (farm_id,template_version_id,planting_date,tree_age_years,harvest_cleanup_completed_at,next_cycle_starts_on,note,updated_by) VALUES (:farm,:version,:planting,:age,:cleanup,:next,:note,:user) ON DUPLICATE KEY UPDATE template_version_id=VALUES(template_version_id),planting_date=VALUES(planting_date),tree_age_years=VALUES(tree_age_years),harvest_cleanup_completed_at=VALUES(harvest_cleanup_completed_at),next_cycle_starts_on=VALUES(next_cycle_starts_on),note=VALUES(note),updated_by=VALUES(updated_by)"), {"farm":numeric_farm_id,"version":version_id,"planting":planting_date,"age":None,"cleanup":request.harvestCleanupCompletedAt,"next":next_cycle,"note":request.note,"user":user["user_id"]})
+    return {"farmId":business_id("F",numeric_farm_id),"templateVersionId":business_id("CTV",version_id),"plantingDate":planting_date.isoformat(),"nextCycleStartsOn":next_cycle.isoformat() if next_cycle else None}
+
+
+@app.get("/api/farms/{farm_id}/production-profile")
+def get_farm_production_profile(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_access(user, numeric_farm_id)
+    with engine.connect() as connection:
+        profile = connection.execute(text("SELECT p.*,f.planting_date,t.template_name,t.crop_name,v.version_no FROM farm_production_profile p JOIN farm f ON f.farm_id=p.farm_id JOIN crop_template_version v ON v.template_version_id=p.template_version_id JOIN crop_template t ON t.template_id=v.template_id WHERE p.farm_id=:farm"), {"farm": numeric_farm_id}).mappings().first()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="PLANTING_PROFILE_NOT_FOUND")
+    return {"farmId": business_id("F", profile["farm_id"]), "templateVersionId": business_id("CTV", profile["template_version_id"]), "templateName": profile["template_name"], "crop": profile["crop_name"], "versionNo": profile["version_no"], "plantingDate": profile["planting_date"].isoformat() if profile["planting_date"] else None, "harvestCleanupCompletedAt": iso(profile["harvest_cleanup_completed_at"]), "nextCycleStartsOn": profile["next_cycle_starts_on"].isoformat() if profile["next_cycle_starts_on"] else None, "note": profile["note"], "updatedAt": iso(profile["updated_at"])}
+
+
+@app.get("/api/farms/{farm_id}/annual-production")
+def get_farm_annual_production(farm_id: str, production_year: int | None = Query(default=None, alias="productionYear"), user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_access(user, numeric_farm_id)
+    with engine.connect() as connection:
+        return annual_production_context(connection, numeric_farm_id, production_year=production_year)
+
+
+@app.put("/api/farms/{farm_id}/annual-production")
+def save_farm_annual_production(farm_id: str, request: FarmAnnualProductionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    production_year = request.productionYear or production_year_for(date.today())
+    with engine.begin() as connection:
+        farm = connection.execute(text("SELECT planting_date FROM farm WHERE farm_id=:farm FOR UPDATE"), {"farm": numeric_farm_id}).mappings().first()
+        if farm is None:
+            raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+        if farm["planting_date"] is None:
+            raise HTTPException(status_code=409, detail="ORCHARD_PLANTING_DATE_REQUIRED")
+        profile = connection.execute(text("SELECT template_version_id FROM farm_production_profile WHERE farm_id=:farm"), {"farm": numeric_farm_id}).mappings().first()
+        version_id = parse_resource_id(request.templateVersionId, "CTV") if request.templateVersionId else (profile["template_version_id"] if profile else None)
+        if version_id is None or not connection.execute(text("SELECT 1 FROM crop_template_version WHERE template_version_id=:version AND version_status='published'"), {"version": version_id}).scalar():
+            raise HTTPException(status_code=409, detail="PRODUCTION_TEMPLATE_REQUIRED")
+        tree_age_years, automatic_track = orchard_track(farm["planting_date"], production_year)
+        can_extend = automatic_track == "fruiting" and tree_age_years == 4
+        if request.extendYoungTrack and not can_extend:
+            raise HTTPException(status_code=409, detail="YOUNG_TRACK_EXTENSION_NOT_ALLOWED")
+        if request.extendYoungTrack and not request.trackOverrideReason:
+            raise HTTPException(status_code=400, detail="YOUNG_TRACK_EXTENSION_REASON_REQUIRED")
+        track = "young" if request.extendYoungTrack else automatic_track
+        source = "extended_young" if request.extendYoungTrack else "auto"
+        connection.execute(text("INSERT INTO farm_annual_production (farm_id,production_year,template_version_id,orchard_track,track_source,track_override_reason,created_by,updated_by) VALUES (:farm,:year,:version,:track,:source,:reason,:user,:user) ON DUPLICATE KEY UPDATE template_version_id=VALUES(template_version_id),orchard_track=VALUES(orchard_track),track_source=VALUES(track_source),track_override_reason=VALUES(track_override_reason),updated_by=VALUES(updated_by)"), {"farm": numeric_farm_id, "year": production_year, "version": version_id, "track": track, "source": source, "reason": request.trackOverrideReason.strip() if request.trackOverrideReason else None, "user": user["user_id"]})
+        record_audit_log(connection, user, "production_plan", "save_annual_production", target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Saved {production_year} annual production track: {track}")
+        return annual_production_context(connection, numeric_farm_id, production_year=production_year)
+
+
+@app.get("/api/farms/{farm_id}/planting-schedule")
+def get_farm_planting_schedule(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_access(user, numeric_farm_id)
+    with engine.connect() as connection:
+        row = connection.execute(text("SELECT f.planting_date,f.planned_planting_date,f.planting_template_version_id,t.template_name,v.version_no FROM farm f LEFT JOIN crop_template_version v ON v.template_version_id=f.planting_template_version_id LEFT JOIN crop_template t ON t.template_id=v.template_id WHERE f.farm_id=:farm"), {"farm": numeric_farm_id}).mappings().one()
+        pending_count = connection.execute(text("SELECT COUNT(*) FROM management_task mt JOIN plot p ON p.plot_id=mt.plot_id WHERE p.farm_id=:farm AND mt.source='planting' AND mt.task_status IN ('pending','in_progress')"), {"farm": numeric_farm_id}).scalar()
+    return {"farmId": business_id("F", numeric_farm_id), "plantingDate": row["planting_date"].isoformat() if row["planting_date"] else None, "plannedPlantingDate": row["planned_planting_date"].isoformat() if row["planned_planting_date"] else None, "templateVersionId": business_id("CTV", row["planting_template_version_id"]) if row["planting_template_version_id"] else None, "templateName": row["template_name"], "versionNo": row["version_no"], "pendingTaskCount": int(pending_count)}
+
+
+@app.put("/api/farms/{farm_id}/planting-schedule")
+def save_farm_planting_schedule(farm_id: str, request: FarmPlantingScheduleRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    version_id = parse_resource_id(request.templateVersionId, "CTV")
+    try:
+        planned_date = date.fromisoformat(request.plannedPlantingDate)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    if planned_date < date.today():
+        raise HTTPException(status_code=400, detail="PLANNED_PLANTING_DATE_CANNOT_BE_PAST")
+    with engine.begin() as connection:
+        farm = connection.execute(text("SELECT planting_date FROM farm WHERE farm_id=:farm FOR UPDATE"), {"farm": numeric_farm_id}).mappings().first()
+        if farm is None:
+            raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+        if farm["planting_date"] is not None:
+            raise HTTPException(status_code=409, detail="PLANTING_ALREADY_CONFIRMED")
+        if not connection.execute(text("SELECT 1 FROM crop_template_version WHERE template_version_id=:version AND version_status='published'"), {"version": version_id}).scalar():
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        plots = connection.execute(text("SELECT plot_id FROM plot WHERE farm_id=:farm AND plot_status='active' ORDER BY plot_id FOR UPDATE"), {"farm": numeric_farm_id}).mappings().all()
+        if not plots:
+            raise HTTPException(status_code=409, detail="ACTIVE_PLOT_REQUIRED")
+        connection.execute(text("UPDATE management_task mt JOIN plot p ON p.plot_id=mt.plot_id SET mt.task_status='cancelled' WHERE p.farm_id=:farm AND mt.source='planting' AND mt.task_status IN ('pending','in_progress')"), {"farm": numeric_farm_id})
+        connection.execute(text("UPDATE farm SET planned_planting_date=:planned,planting_template_version_id=:version WHERE farm_id=:farm"), {"planned": planned_date, "version": version_id, "farm": numeric_farm_id})
+        for plot in plots:
+            connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,'planting','planting','完成脐橙定植','planting',:scheduled,'pending','按定植方案完成苗木栽植，并记录现场结果。')"), {"plot": plot["plot_id"], "scheduled": planned_date})
+        record_audit_log(connection, user, "production_plan", "schedule_farm_planting", target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Scheduled planting tasks for {planned_date.isoformat()}")
+    return get_farm_planting_schedule(farm_id, user)
+
+
+@app.get("/api/plots/{plot_id}/production-context")
+def get_plot_production_context(plot_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Return the authorized plot's shared farm-cycle context for task explanation."""
+    numeric_plot_id = parse_resource_id(plot_id, "P")
+    plot = plot_scope(numeric_plot_id, user)
+    with engine.connect() as connection:
+        return farm_production_context(connection, plot)
+
+
+@app.post("/api/farms", status_code=status.HTTP_201_CREATED)
+def create_farm(request: FarmSaveRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    with engine.begin() as connection:
+        result = connection.execute(text("INSERT INTO farm (farm_name, province, city, address, area_mu, manager_name, note) VALUES (:name, :province, :city, :address, :area, :manager, :note)"), {"name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "manager": request.managerName, "note": request.note})
+        row = connection.execute(text("SELECT * FROM farm WHERE farm_id = :id"), {"id": result.lastrowid}).mappings().one()
+        record_audit_log(connection, user, "master_data", "create_farm", target_type="farm", target_id=business_id("F", result.lastrowid), detail=f"Created farm {request.name}")
+        return farm_payload(row)
+
+
+@app.get("/api/farms/{farm_id}")
+def get_farm(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_id = parse_resource_id(farm_id, "F"); ensure_farm_access(user, numeric_id)
+    with engine.connect() as connection:
+        row = connection.execute(text("SELECT * FROM farm WHERE farm_id = :id"), {"id": numeric_id}).mappings().first()
+        if row is None: raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+        return farm_payload(row)
+
+
+@app.patch("/api/farms/{farm_id}")
+def update_farm(farm_id: str, request: FarmUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user); numeric_id = parse_resource_id(farm_id, "F")
+    if request.status is not None and request.status not in {"active", "inactive"}: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    with engine.begin() as connection:
+        result = connection.execute(text("UPDATE farm SET farm_name=:name, province=:province, city=:city, address=:address, area_mu=:area, manager_name=:manager, note=:note, farm_status=COALESCE(:status, farm_status) WHERE farm_id=:id"), {"id": numeric_id, "name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "manager": request.managerName, "note": request.note, "status": request.status})
+        if result.rowcount == 0: raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
+        record_audit_log(connection, user, "master_data", "update_farm", target_type="farm", target_id=business_id("F", numeric_id), detail="Updated farm profile or status")
+        return farm_payload(connection.execute(text("SELECT * FROM farm WHERE farm_id=:id"), {"id": numeric_id}).mappings().one())
+
+
+@app.get("/api/plots")
+def list_plots(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"), farm_id: str | None = Query(default=None, alias="farmId"), keyword: str | None = None, status_value: str | None = Query(default=None, alias="status"), user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    clauses, params = [], {"limit": page_size, "offset": (page - 1) * page_size, "user_id": user["user_id"]}
+    if user["role"] == "farmer": clauses.append("EXISTS (SELECT 1 FROM farmer_plot_scope s WHERE s.plot_id=p.plot_id AND s.user_id=:user_id)")
+    elif user["role"] == "farm_admin": clauses.append("EXISTS (SELECT 1 FROM farm_admin_scope s WHERE s.farm_id=p.farm_id AND s.user_id=:user_id)")
+    if farm_id: clauses.append("p.farm_id=:farm_id"); params["farm_id"] = parse_resource_id(farm_id, "F")
+    if status_value: clauses.append("p.plot_status=:status"); params["status"] = status_value
+    if keyword: clauses.append("(p.plot_code LIKE :keyword OR p.plot_name LIKE :keyword)"); params["keyword"] = f"%{keyword}%"
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    select = "SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id"
+    with engine.connect() as connection:
+        total = connection.execute(text(f"SELECT COUNT(*) FROM plot p {where}"), params).scalar_one()
+        rows = connection.execute(text(f"{select} {where} ORDER BY p.plot_id LIMIT :limit OFFSET :offset"), params).mappings().all()
+        return {"items": [plot_payload(row) for row in rows], "page": page, "pageSize": page_size, "total": total}
+
+
+@app.post("/api/plots", status_code=status.HTTP_201_CREATED)
+def create_plot(request: PlotSaveRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    if request.status not in {"active", "inactive"} or request.irrigationMethod not in {None, "drip", "sprinkler", "flood", "manual", "other"}: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    with engine.begin() as connection:
+        ensure_existing_resources(connection, [parse_resource_id(request.farmId, "F")], [])
+        try: result = connection.execute(text("INSERT INTO plot (farm_id, plot_code, plot_name, area_mu, location, irrigation_method, plot_status) VALUES (:farm,:code,:name,:area,:location,:method,:status)"), {"farm": parse_resource_id(request.farmId, "F"), "code": request.code, "name": request.name, "area": request.areaMu, "location": request.location, "method": request.irrigationMethod, "status": request.status})
+        except IntegrityError as error: raise HTTPException(status_code=409, detail="PLOT_CODE_EXISTS") from error
+        record_audit_log(connection, user, "master_data", "create_plot", target_type="plot", target_id=business_id("P", result.lastrowid), detail=f"Created plot {request.name}")
+        row = connection.execute(text("SELECT p.*, NULL AS scoped_farmer_user_id, NULL AS farmer_name FROM plot p WHERE p.plot_id=:id"), {"id": result.lastrowid}).mappings().one(); return plot_payload(row)
+
+
+@app.get("/api/plots/{plot_id}")
+def get_plot(plot_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_id = parse_resource_id(plot_id, "P"); plot_scope(numeric_id, user)
+    with engine.connect() as connection:
+        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one(); return plot_payload(row)
+
+
+@app.patch("/api/plots/{plot_id}")
+def update_plot(plot_id: str, request: PlotUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    ensure_system_admin(user)
+    numeric_id = parse_resource_id(plot_id, "P")
+    fields = request.model_fields_set
+    if not fields:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    if "status" in fields and request.status not in {"active", "inactive"}:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    if "irrigationMethod" in fields and request.irrigationMethod not in {None, "drip", "sprinkler", "flood", "manual", "other"}:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+
+    values = {
+        "farm_id": parse_resource_id(request.farmId, "F") if "farmId" in fields else None,
+        "plot_code": request.code.strip() if "code" in fields else None,
+        "plot_name": request.name.strip() if "name" in fields else None,
+        "area_mu": request.areaMu,
+        "location": request.location,
+        "irrigation_method": request.irrigationMethod,
+        "plot_status": request.status,
+    }
+    assignments = [column + " = :" + column for field, column in (("farmId", "farm_id"), ("code", "plot_code"), ("name", "plot_name"), ("areaMu", "area_mu"), ("location", "location"), ("irrigationMethod", "irrigation_method"), ("status", "plot_status")) if field in fields]
+    values["id"] = numeric_id
+    with engine.begin() as connection:
+        if "farmId" in fields:
+            ensure_existing_resources(connection, [values["farm_id"]], [])
+        try:
+            result = connection.execute(text("UPDATE plot SET " + ", ".join(assignments) + " WHERE plot_id = :id"), values)
+        except IntegrityError as error:
+            raise HTTPException(status_code=409, detail="PLOT_CODE_EXISTS") from error
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
+        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one()
+        record_audit_log(connection, user, "master_data", "update_plot", target_type="plot", target_id=business_id("P", numeric_id), detail="Updated plot profile, ownership, or status")
+        return plot_payload(row)
+
+
+@app.get("/api/plots/{plot_id}/devices")
+def list_plot_devices(plot_id: str, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    numeric_id = parse_resource_id(plot_id, "P")
+    plot_scope(numeric_id, user)
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT device_id, device_code, device_uuid, device_type, plot_id, status, last_heartbeat FROM device WHERE plot_id = :plot_id ORDER BY device_id"), {"plot_id": numeric_id}).fetchall()
+    return [device_payload(row) for row in rows]
 
 
 @app.get("/api/farms/{farm_id}/overview")
@@ -1167,6 +2261,90 @@ def farm_overview(
                     "devices": [device_payload(device) for device in devices],
                 }
             )
+    return result
+
+
+@app.get("/api/farms/{farm_id}/management-statistics")
+def farm_management_statistics(
+    farm_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> list[dict[str, Any]]:
+    """Summarize actionable reminders, active-plan completion, and irrigation by plot."""
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT p.plot_id, p.plot_name,
+                       COALESCE(task_stats.total_count, 0) AS task_total,
+                       COALESCE(task_stats.completed_count, 0) AS completed_count,
+                       COALESCE(task_stats.pending_count, 0) AS pending_count,
+                       COALESCE(task_stats.overdue_count, 0) AS overdue_count,
+                       COALESCE(reminder_stats.pending_count, 0) AS pending_reminder_count,
+                       irrigation.record_id, irrigation.action_type, irrigation.activation_type,
+                       irrigation.status AS irrigation_status, irrigation.requested_at,
+                       irrigation.executed_at
+                FROM plot AS p
+                LEFT JOIN (
+                    SELECT t.plot_id,
+                           COUNT(*) AS total_count,
+                           SUM(CASE WHEN t.task_status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+                           SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending_count,
+                           SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date < CURRENT_DATE THEN 1 ELSE 0 END) AS overdue_count
+                    FROM management_task AS t
+                    JOIN management_plan AS mp
+                      ON mp.plan_id = t.plan_id AND mp.plan_status = 'active'
+                    GROUP BY t.plot_id
+                ) AS task_stats ON task_stats.plot_id = p.plot_id
+                LEFT JOIN (
+                    SELECT plot_id, COUNT(*) AS pending_count
+                    FROM plan_adjustment_reminder
+                    WHERE reminder_status = 'active'
+                    GROUP BY plot_id
+                ) AS reminder_stats ON reminder_stats.plot_id = p.plot_id
+                LEFT JOIN irrigation_record AS irrigation ON irrigation.record_id = (
+                    SELECT latest.record_id
+                    FROM irrigation_record AS latest
+                    WHERE latest.plot_id = p.plot_id
+                    ORDER BY latest.requested_at DESC, latest.record_id DESC
+                    LIMIT 1
+                )
+                WHERE p.farm_id = :farm_id
+                ORDER BY p.plot_id
+                """
+            ),
+            {"farm_id": numeric_farm_id},
+        ).mappings().all()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        task_total = int(row["task_total"])
+        completed_count = int(row["completed_count"])
+        latest_irrigation = None
+        if row["record_id"] is not None:
+            latest_irrigation = {
+                "recordId": business_id("IR", row["record_id"]),
+                "action": "irrigation_on" if row["action_type"] == "on" else "irrigation_off",
+                "activationType": row["activation_type"],
+                "status": row["irrigation_status"],
+                "requestedAt": iso(row["requested_at"]),
+                "executedAt": iso(row["executed_at"]),
+            }
+        result.append(
+            {
+                "plotId": business_id("P", row["plot_id"]),
+                "plotName": row["plot_name"],
+                "pendingReminderCount": int(row["pending_reminder_count"]),
+                "taskTotal": task_total,
+                "completedTaskCount": completed_count,
+                "pendingTaskCount": int(row["pending_count"]),
+                "overdueTaskCount": int(row["overdue_count"]),
+                "taskCompletionRate": round(completed_count * 100 / task_total, 1) if task_total else 0,
+                "latestIrrigation": latest_irrigation,
+            }
+        )
     return result
 
 
@@ -1295,6 +2473,7 @@ def bind_device(
             ),
             {"device_id": numeric_device_id},
         ).mappings().one()
+        record_audit_log(connection, user, "device_binding", "bind_device", target_type="device", target_id=business_id("D", numeric_device_id), detail=f"Bound device to {business_id('P', target_plot_id)}")
     return device_payload(row)
 
 
@@ -1310,6 +2489,7 @@ def unbind_device(
             text("UPDATE device SET plot_id = NULL, status = 'offline' WHERE device_id = :device_id"),
             {"device_id": numeric_device_id},
         )
+        record_audit_log(connection, user, "device_binding", "unbind_device", target_type="device", target_id=business_id("D", numeric_device_id), detail="Unbound device and marked it offline")
 
 
 @app.get("/api/devices/{device_id}/status")
@@ -1367,6 +2547,8 @@ def create_device_command(
             operator_id=user["user_id"],
             activation_type=request.activationType,
         )
+        with engine.begin() as connection:
+            record_audit_log(connection, user, "irrigation", "issue_irrigation_command", target_type="device", target_id=business_id("D", numeric_device_id), detail=f"Issued irrigation_{action} command {command['commandId']} for {business_id('P', device['plot_id'])}")
         return {
             "commandId": command["commandId"],
             "deviceId": business_id("D", numeric_device_id),
@@ -1453,6 +2635,116 @@ def list_plot_metrics(
         }
         for row in rows
     ]
+
+
+@app.get("/api/plots/{plot_id}/management-history")
+def plot_management_history(
+    plot_id: str,
+    from_value: datetime = Query(alias="from"),
+    to_value: datetime = Query(alias="to"),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """Return the plot's existing management records in one chronological feed."""
+    numeric_plot_id = parse_resource_id(plot_id, "P")
+    plot_scope(numeric_plot_id, user)
+    try:
+        from_utc = utc_naive(from_value)
+        to_utc = utc_naive(to_value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if from_utc >= to_utc:
+        raise HTTPException(status_code=400, detail="from must be before to")
+
+    events: list[dict[str, Any]] = []
+    with engine.connect() as connection:
+        tasks = connection.execute(
+            text(
+                "SELECT t.task_id, t.title, t.task_type, t.scheduled_date, t.task_status, t.note, "
+                "p.plan_status FROM management_task t "
+                "LEFT JOIN management_plan p ON p.plan_id = t.plan_id "
+                "WHERE t.plot_id = :plot AND t.scheduled_date >= :start AND t.scheduled_date <= :end "
+                "ORDER BY t.scheduled_date, t.task_id"
+            ),
+            {"plot": numeric_plot_id, "start": from_utc.date(), "end": to_utc.date()},
+        ).mappings().all()
+        completions = connection.execute(
+            text(
+                "SELECT c.task_completion_id, c.executed_at, c.executor_name, c.result, c.note, "
+                "t.task_id, t.title FROM management_task_completion c "
+                "JOIN management_task t ON t.task_id = c.task_id "
+                "WHERE t.plot_id = :plot AND c.executed_at >= :start AND c.executed_at < :end "
+                "ORDER BY c.executed_at, c.task_completion_id"
+            ),
+            {"plot": numeric_plot_id, "start": from_utc, "end": to_utc},
+        ).mappings().all()
+        irrigation = connection.execute(
+            text(
+                "SELECT record_id, action_type, activation_type, status, requested_at, executed_at "
+                "FROM irrigation_record WHERE plot_id = :plot "
+                "AND requested_at >= :start AND requested_at < :end "
+                "ORDER BY requested_at, record_id"
+            ),
+            {"plot": numeric_plot_id, "start": from_utc, "end": to_utc},
+        ).mappings().all()
+        alerts = connection.execute(
+            text(
+                "SELECT alert_id, alert_type, alert_description, alert_status, alert_datetime "
+                "FROM alert WHERE plot_id = :plot "
+                "AND alert_datetime >= :start AND alert_datetime < :end "
+                "ORDER BY alert_datetime, alert_id"
+            ),
+            {"plot": numeric_plot_id, "start": from_utc, "end": to_utc},
+        ).mappings().all()
+
+    for row in tasks:
+        scheduled_at = datetime.combine(row["scheduled_date"], time.min)
+        events.append({
+            "id": f"task:{business_id('MT', row['task_id'])}",
+            "type": "plan_task",
+            "occurredAt": iso(scheduled_at),
+            "title": row["title"],
+            "description": row["note"] or f"计划{row['scheduled_date'].isoformat()}执行",
+            "status": task_status_value(row),
+            "referenceId": business_id("MT", row["task_id"]),
+        })
+    for row in completions:
+        events.append({
+            "id": f"completion:{business_id('TC', row['task_completion_id'])}",
+            "type": "task_completion",
+            "occurredAt": iso(row["executed_at"]),
+            "title": f"完成：{row['title']}",
+            "description": row["note"] or f"执行人：{row['executor_name']}；结果：{row['result']}",
+            "status": "completed",
+            "referenceId": business_id("TC", row["task_completion_id"]),
+        })
+    for row in irrigation:
+        action = "开启灌溉" if row["action_type"] == "on" else "关闭灌溉"
+        events.append({
+            "id": f"irrigation:{business_id('IR', row['record_id'])}",
+            "type": "irrigation",
+            "occurredAt": iso(row["requested_at"]),
+            "title": action,
+            "description": f"{row['activation_type']}触发；执行结果：{row['status']}",
+            "status": row["status"],
+            "referenceId": business_id("IR", row["record_id"]),
+        })
+    for row in alerts:
+        events.append({
+            "id": f"alert:{business_id('A', row['alert_id'])}",
+            "type": "alert",
+            "occurredAt": iso(row["alert_datetime"]),
+            "title": row["alert_type"],
+            "description": row["alert_description"],
+            "status": row["alert_status"],
+            "referenceId": business_id("A", row["alert_id"]),
+        })
+    events.sort(key=lambda item: (item["occurredAt"] or "", item["id"]), reverse=True)
+    return {
+        "plotId": business_id("P", numeric_plot_id),
+        "from": iso(from_utc),
+        "to": iso(to_utc),
+        "events": events,
+    }
 
 
 @app.get("/api/irrigation/records")
@@ -1596,11 +2888,143 @@ def weather_forecast(
     current = result.get("current", result)
     if not isinstance(current, dict):
         raise HTTPException(status_code=502, detail="WEATHER_SERVICE_INVALID_RESPONSE")
+    daily = result.get("daily", [])
+    with engine.begin() as connection:
+        sync_continuous_rain_reminder(
+            connection,
+            plot_id=numeric_plot_id,
+            rainy_days=consecutive_rainy_days(daily),
+            timestamp=datetime.now(UTC).replace(tzinfo=None),
+        )
     return {
         "current": current,
         "hourly": result.get("hourly", []),
-        "daily": result.get("daily", []),
+        "daily": daily,
     }
+
+
+@app.get("/api/plan-adjustment-reminders")
+def list_plan_adjustment_reminders(
+    plot_id: str | None = Query(default=None, alias="plotId"),
+    reminder_status: str | None = Query(default="active", alias="status"),
+    user: dict[str, Any] = Depends(current_user),
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if plot_id is not None:
+        numeric_plot_id = parse_resource_id(plot_id, "P")
+        plot_scope(numeric_plot_id, user)
+        clauses.append("r.plot_id = :plot_id")
+        params["plot_id"] = numeric_plot_id
+    elif user["role"] == "farm_admin":
+        clauses.append(
+            "(f.admin_user_id = :user_id OR EXISTS ("
+            "SELECT 1 FROM farm_admin_scope s WHERE s.user_id = :user_id AND s.farm_id = f.farm_id))"
+        )
+        params["user_id"] = user["user_id"]
+    elif user["role"] == "farmer":
+        clauses.append(
+            "(p.farmer_user_id = :user_id OR EXISTS ("
+            "SELECT 1 FROM farmer_plot_scope s WHERE s.user_id = :user_id AND s.plot_id = p.plot_id))"
+        )
+        params["user_id"] = user["user_id"]
+    if reminder_status is not None:
+        if reminder_status not in {"active", "handled", "recovered"}:
+            raise HTTPException(status_code=400, detail="INVALID_REMINDER_STATUS")
+        clauses.append("r.reminder_status = :reminder_status")
+        params["reminder_status"] = reminder_status
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with engine.connect() as connection:
+        reminders = connection.execute(
+            text(
+                "SELECT r.reminder_id, r.plot_id, p.plot_name, r.reminder_type, "
+                "r.reminder_description, r.reminder_status, r.disposition_action, "
+                "r.disposition_note, r.disposed_by, r.disposed_at, disposer.real_name AS disposed_by_name, "
+                "r.triggered_at, r.recovered_at "
+                "FROM plan_adjustment_reminder r "
+                "JOIN plot p ON p.plot_id = r.plot_id JOIN farm f ON f.farm_id = p.farm_id "
+                "LEFT JOIN users disposer ON disposer.user_id = r.disposed_by"
+                f"{where} ORDER BY r.triggered_at DESC, r.reminder_id DESC"
+            ),
+            params,
+        ).mappings().all()
+        result = []
+        for reminder in reminders:
+            tasks = connection.execute(
+                text(
+                    "SELECT task_id, task_title, task_type, scheduled_date "
+                    "FROM plan_adjustment_reminder_task WHERE reminder_id = :reminder "
+                    "ORDER BY scheduled_date, task_id"
+                ),
+                {"reminder": reminder["reminder_id"]},
+            ).mappings().all()
+            result.append(plan_adjustment_reminder_payload(reminder, tasks))
+    return result
+
+
+@app.post("/api/plan-adjustment-reminders/{reminder_id}/disposition")
+def dispose_plan_adjustment_reminder(
+    reminder_id: str,
+    request: PlanAdjustmentReminderDispositionRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    if user["role"] != "farmer":
+        raise HTTPException(status_code=403, detail="FORBIDDEN")
+    action = request.action.strip()
+    note = request.note.strip()
+    if action not in {"adjust_as_suggested", "keep_original_plan", "handled"}:
+        raise HTTPException(status_code=400, detail="INVALID_REMINDER_DISPOSITION")
+    if not note:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    numeric_reminder_id = parse_resource_id(reminder_id, "PR")
+    with engine.begin() as connection:
+        reminder = connection.execute(
+            text(
+                "SELECT reminder_id, plot_id, reminder_status FROM plan_adjustment_reminder "
+                "WHERE reminder_id = :reminder"
+            ),
+            {"reminder": numeric_reminder_id},
+        ).mappings().first()
+        if reminder is None:
+            raise HTTPException(status_code=404, detail="REMINDER_NOT_FOUND")
+        plot_scope(reminder["plot_id"], user)
+        if reminder["reminder_status"] != "active":
+            raise HTTPException(status_code=409, detail="REMINDER_NOT_ACTIONABLE")
+        connection.execute(
+            text(
+                "UPDATE plan_adjustment_reminder SET reminder_status = 'handled', "
+                "disposition_action = :action, disposition_note = :note, disposed_by = :user, "
+                "disposed_at = :timestamp WHERE reminder_id = :reminder"
+            ),
+            {
+                "action": action,
+                "note": note,
+                "user": user["user_id"],
+                "timestamp": datetime.now(UTC).replace(tzinfo=None),
+                "reminder": numeric_reminder_id,
+            },
+        )
+        row = connection.execute(
+            text(
+                "SELECT r.reminder_id, r.plot_id, p.plot_name, r.reminder_type, "
+                "r.reminder_description, r.reminder_status, r.disposition_action, "
+                "r.disposition_note, r.disposed_by, r.disposed_at, disposer.real_name AS disposed_by_name, "
+                "r.triggered_at, r.recovered_at "
+                "FROM plan_adjustment_reminder r JOIN plot p ON p.plot_id = r.plot_id "
+                "LEFT JOIN users disposer ON disposer.user_id = r.disposed_by "
+                "WHERE r.reminder_id = :reminder"
+            ),
+            {"reminder": numeric_reminder_id},
+        ).mappings().one()
+        tasks = connection.execute(
+            text(
+                "SELECT task_id, task_title, task_type, scheduled_date "
+                "FROM plan_adjustment_reminder_task WHERE reminder_id = :reminder "
+                "ORDER BY scheduled_date, task_id"
+            ),
+            {"reminder": numeric_reminder_id},
+        ).mappings().all()
+    return plan_adjustment_reminder_payload(row, tasks)
 
 
 @app.get("/api/alerts")

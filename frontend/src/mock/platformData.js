@@ -1,14 +1,14 @@
 export const platformFarms = [
-  { farmId: 'F001', name: '一号示范农场', location: '重庆市北碚区', status: '正常', plotCount: 5 },
-  { farmId: 'F002', name: '西区试验农场', location: '重庆市璧山区', status: '正常', plotCount: 3 },
+  { farmId: 'F001', name: '奉节脐橙示范园', location: '重庆市奉节县', status: '正常', plotCount: 5 },
+  { farmId: 'F002', name: '长江北岸脐橙园', location: '重庆市奉节县', status: '正常', plotCount: 3 },
 ]
 
 export const platformPlots = [
-  { internalId: 1, farmId: 'F001', plotNo: 'P001', name: '一号温室', crop: '番茄', note: '结果期' },
-  { internalId: 2, farmId: 'F001', plotNo: 'P002', name: '二号大棚', crop: '辣椒', note: '开花期' },
-  { internalId: 3, farmId: 'F001', plotNo: 'P003', name: '三号露地', crop: '空心菜', note: '生长期' },
-  { internalId: 4, farmId: 'F001', plotNo: 'P004', name: '四号育苗区', crop: '番茄幼苗', note: '育苗期' },
-  { internalId: 5, farmId: 'F001', plotNo: 'P005', name: '五号试验田', crop: '试验作物', note: '' },
+  { internalId: 1, farmId: 'F001', plotNo: 'P001', name: '东坡一号地块', crop: '脐橙', note: '果实膨大期' },
+  { internalId: 2, farmId: 'F001', plotNo: 'P002', name: '东坡二号地块', crop: '脐橙', note: '开花坐果期' },
+  { internalId: 3, farmId: 'F001', plotNo: 'P003', name: '西坡一号地块', crop: '脐橙', note: '春梢生长期' },
+  { internalId: 4, farmId: 'F001', plotNo: 'P004', name: '南坡一号地块', crop: '脐橙', note: '转色采收期' },
+  { internalId: 5, farmId: 'F001', plotNo: 'P005', name: '北坡试验地块', crop: '脐橙', note: '冬季管护期' },
 ]
 
 export const platformDevices = [

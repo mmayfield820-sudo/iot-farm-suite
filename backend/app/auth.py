@@ -89,6 +89,26 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
         }
 
 
+def authenticate_initial_password(employee_no: str, password: str) -> dict[str, Any] | None:
+    """Verify a pending account without granting a business-access token."""
+    with engine.connect() as connection:
+        user = connection.execute(
+            text(
+                """
+                SELECT user_id, username, password_hash
+                FROM users
+                WHERE employee_no = :employee_no
+                  AND username = :employee_no
+                  AND user_status = 'pending_activation'
+                """
+            ),
+            {"employee_no": employee_no},
+        ).mappings().first()
+        if user is None or not verify_password(password, user["password_hash"]):
+            return None
+        return {"user_id": user["user_id"], "username": user["username"]}
+
+
 def create_access_token(user: dict[str, Any]) -> str:
     now = datetime.now(UTC)
     payload = {
@@ -97,6 +117,30 @@ def create_access_token(user: dict[str, Any]) -> str:
         "exp": now + timedelta(minutes=_expiry_minutes()),
     }
     return jwt.encode(payload, _jwt_secret(), algorithm=_ALGORITHM)
+
+
+def create_profile_setup_token(user_id: int) -> str:
+    now = datetime.now(UTC)
+    return jwt.encode(
+        {
+            "sub": str(user_id),
+            "purpose": "profile_setup",
+            "iat": now,
+            "exp": now + timedelta(minutes=15),
+        },
+        _jwt_secret(),
+        algorithm=_ALGORITHM,
+    )
+
+
+def profile_setup_user_id(token: str) -> int:
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=[_ALGORITHM])
+        if payload.get("purpose") != "profile_setup":
+            raise ValueError("invalid purpose")
+        return int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED") from error
 
 
 def current_user(
