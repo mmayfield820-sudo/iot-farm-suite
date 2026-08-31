@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Lock, User } from '@element-plus/icons-vue'
@@ -9,6 +9,25 @@ const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
 const form = reactive({ username: '', password: '', remember: true })
+const introVisible = ref(true)
+const introLeaving = ref(false)
+const videoRef = ref(null)
+let introTimer
+
+function finishIntro() {
+  if (!introVisible.value || introLeaving.value) return
+  introLeaving.value = true
+  window.clearTimeout(introTimer)
+  introTimer = window.setTimeout(() => {
+    introVisible.value = false
+    introLeaving.value = false
+  }, 720)
+}
+
+onMounted(async () => {
+  try { await videoRef.value?.play() } catch { finishIntro() }
+})
+onBeforeUnmount(() => window.clearTimeout(introTimer))
 
 async function submit() {
   if (!form.username.trim() || !form.password) return ElMessage.warning('请输入用户名和密码')
@@ -25,6 +44,18 @@ async function submit() {
 
 <template>
   <div class="login-page">
+    <div v-if="introVisible" class="intro-screen" :class="{ leaving: introLeaving }">
+      <video ref="videoRef" class="intro-video" muted autoplay playsinline preload="auto" @ended="finishIntro" @error="finishIntro">
+        <source src="/orchard-intro.mp4" type="video/mp4" />
+      </video>
+      <div class="intro-shade"></div>
+      <div class="intro-copy">
+        <span>橙心如意</span>
+        <h1>一园一策，<em>让每一程更如意</em></h1>
+        <p>奉节脐橙全周期数字化管理平台</p>
+      </div>
+      <button class="skip-intro" type="button" @click="finishIntro">跳过动画</button>
+    </div>
     <section class="intro">
       <div class="intro-inner">
         <div class="brand-mark">橙</div>
@@ -69,4 +100,6 @@ async function submit() {
 .login-page{background:#fff8f1}.intro{background:radial-gradient(circle at 28% 20%,rgba(244,145,47,.48),transparent 31%),linear-gradient(145deg,#5a301a,#2b1a11)}
 .brand-mark,.mobile-logo{color:#4c2917;background:linear-gradient(145deg,#ffb34f,#ed7b1d);box-shadow:0 10px 24px #1f0e0755}.eyebrow{color:#f4bb82}.intro h1 span{color:#ffae45}.lead{color:#e2cabc}.feature-row span{color:#f1dfd3}.field-art i{background:linear-gradient(transparent,#f3a657)}
 .login-card{border-color:#eaded3;background:rgba(255,253,249,.94);box-shadow:0 20px 55px rgba(100,52,20,.1)}.panel-eyebrow{color:#c9631a}.login-card h2{color:#4a2b1b}.hint{color:#82736a}.login-card>label{color:#654632}.form-meta button,.register-entry button{color:#c05c17}.submit{background:linear-gradient(100deg,#ed852a,#c65b14);box-shadow:0 9px 20px rgba(198,91,20,.22)}.submit:hover{background:linear-gradient(100deg,#e07820,#ad4d10)}.register-entry{border-color:#f0e7df;color:#89796f}.register-entry small{color:#8a7465;background:#fff1e4}
+.intro-screen{position:fixed;inset:0;z-index:100;overflow:hidden;background:#183126;transition:opacity .72s ease,visibility .72s ease}.intro-screen.leaving{opacity:0;visibility:hidden}.intro-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;animation:intro-zoom 8s linear both}.intro-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(20,40,29,.62),rgba(20,40,29,.16) 58%,rgba(20,40,29,.32)),linear-gradient(0deg,rgba(16,31,23,.54),transparent 58%)}.intro-copy{position:absolute;left:8vw;bottom:13vh;color:#fff;text-shadow:0 3px 18px rgba(12,28,20,.24)}.intro-copy>span{display:inline-block;padding:7px 12px;border:1px solid rgba(255,255,255,.24);border-radius:9px;background:rgba(255,255,255,.12);font-size:12px;font-weight:700;letter-spacing:1px;backdrop-filter:blur(7px)}.intro-copy h1{margin:17px 0 8px;font-size:clamp(34px,5vw,64px);letter-spacing:-1.5px}.intro-copy h1 em{color:#f5c769;font-style:normal}.intro-copy p{margin:0;color:rgba(255,255,255,.84);font-size:14px}.skip-intro{position:absolute;right:28px;top:25px;padding:8px 14px;border:1px solid rgba(255,255,255,.32);border-radius:999px;color:#fff;background:rgba(18,43,31,.25);font-size:12px;cursor:pointer;backdrop-filter:blur(8px)}.skip-intro:hover{background:rgba(255,255,255,.18)}@keyframes intro-zoom{from{transform:scale(1)}to{transform:scale(1.025)}}
+@media(max-width:700px){.intro-copy{left:24px;right:24px;bottom:10vh}.intro-copy h1{font-size:34px}.skip-intro{right:18px;top:18px}}
 </style>

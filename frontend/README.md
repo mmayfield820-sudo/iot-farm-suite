@@ -17,11 +17,11 @@
 
 ### 农户端
 
-- 农场首页：地块、在线设备、当前告警和今日灌溉统计
+- 我的果园：地块、在线设备、当前告警和今日灌溉统计
 - 地块管理：实时温湿度、地块信息、设备状态、历史趋势和阈值设置
 - 智慧灌溉：灌溉建议、控制确认、指令执行进度和灌溉记录
 - 告警中心：按地块、类型、状态和时间查询告警
-- AI 农业助手：结合当前地块农情数据提供辅助建议
+- 小橙子·农事助手：结合当前地块农情数据提供辅助建议
 
 ### 农场管理员端
 
@@ -143,8 +143,7 @@ http://localhost:8080
 
 前后端接口定义请参考：
 
-- `openapi.yaml`：完整接口契约和字段格式
-- `API接口使用说明.md`：接口接入说明
+- `../contracts/openapi.yaml`：项目唯一的正式 REST API 契约
 - `src/api/`：前端实际使用的接口封装
 
 后端返回字段如果与页面模型不同，应在后端 DTO 中统一，或在 `src/utils/dataAdapters.js` 中转换。设备状态、设备类型、灌溉状态、告警状态和时间字段尤其需要保持一致。
@@ -159,7 +158,7 @@ http://localhost:8080
 | 农户地块管理 | `/farmer/management` |
 | 智慧灌溉 | `/farmer/irrigation` |
 | 农户告警中心 | `/farmer/alarm` |
-| AI 农业助手 | `/farmer/ai` |
+| 小橙子·农事助手 | `/farmer/ai` |
 | 农场管理员总览 | `/farm/dashboard` |
 | 农场管理员设备状态 | `/farm/status` |
 | 农场管理员设备管理 | `/farm/devices` |
@@ -187,7 +186,6 @@ frontend/
 │  └─ main.js        应用启动入口
 ├─ .env.development  开发环境变量
 ├─ .env.production   生产环境变量
-├─ openapi.yaml      前后端接口契约
 ├─ vite.config.js    Vite、别名和接口代理配置
 └─ package.json      依赖及运行命令
 ```
@@ -278,6 +276,6 @@ VITE_USE_MOCK=false
 
 ## 相关资料
 
-- 前后端接口契约：`openapi.yaml`
-- 接口使用说明：`API接口使用说明.md`
-- 数据库建表文件：`../database/schema/建库.sql`
+- 前后端接口契约：`../contracts/openapi.yaml`
+- 数据库建表文件：`../database/schema/001_schema.sql`
+- 数据库交付说明：`../database/README.md`

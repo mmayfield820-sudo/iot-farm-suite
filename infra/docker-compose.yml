@@ -16,7 +16,7 @@ services:
       - mysql_data:/var/lib/mysql
       - ../database/schema/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
       - ../database/schema/002_reference_data.sql:/docker-entrypoint-initdb.d/002_reference_data.sql:ro
-      - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
+      - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_current_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 10s

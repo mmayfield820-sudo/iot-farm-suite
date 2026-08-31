@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ROLE_LABEL, useUserStore } from '@/stores/user'
 import { useFarmerStore } from '@/stores/farmer'
@@ -50,6 +50,15 @@ async function changeRole(nextRole) {
 }
 function signOut() { userStore.logout(); router.replace('/login') }
 function openNotifications() { router.push(notificationTarget.value) }
+async function openOrToggleAssistant() {
+  if (route.path !== '/farmer/ai') {
+    await router.push('/farmer/ai')
+    await nextTick()
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('orchard-assistant-toggle-voice')), 100)
+  } else {
+    window.dispatchEvent(new CustomEvent('orchard-assistant-toggle-voice'))
+  }
+}
 </script>
 
 <template>
@@ -61,6 +70,10 @@ function openNotifications() { router.push(notificationTarget.value) }
           <el-icon><component :is="icon(item.icon)" /></el-icon><template #title>{{ item.label }}</template>
         </el-menu-item>
       </el-menu>
+      <button v-if="userStore.role === 'farmer'" class="sidebar-mascot" :class="{ collapsed, active: route.path === '/farmer/ai' }" type="button" title="打开小橙子农事助手" @click="openOrToggleAssistant">
+        <span class="sidebar-orange"><i class="leaf"></i><i class="eye eye-left"></i><i class="eye eye-right"></i><i class="mouth"></i><i class="cheek cheek-left"></i><i class="cheek cheek-right"></i></span>
+        <span v-if="!collapsed" class="sidebar-mascot-copy"><strong>小橙子</strong><small>{{ route.path === '/farmer/ai' ? '点一下和我说话' : '农事助手' }}</small></span>
+      </button>
       <button class="collapse-btn" @click="collapsed = !collapsed"><el-icon><component :is="collapsed ? icon('Expand') : icon('Fold')" /></el-icon><span v-if="!collapsed">收起菜单</span></button>
     </aside>
     <section class="workspace">
@@ -122,4 +135,9 @@ function openNotifications() { router.push(notificationTarget.value) }
 .role-switch { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; color: #65452f; background: #fff9f3; cursor: pointer; }.role-switch:hover { border-color: var(--accent); color: var(--accent); }.single-role { padding: 6px 9px; border-radius: 8px; color: var(--accent); background: #fff1e4; font-size: 13px; }.current-role { color: var(--accent); font-weight: 600; }
 .content { padding: 28px; }
 @media (max-width: 900px) { .sidebar { width: 72px; }.sidebar .brand > div:last-child, .collapse-btn span, .nav :deep(.el-menu-item span) { display: none; }.nav :deep(.el-menu-item) { justify-content: center; padding: 0 !important; }.workspace { margin-left: 72px; }.topbar { padding: 0 16px; }.topbar > div:first-child, .display-name { display:none; }.content { padding: 18px; } }
+
+/* 网页13的轻透果园底色，仅调整外壳，不触碰页面业务组件。 */
+.shell{color:#3f3129;background:#f5f1e8}.sidebar{overflow:hidden;color:#565a52;background:rgba(247,242,231,.965);border-right:1px solid #e0d8c9;box-shadow:8px 0 30px rgba(72,62,49,.045);backdrop-filter:blur(10px)}.sidebar::before,.sidebar::after{position:absolute;z-index:0;inset:auto;content:'';pointer-events:none;background:url('../assets/orchard-linework.svg') no-repeat}.sidebar::before{left:-300px;bottom:-105px;width:760px;height:500px;background-position:left bottom;background-size:760px auto;opacity:.48}.sidebar::after{right:-520px;top:-245px;width:980px;height:620px;background-position:right top;background-size:980px auto;opacity:.2}.sidebar>*{position:relative;z-index:1}.brand{border-bottom-color:#e8e0d3}.brand-mark{color:#a76528;background:#f2e7d5;border:1px solid #e6d7bf;box-shadow:0 5px 14px rgba(103,78,47,.08)}.brand strong{color:#4d4b43}.brand span{color:#9b958a}.nav :deep(.el-menu-item){color:#706e66}.nav :deep(.el-menu-item:hover){color:#3f6f58;background:#f2f5ed}.nav :deep(.el-menu-item.is-active){color:#3d7658;background:#eaf3e8;box-shadow:inset 3px 0 0 #5f956f}.collapse-btn{color:#8b887f;border-top-color:#e6dfd3}.topbar{height:68px;color:#5d6a63;background:rgba(255,254,250,.88);backdrop-filter:blur(12px)}.content{position:relative;max-width:1680px;width:100%;margin:0 auto;padding:30px}.content::before{position:fixed;z-index:0;inset:68px 0 0 238px;content:'';pointer-events:none;background:url('../assets/orchard-linework.svg') center / cover no-repeat,radial-gradient(circle at 82% 88%,rgba(232,137,45,.055),transparent 28%),radial-gradient(circle at 12% 18%,rgba(92,137,100,.04),transparent 24%),linear-gradient(135deg,rgba(255,255,255,.18),transparent 42%);opacity:.34}.content>*{position:relative;z-index:1}.sidebar.collapsed~.workspace .content::before{left:72px}
+.sidebar-mascot{position:relative;width:100%;min-height:92px;display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 14px;border:0;color:#5f6e65;background:transparent;cursor:pointer;text-align:left;transition:.2s}.sidebar-mascot:hover,.sidebar-mascot.active{background:rgba(255,255,255,.15)}.sidebar-mascot.collapsed{min-height:82px;padding:7px 0}.sidebar-mascot-copy{display:flex;flex-direction:column;min-width:0}.sidebar-mascot-copy strong{color:#52665c;font-size:13px}.sidebar-mascot-copy small{margin-top:3px;color:#9a9489;font-size:10px}.sidebar-orange{position:relative;display:block;width:66px;height:66px;flex:0 0 66px;border-radius:48% 52% 50% 50%;background:#e4a04e;box-shadow:inset -6px -8px 0 rgba(145,91,39,.09),0 8px 16px rgba(112,78,44,.09);transition:.22s}.sidebar-mascot:hover .sidebar-orange{transform:translateY(-2px) rotate(-1deg)}.sidebar-orange .leaf{position:absolute;right:4px;top:-7px;width:22px;height:10px;border:1px solid #506d58;border-radius:100% 0 100% 0;background:#66876d;transform:rotate(-23deg)}.sidebar-orange .eye{position:absolute;top:25px;width:6px;height:9px;border-radius:50%;background:#5b463c}.sidebar-orange .eye-left{left:19px}.sidebar-orange .eye-right{right:19px}.sidebar-orange .mouth{position:absolute;left:27px;top:39px;width:13px;height:8px;border-bottom:2px solid #674b3d;border-radius:0 0 50% 50%}.sidebar-orange .cheek{position:absolute;top:39px;width:8px;height:5px;border-radius:50%;background:rgba(190,83,56,.24)}.sidebar-orange .cheek-left{left:11px}.sidebar-orange .cheek-right{right:11px}.sidebar-mascot.active .sidebar-orange{animation:mascot-breathe 1.7s ease-in-out infinite}.sidebar-mascot.collapsed .sidebar-mascot-copy{display:none}@keyframes mascot-breathe{50%{transform:translateY(-3px) rotate(1deg)}}
+@media(max-width:900px){.content::before{left:72px}.sidebar-mascot-copy{display:none}.sidebar-mascot{padding:7px 0}.sidebar-orange{width:58px;height:58px;flex-basis:58px}.sidebar-orange .eye{top:22px}.sidebar-orange .eye-left{left:17px}.sidebar-orange .eye-right{right:17px}.sidebar-orange .mouth{left:24px;top:34px}}
 </style>

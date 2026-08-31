@@ -22,6 +22,7 @@ def validate_template_content(value: Any) -> dict[str, Any]:
     if not isinstance(stages, list) or not stages:
         raise ValueError("templateContent.stages must be a non-empty array")
     seen: set[str] = set()
+    valid_periods = {"EARLY", "MID", "LATE"}
     for stage in stages:
         if not isinstance(stage, dict):
             raise ValueError("each stage must be an object")
@@ -37,10 +38,46 @@ def validate_template_content(value: Any) -> dict[str, Any]:
             raise ValueError("stage name is required")
         if not isinstance(start, int) or not isinstance(end, int) or not 1 <= start <= 12 or not 1 <= end <= 12:
             raise ValueError("stage startMonth/endMonth must be between 1 and 12")
+        start_period = str(stage.get("startPeriod") or start_node.get("period") or "EARLY").upper()
+        end_period = str(stage.get("endPeriod") or end_node.get("period") or "LATE").upper()
+        if start_period not in valid_periods or end_period not in valid_periods:
+            raise ValueError("stage period must be EARLY, MID or LATE")
+        priority = stage.get("priority", 0)
+        if not isinstance(priority, int):
+            raise ValueError("stage priority must be an integer")
+        if "canOverlap" in stage and not isinstance(stage["canOverlap"], bool):
+            raise ValueError("stage canOverlap must be a boolean")
+        focus = stage.get("managementFocus", [])
+        if not isinstance(focus, list) or any(not isinstance(item, str) for item in focus):
+            raise ValueError("stage managementFocus must be a string array")
+        tasks = stage.get("tasks", [])
+        if not isinstance(tasks, list):
+            raise ValueError("stage tasks must be an array")
+        for task in tasks:
+            if not isinstance(task, dict) or not str(task.get("name") or "").strip() or not str(task.get("type") or "").strip():
+                raise ValueError("each task must contain name and type")
+            offset = task.get("offsetDays", 0)
+            if not isinstance(offset, int) or offset < 0:
+                raise ValueError("task offsetDays must be a non-negative integer")
+            if "repeatDays" in task and (not isinstance(task["repeatDays"], int) or task["repeatDays"] <= 0):
+                raise ValueError("task repeatDays must be a positive integer")
+            if "repeatUntilStageEnd" in task and not isinstance(task["repeatUntilStageEnd"], bool):
+                raise ValueError("task repeatUntilStageEnd must be a boolean")
+        moisture = stage.get("soilMoistureReference")
+        if moisture is not None:
+            if not isinstance(moisture, dict):
+                raise ValueError("stage soilMoistureReference must be an object")
+            trigger = moisture.get("irrigationTriggerReference")
+            if trigger is not None and (
+                not isinstance(trigger, dict)
+                or not isinstance(trigger.get("below"), (int, float))
+                or not isinstance(trigger.get("unit"), str)
+            ):
+                raise ValueError("soil moisture irrigation trigger must contain numeric below and unit")
         stage["startMonth"] = start
         stage["endMonth"] = end
-        stage["startPeriod"] = str(stage.get("startPeriod") or start_node.get("period") or "EARLY").upper()
-        stage["endPeriod"] = str(stage.get("endPeriod") or end_node.get("period") or "LATE").upper()
+        stage["startPeriod"] = start_period
+        stage["endPeriod"] = end_period
         seen.add(code)
     return content
 

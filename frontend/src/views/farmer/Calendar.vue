@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { completeFarmTask, createTemporaryTask, getCalendarTasks, getTodayTasks, getUpcomingTasks } from '@/api/farmTask'
 import { useFarmerStore } from '@/stores/farmer'
+import { FARM_TASK_TYPES, FARM_TASK_TYPE_LABELS } from '@/utils/farmTask'
 
 const store = useFarmerStore()
 const calendarDate = ref(new Date())
@@ -28,7 +29,7 @@ const tasksByDate = computed(() => calendarRows.value.reduce((result, task) => {
 }, {}))
 const visibleTodos = computed(() => todoRows.value.filter((task) => !store.selectedPlotId || task.plotId === store.selectedPlotId))
 const statusLabels = { PENDING: '待执行', OVERDUE: '已逾期', COMPLETED: '已完成', CANCELLED: '已取消', SUPERSEDED: '已替代' }
-const typeLabels = { PATROL: '巡园', IRRIGATION: '灌溉', FERTILIZATION: '施肥', PRUNING: '修剪', PEST_CONTROL: '病虫害防治', WEEDING: '除草', HARVEST: '采收', OTHER: '其他农事' }
+const typeLabels = FARM_TASK_TYPE_LABELS
 
 const dayTasks = (day) => tasksByDate.value[day] || []
 const isToday = (day) => day === dateKey(new Date())
@@ -44,7 +45,7 @@ function goToday() {
 
 function noteTone(task) {
   if (task.taskStatus === 'OVERDUE') return 'rose'
-  return { IRRIGATION: 'blue', FERTILIZATION: 'green', PEST_CONTROL: 'orange', PRUNING: 'purple' }[task.taskType] || 'yellow'
+  return { IRRIGATION: 'blue', IRRIGATION_CHECK: 'blue', FERTILIZATION: 'green', CLEANUP: 'green', PEST_CONTROL: 'orange', PRUNING: 'purple', HARVEST_PREP: 'orange', HARVEST: 'orange' }[task.taskType] || 'yellow'
 }
 
 async function loadCalendar() {
@@ -153,7 +154,7 @@ watch(todoTab, loadTodos, { immediate: true })
       </aside>
     </div>
 
-    <el-dialog v-model="temporaryVisible" title="记录临时农事" width="520px"><el-form label-position="top"><el-form-item label="地块"><el-select v-model="tempForm.plotId" style="width:100%"><el-option v-for="plot in store.accessiblePlots" :key="plot.plotId" :label="plot.plotName" :value="plot.plotId" /></el-select></el-form-item><el-form-item label="任务名称"><el-input v-model="tempForm.taskName" /></el-form-item><el-form-item label="任务类型"><el-select v-model="tempForm.taskType" style="width:100%"><el-option label="巡园检查" value="PATROL" /><el-option label="灌溉" value="IRRIGATION" /><el-option label="施肥" value="FERTILIZATION" /><el-option label="整形修剪" value="PRUNING" /><el-option label="病虫害防治" value="PEST_CONTROL" /><el-option label="其他农事" value="OTHER" /></el-select></el-form-item><el-form-item label="日期"><el-date-picker v-model="tempForm.plannedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item><el-form-item label="备注"><el-input v-model="tempForm.taskNote" type="textarea" :rows="3" /></el-form-item></el-form><template #footer><el-button @click="temporaryVisible=false">取消</el-button><el-button type="primary" @click="saveTemporary">保存</el-button></template></el-dialog>
+    <el-dialog v-model="temporaryVisible" title="记录临时农事" width="520px"><el-form label-position="top"><el-form-item label="地块"><el-select v-model="tempForm.plotId" style="width:100%"><el-option v-for="plot in store.accessiblePlots" :key="plot.plotId" :label="plot.plotName" :value="plot.plotId" /></el-select></el-form-item><el-form-item label="任务名称"><el-input v-model="tempForm.taskName" /></el-form-item><el-form-item label="任务类型"><el-select v-model="tempForm.taskType" style="width:100%"><el-option v-for="item in FARM_TASK_TYPES" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item label="日期"><el-date-picker v-model="tempForm.plannedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item><el-form-item label="备注"><el-input v-model="tempForm.taskNote" type="textarea" :rows="3" /></el-form-item></el-form><template #footer><el-button @click="temporaryVisible=false">取消</el-button><el-button type="primary" @click="saveTemporary">保存</el-button></template></el-dialog>
     <el-dialog v-model="completeVisible" title="完成农事任务" width="480px"><p class="complete-task-name">{{ currentTask?.taskName }}</p><el-input v-model="completeForm.completionNote" type="textarea" :rows="4" placeholder="填写完成情况、用量或现场说明" /><template #footer><el-button @click="completeVisible=false">取消</el-button><el-button type="primary" @click="complete">确认完成</el-button></template></el-dialog>
   </div>
 </template>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from backend.app.services.stage_service import resolve_stage, tree_age_years
+from backend.app.services.stage_service import resolve_stage, tree_age_years, validate_template_content
 
 
 TEMPLATE = {
@@ -45,6 +45,18 @@ class StageServiceTest(unittest.TestCase):
         ]}
         self.assertEqual(resolve_stage(template, today=date(2026, 2, 10))["stageCode"], "SPRING")
         self.assertEqual(resolve_stage(template, today=date(2026, 2, 25))["stageCode"], "LATE_HARVEST")
+
+    def test_accepts_v1_1_moisture_reference_and_repeating_tasks(self) -> None:
+        template = {"stages": [{
+            "code": "EXPANSION", "name": "果实膨大期",
+            "start": {"month": 7, "period": "EARLY"}, "end": {"month": 10, "period": "MID"},
+            "priority": 80, "canOverlap": False, "managementFocus": ["稳定水分"],
+            "soilMoistureReference": {"type": "QUALITATIVE", "irrigationTriggerReference": {"below": 60, "unit": "%"}},
+            "tasks": [{"type": "IRRIGATION_CHECK", "name": "墒情检查", "offsetDays": 0, "repeatDays": 7, "repeatUntilStageEnd": True}],
+        }]}
+        content = validate_template_content(template)
+        self.assertEqual(content["stages"][0]["startPeriod"], "EARLY")
+        self.assertEqual(content["stages"][0]["endPeriod"], "MID")
 
 
 if __name__ == "__main__":

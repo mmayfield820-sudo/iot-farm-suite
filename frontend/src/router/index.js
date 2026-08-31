@@ -11,14 +11,14 @@ const routes = [
     path: '/farmer', component: () => import('@/layout/FarmerLayout.vue'), meta: { role: 'farmer' },
     redirect: '/farmer/dashboard',
     children: [
-      { path: 'dashboard', name: 'farmer-dashboard', component: () => import('@/views/farmer/Dashboard.vue'), meta: { title: '农场首页' } },
+      { path: 'dashboard', name: 'farmer-dashboard', component: () => import('@/views/farmer/Dashboard.vue'), meta: { title: '我的果园' } },
       { path: 'management', name: 'farmer-management', component: () => import('@/views/farmer/PlotManagement.vue'), meta: { title: '地块管理' } },
       { path: 'plan', name: 'farmer-plan', component: () => import('@/views/farmer/Plan.vue'), meta: { title: '管理计划' } },
       { path: 'tasks', redirect: '/farmer/calendar' },
       { path: 'calendar', name: 'farmer-calendar', component: () => import('@/views/farmer/Calendar.vue'), meta: { title: '农事日历' } },
       { path: 'irrigation', name: 'farmer-irrigation', component: () => import('@/views/farmer/Irrigation.vue'), meta: { title: '智慧灌溉' } },
       { path: 'alarm', name: 'farmer-alarm', component: () => import('@/views/farmer/Alarm.vue'), meta: { title: '告警中心' } },
-      { path: 'ai', name: 'farmer-ai', component: () => import('@/views/farmer/AiAssistant.vue'), meta: { title: 'AI 农业助手' } },
+      { path: 'ai', name: 'farmer-ai', component: () => import('@/views/farmer/AiAssistant.vue'), meta: { title: '小橙子·农事助手' } },
     ],
   },
   {

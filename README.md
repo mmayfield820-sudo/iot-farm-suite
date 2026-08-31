@@ -4,6 +4,7 @@
 
 ## 目录入口
 
+- `前端交接README.md`：面向前端接手成员的目录说明、从零启动、配置修改和生产部署指南
 - `docs/`：需求、架构和部署资料
 - `contracts/`：前后端和设备端共同遵守的接口契约
 - `frontend/`：网页前端
@@ -23,7 +24,7 @@
 
 接口有变化时，先修改 `contracts/` 并通知团队，再修改代码。详细规则见 `CONTRIBUTING.md`。
 
-## 二期迭代能力（阶段 0～9）
+## 当前交付能力
 
 - 种植档案：脐橙品种模板、定植日期、土壤类型、树龄和当前生长阶段，支持有原因的人工阶段修正。
 - 管理计划：按模板预览、生成和重新生成计划；旧的未完成任务会标记为 `SUPERSEDED`，已完成历史不会丢失。
@@ -49,11 +50,12 @@
 
 默认端口为 MySQL `3306`、MQTT `2883`、Ollama `11434`、业务后端 `8080`、AI 服务 `8000`、前端 `5173`。所有服务端时间写入 UTC，前端统一显示北京时间。
 
-## 数据库升级
+## 数据库初始化
 
-- 全新环境依次执行 `database/schema/001_schema.sql` 与 `database/seed/001_demo_data.sql`。
-- 一期已有库按 `database/migrations/README.md` 的编号顺序执行迁移，不能通过删除数据库代替升级。
-- 当前二期迁移截至 `008_phase2_seed_template_tasks.sql`。
+- 当前交付版数据库已合并历史迁移结果，不再携带旧版本迁移脚本。
+- 全新环境依次执行 `database/schema/001_schema.sql`、`database/schema/002_reference_data.sql` 与 `database/seed/001_demo_data.sql`。
+- 初始化脚本仅用于空数据库；已有数据需要保留时，请先备份并为新的结构变化单独编写迁移方案。
+- 数据库目录、演示账号和恢复方式详见 `database/README.md`。
 
 ## 验证
 

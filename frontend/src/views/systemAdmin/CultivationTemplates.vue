@@ -9,7 +9,7 @@ const dialogVisible = ref(false)
 const editingId = ref('')
 const form = reactive({ templateCode: '', templateName: '', varietyName: '', region: '重庆市奉节县', version: 1, templateStatus: 'ACTIVE', templateContentText: '' })
 
-const emptyContent = () => JSON.stringify({ crop: '脐橙', region: '重庆市奉节县', treeClass: 'BEARING_TREE', stages: [{ code: 'SPRING_GROWTH', name: '萌芽与春季管理期', startMonth: 2, endMonth: 3, managementFocus: [], tasks: [] }] }, null, 2)
+const emptyContent = () => JSON.stringify({ crop: '脐橙', region: '重庆市奉节县', variety: '', treeClass: 'BEARING_TREE', maturityClass: '', periodDefinition: { EARLY: '1-10日', MID: '11-20日', LATE: '21日至月末' }, stageModelVersion: 'V1.1', moistureReferenceVersion: 'V1.1', moistureReferencePolicy: '定性农艺参考，不直接替代地块传感器阈值', stages: [{ code: 'SPRING_GROWTH', name: '萌芽与春季管理期', start: { month: 2, period: 'EARLY' }, end: { month: 3, period: 'LATE' }, priority: 50, canOverlap: false, managementFocus: [], soilMoistureReference: { type: 'QUALITATIVE', basis: 'FIELD_CAPACITY_RATIO', referenceText: '', irrigationTriggerReference: { below: 60, unit: '%', meaning: '' }, note: '' }, tasks: [] }] }, null, 2)
 
 async function load() {
   loading.value = true
