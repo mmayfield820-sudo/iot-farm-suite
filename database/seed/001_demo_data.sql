@@ -4,10 +4,10 @@ SET NAMES utf8mb4;
 
 START TRANSACTION;
 
-INSERT INTO users (username, real_name, password_hash, email, phone, user_status) VALUES
-  ('demo_admin', '张园长', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'orchard-admin@example.invalid', '13800000001', 'active'),
-  ('demo_farmer', '李果农', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'orange-farmer@example.invalid', '13800000002', 'active'),
-  ('demo_system', '王管理员', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'system-admin@example.invalid', '13800000003', 'active');
+INSERT INTO users (username, real_name, password_hash, email, phone, employee_no, activation_status, activated_at, user_status) VALUES
+  ('demo_admin', '张园长', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'orchard-admin@example.invalid', '13800000001', 'DEMO-ADMIN-001', 'ACTIVATED', UTC_TIMESTAMP(6), 'active'),
+  ('demo_farmer', '李果农', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'orange-farmer@example.invalid', '13800000002', 'DEMO-FARMER-001', 'ACTIVATED', UTC_TIMESTAMP(6), 'active'),
+  ('demo_system', '王管理员', '$2b$12$.qlye5L1Opp5Ng9ydn36nOzw8bhmQ2J8AHdXmmPv4KLWCRvC2Bxh6', 'system-admin@example.invalid', '13800000003', 'DEMO-SYSTEM-001', 'ACTIVATED', UTC_TIMESTAMP(6), 'active');
 
 SET @admin_user_id = (SELECT user_id FROM users WHERE username = 'demo_admin');
 SET @farmer_user_id = (SELECT user_id FROM users WHERE username = 'demo_farmer');
@@ -20,18 +20,52 @@ SELECT @farmer_user_id, role_id, 'active' FROM roles WHERE role_code = 'farmer';
 INSERT INTO user_role_rel (user_id, role_id, status)
 SELECT @system_user_id, role_id, 'active' FROM roles WHERE role_code = 'system_admin';
 
-INSERT INTO farm (admin_user_id, farm_name, city, address) VALUES
-  (@admin_user_id, '奉节县朱衣橙园', '重庆市奉节县', '重庆市奉节县朱衣镇砚瓦村'),
-  (@admin_user_id, '奉节县安坪橙园', '重庆市奉节县', '重庆市奉节县安坪镇三沱村');
+INSERT INTO cultivation_template (
+  template_code, template_name, variety_name, region, version, template_content, template_status, created_by
+) VALUES (
+  'FJ_NAV_GENERIC',
+  '奉节脐橙成年结果树通用管理模板',
+  '奉节脐橙',
+  '重庆市奉节县',
+  1,
+  JSON_OBJECT(
+    'crop', '脐橙',
+    'region', '重庆市奉节县',
+    'treeClass', 'BEARING_TREE',
+    'stages', JSON_ARRAY(
+      JSON_OBJECT('code','SPRING_GROWTH','name','萌芽与春季管理期','startMonth',2,'endMonth',3,'managementFocus',JSON_ARRAY('春梢管理','整形修剪'),'tasks',JSON_ARRAY(JSON_OBJECT('type','PRUNING','name','春季整形修剪','offsetDays',7),JSON_OBJECT('type','PATROL','name','春梢生长巡查','offsetDays',3,'repeatDays',14,'repeatUntilStageEnd',TRUE))),
+      JSON_OBJECT('code','FLOWERING_FRUIT_SET','name','开花坐果期','startMonth',4,'endMonth',5,'managementFocus',JSON_ARRAY('保花保果'),'tasks',JSON_ARRAY(JSON_OBJECT('type','PATROL','name','花期与坐果巡查','offsetDays',2,'repeatDays',7,'repeatUntilStageEnd',TRUE))),
+      JSON_OBJECT('code','YOUNG_FRUIT','name','幼果与夏季管理期','startMonth',6,'endMonth',6,'managementFocus',JSON_ARRAY('病虫害防控'),'tasks',JSON_ARRAY(JSON_OBJECT('type','PEST_CONTROL','name','幼果期病虫害检查','offsetDays',3,'repeatDays',10,'repeatUntilStageEnd',TRUE))),
+      JSON_OBJECT('code','FRUIT_EXPANSION','name','果实膨大与秋梢期','startMonth',7,'endMonth',9,'managementFocus',JSON_ARRAY('墒情管理','秋梢管理'),'agronomicMoistureTarget',JSON_OBJECT('basis','FIELD_CAPACITY_RATIO','min',70,'max',80,'irrigateBelow',50),'tasks',JSON_ARRAY(JSON_OBJECT('type','MOISTURE_CHECK','name','果实膨大期墒情检查','offsetDays',0,'repeatDays',7,'repeatUntilStageEnd',TRUE),JSON_OBJECT('type','FERTILIZATION','name','夏季施肥检查','offsetDays',10))),
+      JSON_OBJECT('code','MATURITY','name','转色成熟期','startMonth',10,'endMonth',11,'managementFocus',JSON_ARRAY('控水提质','成熟度检查'),'agronomicMoistureTarget',JSON_OBJECT('basis','FIELD_CAPACITY_RATIO','min',30,'max',40),'tasks',JSON_ARRAY(JSON_OBJECT('type','PATROL','name','果实成熟度抽查','offsetDays',3,'repeatDays',10,'repeatUntilStageEnd',TRUE))),
+      JSON_OBJECT('code','HARVEST_POSTHARVEST','name','采收及采后管理期','startMonth',11,'endMonth',2,'managementFocus',JSON_ARRAY('分批采收','采后清园'),'tasks',JSON_ARRAY(JSON_OBJECT('type','HARVEST','name','采收准备检查','offsetDays',7),JSON_OBJECT('type','ORCHARD_CLEANUP','name','采后清园巡查','offsetDays',20,'repeatDays',30,'repeatUntilStageEnd',TRUE)))
+    )
+  ),
+  'ACTIVE',
+  @system_user_id
+);
+
+SET @template_id = (SELECT template_id FROM cultivation_template WHERE template_code = 'FJ_NAV_GENERIC' AND version = 1);
+SET @template_72_id = COALESCE((SELECT template_id FROM cultivation_template WHERE template_code = 'FJ_NAV_72_1' AND version = 1), @template_id);
+SET @template_91_id = COALESCE((SELECT template_id FROM cultivation_template WHERE template_code = 'FJ_NAV_91' AND version = 1), @template_id);
+SET @template_95_id = COALESCE((SELECT template_id FROM cultivation_template WHERE template_code = 'FJ_NAV_95_1' AND version = 1), @template_id);
+SET @template_hongcui_id = COALESCE((SELECT template_id FROM cultivation_template WHERE template_code = 'FJ_HONGCUI_2' AND version = 1), @template_id);
+
+INSERT INTO farm (admin_user_id, farm_name, province, city, address, area_mu, farm_status, remark) VALUES
+  (@admin_user_id, '奉节县朱衣橙园', '重庆市', '重庆市奉节县', '重庆市奉节县朱衣镇砚瓦村', 126.50, 'ACTIVE', '二期演示橙园'),
+  (@admin_user_id, '奉节县安坪橙园', '重庆市', '重庆市奉节县', '重庆市奉节县安坪镇三沱村', 84.20, 'ACTIVE', '二期演示橙园');
 
 SET @farm1_id = (SELECT farm_id FROM farm WHERE farm_name = '奉节县朱衣橙园');
 SET @farm2_id = (SELECT farm_id FROM farm WHERE farm_name = '奉节县安坪橙园');
 
-INSERT INTO plot (farmer_user_id, farm_id, plot_name, location, crop_name, description) VALUES
-  (@farmer_user_id, @farm1_id, '朱衣一号果园', '朱衣镇东坡 A 区', '奉园72-1脐橙', '果实膨大期'),
-  (@farmer_user_id, @farm1_id, '朱衣二号果园', '朱衣镇河谷 B 区', '奉园91脐橙', '果实转色期'),
-  (@farmer_user_id, @farm1_id, '朱衣晚熟果园', '朱衣镇南坡 C 区', '奉节晚橙', '秋梢生长期'),
-  (@farmer_user_id, @farm2_id, '安坪红翠果园', '安坪镇临江 D 区', '红翠2号', '幼树整形期');
+INSERT INTO plot (
+  farmer_user_id, farm_id, plot_code, plot_name, location, crop_name, description,
+  area_mu, irrigation_method, plot_status, template_id, planting_date, soil_type, planting_remark
+) VALUES
+  (@farmer_user_id, @farm1_id, 'P001', '朱衣一号果园', '朱衣镇东坡 A 区', '奉园72-1脐橙', '果实膨大期', 31.20, '滴灌', 'ACTIVE', @template_72_id, '2018-03-15', '紫色土', '成年结果树'),
+  (@farmer_user_id, @farm1_id, 'P002', '朱衣二号果园', '朱衣镇河谷 B 区', '奉园91脐橙', '果实转色期', 28.80, '滴灌', 'ACTIVE', @template_91_id, '2019-03-20', '冲积土', '成年结果树'),
+  (@farmer_user_id, @farm1_id, 'P003', '朱衣晚熟果园', '朱衣镇南坡 C 区', '奉节晚橙95-1', '秋梢生长期', 34.50, '微喷灌', 'ACTIVE', @template_95_id, '2017-03-12', '紫色土', '成年结果树'),
+  (@farmer_user_id, @farm2_id, 'P004', '安坪红翠果园', '安坪镇临江 D 区', '红翠2号', '幼树整形期', 22.60, '滴灌', 'ACTIVE', @template_hongcui_id, '2024-03-18', '砂壤土', '幼树示范区');
 
 SET @plot1_id = (SELECT plot_id FROM plot WHERE farm_id = @farm1_id AND plot_name = '朱衣一号果园');
 SET @plot2_id = (SELECT plot_id FROM plot WHERE farm_id = @farm1_id AND plot_name = '朱衣二号果园');

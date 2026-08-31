@@ -30,6 +30,8 @@ onMounted(async () => {
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
 const menu = [
   { label: '农场首页', path: '/farmer/dashboard', icon: 'House' }, { label: '地块管理', path: '/farmer/management', icon: 'DataAnalysis' },
+  { label: '管理计划', path: '/farmer/plan', icon: 'List' },
+  { label: '农事日历', path: '/farmer/calendar', icon: 'Calendar' },
   { label: '智慧灌溉', path: '/farmer/irrigation', icon: 'Drizzling' },
   { label: '告警中心', path: '/farmer/alarm', icon: 'Warning' },
   { label: 'AI 农业助手', path: '/farmer/ai', icon: 'ChatDotRound' },

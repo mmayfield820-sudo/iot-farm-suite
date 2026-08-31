@@ -4,15 +4,18 @@ import json
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
-from uuid import UUID
+from urllib.request import Request as UrlRequest, urlopen
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import bcrypt
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -20,6 +23,19 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from .auth import authenticate, create_access_token, current_user
 from .db import check_database, engine, parse_id, utc_isoformat, utc_naive
 from .mqtt import MqttService
+from .routers.planting import router as planting_router
+from .routers.irrigation_advice import router as irrigation_advice_router
+from .routers.plot_timeline import router as plot_timeline_router
+from .routers.plan_change_requests import router as plan_change_requests_router
+from .routers.plans import router as plans_router
+from .routers.tasks import router as tasks_router
+from .routers.templates import router as templates_router
+from .routers.admin_archives import router as admin_archives_router
+from .routers.employees import router as employees_router
+from .services.weather_service import weather_service
+from .services.stage_service import resolve_stage
+from .services.irrigation_advice_service import build_irrigation_advice
+from .services.audit_service import write_audit_log
 
 
 mqtt_service = MqttService()
@@ -34,10 +50,60 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Smart Farm API",
-    version="0.1.0",
+    version="0.2.0",
     description="Smart agriculture backend service",
     lifespan=lifespan,
 )
+
+
+ERROR_MESSAGES = {
+    "UNAUTHORIZED": "登录状态无效，请重新登录",
+    "ACCOUNT_NOT_ACTIVATED": "账号尚未激活，请先完成员工激活",
+    "FORBIDDEN": "当前账号无权执行此操作",
+    "PLOT_NOT_FOUND": "地块不存在",
+    "FARM_NOT_FOUND": "橙园不存在",
+    "ALERT_NOT_FOUND": "提醒不存在",
+    "PLAN_TASK_STAGE_NOT_IN_TEMPLATE": "计划任务阶段不属于当前地块绑定的品种模板",
+    "IMPORT_CONTAINS_INVALID_ROWS": "导入内容存在错误行，请修正后重试",
+    "ACTIVATION_VERIFICATION_FAILED": "工号、手机号或激活码不正确",
+    "ACTIVATION_FIELDS_REQUIRED": "请输入工号或手机号以及激活凭证",
+    "ACTIVATION_TOKEN_INVALID": "激活验证已失效，请重新验证",
+    "PHONE_ALREADY_EXISTS": "该手机号已被其他账号使用",
+}
+
+
+@app.middleware("http")
+async def attach_request_id(request: FastAPIRequest, call_next):
+    request.state.request_id = request.headers.get("X-Request-ID") or f"req-{uuid4().hex[:16]}"
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_error(request: FastAPIRequest, error: HTTPException) -> JSONResponse:
+    code = str(error.detail) if isinstance(error.detail, str) else "HTTP_ERROR"
+    message = ERROR_MESSAGES.get(code, code.replace("_", " ") if code.isupper() else str(error.detail))
+    return JSONResponse(status_code=error.status_code, content={"code": code, "message": message, "requestId": request.state.request_id}, headers=error.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: FastAPIRequest, error: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"code": "VALIDATION_ERROR", "message": "请求参数校验失败", "requestId": request.state.request_id, "errors": error.errors()})
+
+
+@app.exception_handler(Exception)
+async def internal_error(request: FastAPIRequest, _error: Exception) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR", "message": "服务内部错误，请稍后重试", "requestId": request.state.request_id})
+app.include_router(templates_router)
+app.include_router(planting_router)
+app.include_router(irrigation_advice_router)
+app.include_router(plot_timeline_router)
+app.include_router(plan_change_requests_router)
+app.include_router(plans_router)
+app.include_router(tasks_router)
+app.include_router(admin_archives_router)
+app.include_router(employees_router)
 
 
 class LoginRequest(BaseModel):
@@ -268,12 +334,14 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
         plot = connection.execute(
             text(
                 """
-                SELECT p.plot_name, p.crop_name, p.location,
+                SELECT p.plot_name, p.crop_name, p.location, p.planting_date,
+                       p.stage_override_code, ct.template_content,
                        f.city AS farm_city, f.address AS farm_address,
-                       t.soil_moisture_threshold
+                       t.soil_moisture_threshold, t.irrigation_length
                 FROM plot AS p
                 JOIN farm AS f ON f.farm_id = p.farm_id
                 LEFT JOIN threshold_config AS t ON t.plot_id = p.plot_id
+                LEFT JOIN cultivation_template AS ct ON ct.template_id = p.template_id
                 WHERE p.plot_id = :plot_id
                 """
             ),
@@ -294,7 +362,7 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
         irrigation_device = connection.execute(
             text(
                 """
-                SELECT status FROM device
+                SELECT status, last_heartbeat FROM device
                 WHERE plot_id = :plot_id AND device_type = 'irrigation'
                 LIMIT 1
                 """
@@ -313,6 +381,14 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
             ),
             {"plot_id": plot_id},
         ).mappings().first()
+        today_tasks = connection.execute(
+            text("SELECT task_id,task_name,task_type,task_status,planned_date FROM farm_task WHERE plot_id=:plot_id AND planned_date=UTC_DATE() AND task_status IN ('PENDING','OVERDUE') ORDER BY task_id"),
+            {"plot_id": plot_id},
+        ).mappings().all()
+        pending_reminders = connection.execute(
+            text("SELECT request_id,request_reason,proposed_plan_batch_no FROM plan_change_request WHERE plot_id=:plot_id AND request_status='PENDING_REVIEW' ORDER BY created_at DESC"),
+            {"plot_id": plot_id},
+        ).mappings().all()
 
     context: dict[str, Any] = {
         "plotName": plot["plot_name"],
@@ -326,10 +402,13 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
             else None
         ),
         "irrigationDeviceOnline": (
-            irrigation_device["status"] == "online"
+            irrigation_device["status"] == "online" and irrigation_device["last_heartbeat"] is not None
+            and irrigation_device["last_heartbeat"] >= datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=int(os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "90")))
             if irrigation_device is not None
             else False
         ),
+        "todayTasks": [{"taskId": f"TASK{row['task_id']:03d}", "taskName": row["task_name"], "taskType": row["task_type"], "status": row["task_status"]} for row in today_tasks],
+        "pendingReminders": [{"requestId": f"PCR{row['request_id']:06d}", "description": row["request_reason"], "proposedPlanBatchNo": row["proposed_plan_batch_no"]} for row in pending_reminders],
     }
     if report is not None:
         context.update(
@@ -341,6 +420,21 @@ def assistant_plot_context(plot_id: int) -> dict[str, Any]:
         )
     if last_command is not None and last_command["status"] == "success":
         context["irrigationState"] = last_command["action_type"]
+    if plot["template_content"] and plot["planting_date"]:
+        template_content = json.loads(plot["template_content"]) if isinstance(plot["template_content"], str) else plot["template_content"]
+        context["currentStage"] = resolve_stage(template_content, today=datetime.now(ZoneInfo("Asia/Shanghai")).date(), planting_date=plot["planting_date"], override_code=plot["stage_override_code"])
+    location = plot["location"] or plot["farm_address"] or plot["farm_city"] or "重庆市奉节县"
+    weather = weather_service.get_forecast(plot_id, location)
+    context["weather"] = weather
+    context["irrigationAdvice"] = build_irrigation_advice(
+        current_moisture=context.get("soilMoisture"),
+        threshold=context.get("soilMoistureThreshold"),
+        suggested_duration=int(plot["irrigation_length"] or 20),
+        stage_code=(context.get("currentStage") or {}).get("stageCode"),
+        device_online=bool(context["irrigationDeviceOnline"]),
+        weather=weather,
+        latest_irrigation_at=None,
+    )
     return context
 
 
@@ -425,6 +519,7 @@ def alert_payload(row: Any) -> dict[str, Any]:
             if value_of(row, "device_id") is not None
             else None
         ),
+        "deviceNo": value_of(row, "device_code"),
         "type": value_of(row, "alert_type"),
         "description": value_of(row, "alert_description"),
         "value": float(value_of(row, "alert_value")) if value_of(row, "alert_value") is not None else None,
@@ -602,7 +697,8 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     user = connection.execute(
         text(
             """
-            SELECT user_id, username, real_name, email, phone, user_status
+            SELECT user_id, username, real_name, email, phone, employee_no,
+                   activation_status, activated_at, user_status
             FROM users WHERE user_id = :user_id
             """
         ),
@@ -646,6 +742,9 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
         "displayName": user["real_name"] or user["username"],
         "email": user["email"],
         "phone": user["phone"],
+        "employeeNo": user["employee_no"],
+        "activationStatus": user["activation_status"],
+        "activatedAt": iso(user["activated_at"]),
         "active": user["user_status"] == "active",
         "roles": [FRONTEND_ROLE_CODES[role] for role in roles],
         "roleCodes": roles,
@@ -821,6 +920,8 @@ def registration_resources() -> dict[str, list[dict[str, Any]]]:
 
 @app.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
 def register(request: RegistrationRequest) -> dict[str, Any]:
+    if os.getenv("PUBLIC_REGISTRATION_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=403, detail="PUBLIC_REGISTRATION_DISABLED_USE_EMPLOYEE_ACTIVATION")
     role_codes = canonical_role_codes(request.role_codes)
     if "system_admin" in role_codes:
         raise HTTPException(status_code=400, detail="SYSTEM_ADMIN_REGISTRATION_NOT_ALLOWED")
@@ -1282,6 +1383,7 @@ def create_device(
     request: DeviceCreateRequest,
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
+    ensure_system_admin(user)
     device_no = request.deviceNo.strip()
     if not device_no:
         raise HTTPException(status_code=400, detail="deviceNo must not be blank")
@@ -1627,6 +1729,10 @@ def update_irrigation_settings(
     numeric_plot_id = parse_resource_id(plot_id, "P")
     plot_scope(numeric_plot_id, user)
     with engine.begin() as connection:
+        before = connection.execute(
+            text("SELECT soil_moisture_threshold, irrigation_length, irrigation_interval FROM threshold_config WHERE plot_id=:plot_id"),
+            {"plot_id": numeric_plot_id},
+        ).mappings().first()
         connection.execute(
             text(
                 """
@@ -1681,30 +1787,35 @@ def weather_forecast(
     plot_id: str = Query(alias="plotId"),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    """Proxy weather data for an authorized plot without exposing provider credentials."""
+    """Return cached mock/API weather data for an authorized plot."""
     numeric_plot_id = parse_resource_id(plot_id, "P")
     plot_scope(numeric_plot_id, user)
-    service_url = os.getenv("WEATHER_SERVICE_URL", "").rstrip("/")
-    if not service_url:
-        raise HTTPException(status_code=503, detail="WEATHER_SERVICE_UNAVAILABLE")
-
-    separator = "&" if "?" in service_url else "?"
-    target = f"{service_url}{separator}{urlencode({'plotId': business_id('P', numeric_plot_id)})}"
-    try:
-        with urlopen(target, timeout=float(os.getenv("WEATHER_SERVICE_TIMEOUT_SECONDS", "10"))) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
-        raise HTTPException(status_code=503, detail="WEATHER_SERVICE_UNAVAILABLE") from error
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="WEATHER_SERVICE_INVALID_RESPONSE")
-    current = result.get("current", result)
-    if not isinstance(current, dict):
-        raise HTTPException(status_code=502, detail="WEATHER_SERVICE_INVALID_RESPONSE")
-    return {
-        "current": current,
-        "hourly": result.get("hourly", []),
-        "daily": result.get("daily", []),
-    }
+    with engine.connect() as connection:
+        row = connection.execute(
+            text("SELECT p.location, f.city, f.address FROM plot p JOIN farm f ON f.farm_id=p.farm_id WHERE p.plot_id=:plot_id"),
+            {"plot_id": numeric_plot_id},
+        ).mappings().one()
+        after = {
+            "soilMoistureThreshold": float(value_of(row, "soil_moisture_threshold")),
+            "irrigationDuration": value_of(row, "irrigation_length"),
+            "irrigationInterval": value_of(row, "irrigation_interval"),
+        }
+        write_audit_log(
+            connection,
+            user=user,
+            action_type="UPDATE",
+            resource_type="THRESHOLD_CONFIG",
+            resource_id=business_id("P", numeric_plot_id),
+            description=(
+                f"调整灌溉配置：湿度阈值 {after['soilMoistureThreshold']:g}%，"
+                f"单次灌溉 {after['irrigationDuration']} 分钟，"
+                f"自动灌溉间隔 {after['irrigationInterval']} 分钟"
+            ),
+            before_data=dict(before) if before is not None else None,
+            after_data=after,
+        )
+    location = row["location"] or row["address"] or row["city"] or "重庆市奉节县"
+    return weather_service.get_forecast(numeric_plot_id, location)
 
 
 @app.get("/api/alerts")
@@ -1744,12 +1855,13 @@ def list_alerts(
         rows = connection.execute(
             text(
                 f"""
-                SELECT a.alert_id, a.plot_id, a.device_id, a.alert_type,
+                SELECT a.alert_id, a.plot_id, a.device_id, d.device_code, a.alert_type,
                        a.alert_description, a.alert_value, a.alert_threshold,
                        a.alert_status, a.alert_datetime, a.handled_at
                 FROM alert AS a
                 JOIN plot AS p ON p.plot_id = a.plot_id
                 JOIN farm AS f ON f.farm_id = p.farm_id
+                LEFT JOIN device AS d ON d.device_id = a.device_id
                 {where}
                 ORDER BY a.alert_datetime DESC, a.alert_id DESC
                 """
@@ -1791,10 +1903,13 @@ def acknowledge_alert(
         row = connection.execute(
             text(
                 """
-                SELECT alert_id, plot_id, device_id, alert_type, alert_description,
-                       alert_value, alert_threshold, alert_status, alert_datetime,
-                       handled_at
-                FROM alert WHERE alert_id = :alert_id
+                SELECT a.alert_id, a.plot_id, a.device_id, d.device_code,
+                       a.alert_type, a.alert_description, a.alert_value,
+                       a.alert_threshold, a.alert_status, a.alert_datetime,
+                       a.handled_at
+                FROM alert AS a
+                LEFT JOIN device AS d ON d.device_id = a.device_id
+                WHERE a.alert_id = :alert_id
                 """
             ),
             {"alert_id": numeric_alert_id},
@@ -1945,7 +2060,7 @@ def send_chat_message(
     target = f"{service_url}/chat/sessions/{quote(session_id, safe='')}/messages"
     try:
         with urlopen(
-            Request(target, data=payload, headers={"Content-Type": "application/json"}),
+            UrlRequest(target, data=payload, headers={"Content-Type": "application/json"}),
             timeout=float(os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "120")),
         ) as response:
             result = json.loads(response.read().decode("utf-8"))

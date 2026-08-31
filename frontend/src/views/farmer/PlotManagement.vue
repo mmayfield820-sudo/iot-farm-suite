@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { useFarmerStore } from '@/stores/farmer'
 import Monitor from './Monitor.vue'
 import History from './History.vue'
+import PlantingInfo from './PlantingInfo.vue'
+import PlotTimeline from '@/components/PlotTimeline.vue'
 
 const route = useRoute()
 const store = useFarmerStore()
@@ -34,6 +36,8 @@ watch(
       </div>
     </div>
 
+    <PlotTimeline />
+    <PlantingInfo />
     <Monitor />
     <History />
   </div>

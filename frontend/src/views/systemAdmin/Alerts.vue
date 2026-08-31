@@ -8,7 +8,7 @@ const store = usePlatformStore()
 const filters = reactive({ farmId: '', plotNo: '', type: '', status: '', range: [] })
 const detail = ref(null)
 const typeOptions = ['湿度过低', '设备离线', '设备故障', '灌溉失败']
-const statusOptions = ['未处理', '处理中', '已处理', '已忽略']
+const statusOptions = ['未处理', '处理中', '已处理']
 
 const availablePlots = computed(() => store.plots.filter((plot) => !filters.farmId || plot.farmId === filters.farmId))
 const rows = computed(() => store.alerts.filter((alert) => {

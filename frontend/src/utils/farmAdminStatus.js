@@ -32,7 +32,11 @@ export const ALERT_STATUS_CONFIG = {
   '未处理': { type: 'danger' },
   '处理中': { type: 'warning' },
   '已处理': { type: 'success' },
-  '已忽略': { type: 'info' }
+  '已忽略': { type: 'info' },
+  '待生成新计划': { type: 'info' },
+  '待管理员确认': { type: 'warning' },
+  '已确认新计划': { type: 'success' },
+  '已退回原状态': { type: 'warning' }
 }
 
 export const IRRIGATION_STATUS = {

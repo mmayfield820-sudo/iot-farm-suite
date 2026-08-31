@@ -70,7 +70,7 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username, password_hash
+                SELECT user_id, username, password_hash, activation_status
                 FROM users
                 WHERE username = :username AND user_status = 'active'
                 """
@@ -80,6 +80,11 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
 
         if user is None or not verify_password(password, user["password_hash"]):
             return None
+
+        # A pre-created employee account may already have a temporary password,
+        # but it must not be usable until the employee finishes activation.
+        if user["activation_status"] != "ACTIVATED":
+            raise HTTPException(status_code=403, detail="ACCOUNT_NOT_ACTIVATED")
 
         return {
             "user_id": user["user_id"],
@@ -117,7 +122,9 @@ def current_user(
                 """
                 SELECT user_id, username
                 FROM users
-                WHERE user_id = :user_id AND user_status = 'active'
+                WHERE user_id = :user_id
+                  AND user_status = 'active'
+                  AND activation_status = 'ACTIVATED'
                 """
             ),
             {"user_id": user_id},

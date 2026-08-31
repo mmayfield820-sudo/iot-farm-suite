@@ -200,8 +200,6 @@ async function downloadTemplate() {
     <div class="page-head">
       <div><h1 class="page-title">设备管理</h1><p class="page-subtitle">录入设备并维护数据库中的设备编号、类型、所属地块和最后心跳。</p></div>
       <div class="page-actions">
-        <el-button plain @click="openImport"><el-icon><Upload /></el-icon>Excel 批量导入</el-button>
-        <el-button type="primary" @click="add"><el-icon><Plus /></el-icon>录入设备</el-button>
       </div>
     </div>
 

@@ -68,13 +68,14 @@ const devices = computed(() => {
       <TrendChart v-if="trend.times?.length" :data="trend" :height="380" />
       <el-empty v-else description="所选时间范围内暂无监测数据" />
     </section>
-
+    <!--
     <section class="farmer-stat-grid effect-grid">
       <div class="farmer-stat"><div class="stat-symbol blue"><el-icon><Bottom /></el-icon></div><div><label>范围内最低湿度</label><strong>{{ effect.before ?? '-' }}{{ effect.before === null ? '' : '%' }}</strong><small>所选时间范围</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol"><el-icon><Top /></el-icon></div><div><label>最新湿度</label><strong>{{ effect.after ?? '-' }}{{ effect.after === null ? '' : '%' }}</strong><small>{{ effect.increase === null ? '暂无对比数据' : `提升 ${effect.increase} 个百分点` }}</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol orange"><el-icon><Timer /></el-icon></div><div><label>达到目标耗时</label><strong>{{ effect.targetTime }}</strong><small>目标 {{ plot?.threshold }}%</small></div></div>
       <div class="farmer-stat"><div class="stat-symbol"><el-icon><Refresh /></el-icon></div><div><label>近期灌溉次数</label><strong>{{ effect.count }}</strong><small>记录可追溯</small></div></div>
     </section>
+    -->
     <!--
     <section class="content-panel">
       <div class="section-head"><div><h3>灌溉事件记录</h3><p>用于对照灌溉前后的湿度变化</p></div></div>

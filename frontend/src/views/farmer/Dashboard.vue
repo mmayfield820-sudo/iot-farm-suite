@@ -1,11 +1,14 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFarmerStore } from '@/stores/farmer'
 import * as Icons from '@element-plus/icons-vue'
 import TrendChart from '@/components/TrendChart.vue'
 import { orangeCropBackgrounds, orangeCropFallbacks } from '@/utils/cropAssets'
 import FarmWheel from '@/components/FarmWheel.vue'
+import WeatherOverview from '@/components/WeatherOverview.vue'
+import IrrigationAdviceCard from '@/components/IrrigationAdviceCard.vue'
+import { getTodayTasks } from '@/api/farmTask'
 
 const router = useRouter()
 const store = useFarmerStore()
@@ -15,12 +18,9 @@ const plotBackgroundStyle = (cropName) => ({
   '--plot-bg': `url(${cropBackgrounds[cropName] || orangeCropFallbacks[0]})`,
 })
 const plot = computed(() => store.currentPlot)
+const todayTasks = ref([])
 const trend = computed(() => store.getTrend(plot.value?.plotId, '24h'))
 const latestAlerts = computed(() => store.visibleAlerts.filter((item) => item.status === '未处理').slice(0, 3))
-const onlineDeviceCount = computed(() => store.accessiblePlots.reduce((total, item) => {
-  const deviceCount = Object.values(item.devices || {}).filter(Boolean).length
-  return total + (item.onlineDeviceCount ?? (item.deviceOnline ? deviceCount : 0))
-}, 0))
 const activeAlertCount = computed(() => store.visibleAlerts.filter((item) => ['未处理', '处理中'].includes(item.status)).length)
 const todayIrrigationCount = computed(() => {
   const today = new Date().toLocaleDateString('sv-SE')
@@ -28,7 +28,7 @@ const todayIrrigationCount = computed(() => {
 })
 const dashboardStats = computed(() => [
   { label: '地块总数', value: store.accessiblePlots.length, unit: '块', icon: 'Grid', tone: 'green' },
-  { label: '在线设备', value: onlineDeviceCount.value, unit: '台', icon: 'Connection', tone: 'lime' },
+  { label: '今日待办', value: todayTasks.value.length, unit: '项', icon: 'List', tone: 'lime' },
   { label: '当前告警', value: activeAlertCount.value, unit: '条', icon: 'BellFilled', tone: 'orange' },
   { label: '今日灌溉', value: todayIrrigationCount.value, unit: '次', icon: 'Drizzling', tone: 'blue' },
 ])
@@ -47,10 +47,15 @@ function openPlot(plotId) {
   router.push({ path: '/farmer/management', query: { plotId } })
 }
 function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction * 620, behavior: 'smooth' }) }
+onMounted(async () => {
+  try { todayTasks.value = await getTodayTasks() }
+  catch { todayTasks.value = [] }
+})
 </script>
 
 <template>
   <div class="farmer-page dashboard-page">
+    <div class="dashboard-topline">
     <div class="dashboard-motto">
       <span class="motto-copy">顺天时，量地利，则用力少而成功多</span>
       <svg class="motto-sprig" viewBox="0 0 150 54" aria-hidden="true">
@@ -64,6 +69,8 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
         <path class="sprig-leaf gold soft" d="M118 25 C124 18, 132 17, 140 20 C134 27, 126 29, 118 25Z" />
       </svg>
     </div>
+    <WeatherOverview :plot-id="plot?.plotId" compact />
+    </div>
 
     <section class="overview-stat-grid">
       <div v-for="item in dashboardStats" :key="item.label" class="overview-stat">
@@ -71,6 +78,8 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
         <div><label>{{ item.label }}</label><strong>{{ item.value }}<small>{{ item.unit }}</small></strong></div>
       </div>
     </section>
+
+    <IrrigationAdviceCard :plot-id="plot?.plotId" />
 
     <FarmWheel v-if="store.accessiblePlots.length" :plots="store.accessiblePlots" />
   </div>
@@ -83,6 +92,8 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
 </style>
 
 <style scoped>
+.dashboard-topline{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:22px}
+.dashboard-topline .dashboard-motto{margin-bottom:0}
 .motto-copy{color:#8b451b;text-shadow:0 1px 0 rgba(255,255,255,.9),0 3px 10px rgba(139,69,27,.1)}
 .overview-stat{background:#fffdfa;box-shadow:0 8px 24px rgba(112,58,23,.07)}
 .overview-stat-icon.green,.overview-stat-icon.lime{color:#d56c1b;background:#fff0df}
@@ -92,4 +103,8 @@ function scrollPlots(direction) { plotScroller.value?.scrollBy({ left: direction
 .mini-metrics span{background:rgba(62,28,9,.36)}
 .attention-panel{border-color:#efdfd1;background:linear-gradient(145deg,#fffdfa 25%,#fff5ea)}
 .eyebrow,.all-alerts{color:#b3622d}.alert-title strong{color:#59351f}
+</style>
+
+<style scoped>
+@media(max-width:1100px){.dashboard-topline{align-items:flex-start;flex-direction:column}}
 </style>

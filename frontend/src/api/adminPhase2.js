@@ -1,0 +1,15 @@
+import request from './request'
+
+export const getFarmArchives = () => request.get('/admin/farms')
+export const createFarmArchive = (data) => request.post('/admin/farms', data)
+export const updateFarmArchive = (id, data) => request.put(`/admin/farms/${id}`, data)
+export const getPlotArchives = () => request.get('/admin/plots')
+export const createPlotArchive = (data) => request.post('/admin/plots', data)
+export const updatePlotArchive = (id, data) => request.put(`/admin/plots/${id}`, data)
+export const previewEmployeeImport = (rows) => request.post('/admin/users/import/preview', { rows })
+export const confirmEmployeeImport = (rows) => request.post('/admin/users/import/confirm', { rows })
+export const resetActivation = (userId) => request.post(`/admin/users/${userId}/reset-activation`)
+export const verifyActivation = (data) => request.post('/auth/activation/verify', data)
+export const completeActivation = (data) => request.post('/auth/activation/complete', data)
+export const getAuditLogs = (params) => request.get('/admin/audit-logs', { params })
+export const getFarmManagementStats = (farmId) => request.get(`/farms/${farmId}/management-stats`)

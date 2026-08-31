@@ -177,21 +177,25 @@ export function normalizeAlert(row = {}) {
     device_offline: '设备离线',
     device_fault: '设备故障',
     irrigation_failed: '灌溉失败',
+    continuous_rain: '持续降雨',
   }
   const occurTime = firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, '')
   const handledAt = firstDefined(row.handledAt, row.handled_at, '')
+  const rawStatus = firstDefined(row.status, row.alert_status, 'active')
   return {
     ...row,
     alertId: normalizeId(firstDefined(row.alertId, row.alert_id, row.id)),
     plotId: normalizeId(firstDefined(row.plotId, row.plot_id, row.plotNo)),
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
+    deviceNo: firstDefined(row.deviceNo, row.deviceCode, row.device_code, ''),
     typeCode: rawType,
     type: typeMap[rawType] || rawType,
-    reason: firstDefined(row.reason, row.alertDescription, row.alert_description, '暂无告警说明'),
+    reason: firstDefined(row.reason, row.description, row.alertDescription, row.alert_description, '暂无告警说明'),
     value: firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-'),
     threshold: firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-'),
     occurTime: formatDateTime(occurTime, ''),
-    status: statusMap[row.status] || statusMap[row.alert_status] || firstDefined(row.status, row.alert_status, '未处理'),
+    statusCode: rawStatus,
+    status: statusMap[rawStatus] || rawStatus,
     handledBy: normalizeId(firstDefined(row.handledBy, row.handled_by)),
     handledAt: formatDateTime(handledAt, ''),
   }

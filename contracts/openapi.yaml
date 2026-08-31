@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Smart Farm API
-  version: 0.1.0
+  version: 0.2.0
   description: 前端与后端之间的 REST API 契约。实现应与本文件保持一致。
 servers:
   - url: http://localhost:8080/api
@@ -13,6 +13,9 @@ tags:
   - name: Commands
   - name: Alerts
   - name: Irrigation
+  - name: Weather
+  - name: Admin
+  - name: Cultivation
   - name: Chat
 paths:
   /auth/login:
@@ -396,6 +399,196 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Alert' }
+  /cultivation-templates:
+    get:
+      tags: [Cultivation]
+      summary: 查询脐橙管理模板
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 模板列表
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CultivationTemplate' } }
+    post:
+      tags: [Cultivation]
+      summary: 新增脐橙管理模板（系统管理员）
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CultivationTemplateRequest' }
+      responses:
+        '201':
+          description: 模板已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CultivationTemplate' }
+  /cultivation-templates/{templateId}:
+    parameters:
+      - in: path
+        name: templateId
+        required: true
+        schema: { type: string, example: T001 }
+    get:
+      tags: [Cultivation]
+      summary: 查询模板详情
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 模板详情 } }
+    put:
+      tags: [Cultivation]
+      summary: 修改模板（系统管理员）
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CultivationTemplateRequest' }
+      responses: { '200': { description: 模板已更新 } }
+    delete:
+      tags: [Cultivation]
+      summary: 删除未使用模板（系统管理员）
+      security: [{ bearerAuth: [] }]
+      responses: { '204': { description: 模板已删除 }, '409': { description: 模板正在使用 } }
+  /plots/{plotId}/planting:
+    get:
+      tags: [Cultivation]
+      summary: 查询地块种植信息和当前阶段
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses:
+        '200':
+          description: 当前种植信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlotPlanting' }
+    put:
+      tags: [Cultivation]
+      summary: 修改地块种植信息
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlotPlantingRequest' }
+      responses:
+        '200':
+          description: 种植信息已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlotPlanting' }
+  /plots/{plotId}/stage:
+    get:
+      tags: [Cultivation]
+      summary: 查询地块当前生长阶段
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses:
+        '200':
+          description: 当前阶段
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageResult' }
+    put:
+      tags: [Cultivation]
+      summary: 人工修正当前阶段
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StageOverrideRequest' }
+      responses:
+        '200':
+          description: 阶段已修正，并建议重新生成管理计划
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageResult' }
+  /plots/{plotId}/plans/preview:
+    post:
+      tags: [Cultivation]
+      summary: 预览地块管理计划，不写入数据库
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses: { '200': { description: 管理计划预览 } }
+  /plots/{plotId}/plans/generate:
+    post:
+      tags: [Cultivation]
+      summary: 生成或重新生成地块管理计划
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { regenerate: { type: boolean, default: false } } }
+      responses: { '201': { description: 管理计划已写入 farm_task }, '409': { description: 已存在活动计划或种植信息未配置 } }
+  /tasks/today:
+    get:
+      tags: [Cultivation]
+      summary: 查询今日待办
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 今日任务, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FarmTask' } } } } } }
+  /tasks/upcoming:
+    get:
+      tags: [Cultivation]
+      summary: 查询未来任务
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: days, schema: { type: integer, minimum: 1, maximum: 90, default: 7 } }]
+      responses: { '200': { description: 未来任务 } }
+  /tasks/calendar:
+    get:
+      tags: [Cultivation]
+      summary: 按月查询农事日历
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: month, required: true, schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' } }
+        - { in: query, name: plotId, schema: { type: string, example: P001 } }
+      responses: { '200': { description: 月度任务 } }
+  /plots/{plotId}/tasks:
+    get:
+      tags: [Cultivation]
+      summary: 查询地块全部任务
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses: { '200': { description: 地块任务 } }
+  /tasks/{taskId}:
+    patch:
+      tags: [Cultivation]
+      summary: 调整任务日期、备注或受控状态
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: taskId, required: true, schema: { type: string, example: TASK001 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FarmTaskUpdate' }
+      responses: { '200': { description: 任务已更新 } }
+  /tasks/{taskId}/complete:
+    post:
+      tags: [Cultivation]
+      summary: 完成农事任务
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: taskId, required: true, schema: { type: string, example: TASK001 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FarmTaskComplete' }
+      responses: { '200': { description: 任务已完成 } }
+  /farm-tasks/temporary:
+    post:
+      tags: [Cultivation]
+      summary: 新增临时农事任务
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TemporaryFarmTask' }
+      responses: { '201': { description: 临时农事任务已创建 } }
   /chat/sessions/{sessionId}/messages:
     post:
       tags: [Chat]
@@ -422,6 +615,156 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChatReply' }
+  /weather/forecast:
+    get:
+      tags: [Weather]
+      summary: 获取地块天气预报（支持 Mock、缓存和明确降级）
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: plotId, required: true, schema: { type: string, example: P001 } }]
+      responses:
+        '200': { description: 天气结果, content: { application/json: { schema: { $ref: '#/components/schemas/WeatherForecast' } } } }
+  /commands:
+    get:
+      tags: [Commands]
+      summary: 获取地块控制指令记录
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: query, name: plotId, required: true, schema: { type: string, example: P001 } }]
+      responses: { '200': { description: 控制指令列表 } }
+  /chat/health:
+    get:
+      tags: [Chat]
+      summary: 检查农业智能体服务状态
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 智能体服务状态 } }
+  /plots/{plotId}/irrigation-advice:
+    get:
+      tags: [Irrigation]
+      summary: 获取可解释的灌溉建议，不自动执行灌溉
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses:
+        '200': { description: 灌溉建议, content: { application/json: { schema: { $ref: '#/components/schemas/IrrigationAdvice' } } } }
+  /plan-change-requests:
+    get:
+      tags: [PlanChange]
+      summary: 按当前账号权限查询计划变更申请
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: plotId, schema: { type: string, example: P001 } }
+        - { in: query, name: status, schema: { type: string, enum: [DRAFT, PENDING_REVIEW, APPROVED, ROLLED_BACK, CANCELLED] } }
+      responses: { '200': { description: 计划变更申请列表 } }
+  /plan-change-requests/{requestId}/approve:
+    post:
+      tags: [PlanChange]
+      summary: 农场管理员确认农户生成的新计划
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: requestId, required: true, schema: { type: string, example: PCR000001 } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/PlanChangeReview' } } } }
+      responses: { '200': { description: 新计划已确认 }, '403': { description: 仅农场管理员可操作 } }
+  /plan-change-requests/{requestId}/rollback:
+    post:
+      tags: [PlanChange]
+      summary: 农场管理员退回并恢复人工修正前状态
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: requestId, required: true, schema: { type: string, example: PCR000001 } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PlanChangeReview' } } } }
+      responses: { '200': { description: 已恢复原阶段和原计划 }, '403': { description: 仅农场管理员可操作 } }
+  /plots/{plotId}/timeline:
+    get:
+      tags: [Cultivation]
+      summary: 聚合地块任务、灌溉、提醒和审计时间轴
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      responses: { '200': { description: 地块管理时间轴 } }
+  /admin/farms:
+    get:
+      tags: [Admin]
+      summary: 获取橙园档案
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 橙园档案列表 } }
+    post:
+      tags: [Admin]
+      summary: 新增橙园档案
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FarmArchiveRequest' } } } }
+      responses: { '201': { description: 已创建 } }
+  /admin/farms/{farmId}:
+    put:
+      tags: [Admin]
+      summary: 编辑或停用橙园档案
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/FarmId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FarmArchiveRequest' } } } }
+      responses: { '200': { description: 已更新 } }
+  /admin/plots:
+    get:
+      tags: [Admin]
+      summary: 获取地块档案
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: 地块档案列表 } }
+    post:
+      tags: [Admin]
+      summary: 新增地块档案
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PlotArchiveRequest' } } } }
+      responses: { '201': { description: 已创建 } }
+  /admin/plots/{plotId}:
+    put:
+      tags: [Admin]
+      summary: 编辑或停用地块档案
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/PlotId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PlotArchiveRequest' } } } }
+      responses: { '200': { description: 已更新 } }
+  /admin/users/import/preview:
+    post:
+      tags: [Admin]
+      summary: 员工导入预校验，不写数据库
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EmployeeImportRequest' } } } }
+      responses: { '200': { description: 有效行、错误行和原因 } }
+  /admin/users/import/confirm:
+    post:
+      tags: [Admin]
+      summary: 确认导入员工并返回一次性激活码
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EmployeeImportRequest' } } } }
+      responses: { '201': { description: 员工待激活账号已创建 } }
+  /admin/users/{userId}/reset-activation:
+    post:
+      tags: [Admin]
+      summary: 重置员工激活凭证
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: userId, required: true, schema: { type: string, example: U004 } }]
+      responses: { '200': { description: 返回新的一次性激活码 } }
+  /auth/activation/verify:
+    post:
+      tags: [Auth]
+      summary: 验证工号、手机号和激活码
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ActivationVerifyRequest' } } } }
+      responses: { '200': { description: 只读身份和授权范围 } }
+  /auth/activation/complete:
+    post:
+      tags: [Auth]
+      summary: 设置用户名和密码并完成激活
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ActivationCompleteRequest' } } } }
+      responses: { '200': { description: 激活完成 } }
+  /farms/{farmId}/management-stats:
+    get:
+      tags: [Admin]
+      summary: 农场管理员查看地块提醒、任务和灌溉统计
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/FarmId' }]
+      responses: { '200': { description: 地块管理统计 } }
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: 分页获取只读审计日志
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses: { '200': { description: 分页审计日志 } }
 components:
   securitySchemes:
     bearerAuth:
@@ -447,6 +790,10 @@ components:
   responses:
     Unauthorized:
       description: 未登录或令牌无效
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    Conflict:
+      description: 当前资源状态不允许执行该操作
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
   schemas:
     LoginRequest:
       type: object
@@ -628,13 +975,112 @@ components:
         id: { type: string }
         plotId: { type: string }
         deviceId: { type: string, nullable: true }
-        type: { type: string, enum: [low_moisture, device_offline, device_fault, irrigation_failed] }
+        type: { type: string, enum: [low_moisture, device_offline, device_fault, irrigation_failed, continuous_rain] }
         description: { type: string }
         value: { type: number, nullable: true }
         threshold: { type: number, nullable: true }
         status: { type: string, enum: [active, acknowledged, recovered] }
         triggeredAt: { type: string, format: date-time, description: UTC 时间，始终带 Z 后缀 }
         handledAt: { type: string, format: date-time, nullable: true, description: UTC 时间，始终带 Z 后缀 }
+    CultivationTemplateRequest:
+      type: object
+      required: [templateCode, templateName, varietyName, region, version, templateContent]
+      properties:
+        templateCode: { type: string, example: FJ_NAV_GENERIC }
+        templateName: { type: string }
+        varietyName: { type: string }
+        region: { type: string, example: 重庆市奉节县 }
+        version: { type: integer, minimum: 1 }
+        templateStatus: { type: string, enum: [ACTIVE, INACTIVE], default: ACTIVE }
+        templateContent: { type: object, description: 包含 stages 数组的年度管理规则 JSON }
+    CultivationTemplate:
+      allOf:
+        - $ref: '#/components/schemas/CultivationTemplateRequest'
+        - type: object
+          properties:
+            templateId: { type: string, example: T001 }
+            createdBy: { type: string, nullable: true }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    PlotPlantingRequest:
+      type: object
+      required: [templateId, plantingDate]
+      properties:
+        templateId: { type: string, example: T001 }
+        plantingDate: { type: string, format: date }
+        soilType: { type: string, nullable: true }
+        plantingRemark: { type: string, nullable: true }
+    PlotPlanting:
+      allOf:
+        - $ref: '#/components/schemas/PlotPlantingRequest'
+        - type: object
+          properties:
+            plotId: { type: string, example: P001 }
+            plotCode: { type: string }
+            plotName: { type: string }
+            templateCode: { type: string }
+            templateName: { type: string }
+            templateVersion: { type: integer }
+            varietyName: { type: string }
+            currentStage: { $ref: '#/components/schemas/StageResult' }
+            stageOverrideReason: { type: string, nullable: true }
+            regenerationRecommended: { type: boolean }
+    StageOverrideRequest:
+      type: object
+      required: [stageCode, reason]
+      properties:
+        stageCode: { type: string, example: MATURITY }
+        reason: { type: string, minLength: 1 }
+    StageResult:
+      type: object
+      properties:
+        plotId: { type: string, example: P001 }
+        stageCode: { type: string, nullable: true }
+        stageName: { type: string, nullable: true }
+        stageSource: { type: string, enum: [CALCULATED, OVERRIDE, UNAVAILABLE] }
+        treeAgeYears: { type: integer, nullable: true }
+        asOfDate: { type: string, format: date }
+        overrideReason: { type: string, nullable: true }
+        regenerationRecommended: { type: boolean }
+    FarmTask:
+      type: object
+      properties:
+        taskId: { type: string, example: TASK001 }
+        plotId: { type: string, example: P001 }
+        templateId: { type: string, nullable: true }
+        planBatchNo: { type: string, nullable: true }
+        stageCode: { type: string, nullable: true }
+        taskType: { type: string }
+        taskName: { type: string }
+        taskSource: { type: string, enum: [PLAN, TEMPORARY] }
+        plannedDate: { type: string, format: date, nullable: true }
+        taskStatus: { type: string, enum: [PENDING, COMPLETED, OVERDUE, CANCELLED, SUPERSEDED] }
+        taskNote: { type: string, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        completionNote: { type: string, nullable: true }
+        irrigationRecordId: { type: string, nullable: true }
+    FarmTaskUpdate:
+      type: object
+      properties:
+        plannedDate: { type: string, format: date, nullable: true }
+        taskNote: { type: string, nullable: true }
+        taskStatus: { type: string, enum: [PENDING, CANCELLED], nullable: true }
+    FarmTaskComplete:
+      type: object
+      required: [completedAt]
+      properties:
+        completedAt: { type: string, format: date-time }
+        completionNote: { type: string, nullable: true }
+        irrigationRecordId: { type: string, nullable: true }
+    TemporaryFarmTask:
+      type: object
+      required: [plotId, taskType, taskName]
+      properties:
+        plotId: { type: string, example: P001 }
+        taskType: { type: string }
+        taskName: { type: string }
+        plannedDate: { type: string, format: date, nullable: true }
+        taskNote: { type: string, nullable: true }
     ChatReply:
       type: object
       properties:
@@ -643,3 +1089,88 @@ components:
         sources:
           type: array
           items: { type: string }
+    ErrorResponse:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string, example: FORBIDDEN }
+        message: { type: string, example: 当前账号无权执行此操作 }
+        requestId: { type: string, example: req-a1b2c3d4 }
+    WeatherForecast:
+      type: object
+      required: [available, queryTime]
+      properties:
+        available: { type: boolean }
+        source: { type: string, nullable: true }
+        queryTime: { type: string, format: date-time }
+        cached: { type: boolean }
+        message: { type: string, nullable: true }
+        forecasts: { type: array, items: { type: object } }
+    IrrigationAdvice:
+      type: object
+      properties:
+        plotId: { type: string, example: P001 }
+        decision: { type: string, enum: [IRRIGATE, NO_IRRIGATION, CHECK_DEVICE, DATA_INSUFFICIENT] }
+        suggestedDurationMinutes: { type: integer, nullable: true }
+        reasons: { type: array, items: { type: string } }
+        deviceOnline: { type: boolean }
+        weatherAvailable: { type: boolean }
+    PlanChangeReview:
+      type: object
+      properties:
+        reviewComment: { type: string, maxLength: 255 }
+    FarmArchiveRequest:
+      type: object
+      required: [farmName]
+      properties:
+        farmName: { type: string }
+        province: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        areaMu: { type: number, minimum: 0, nullable: true }
+        adminUserId: { type: string, nullable: true }
+        remark: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    PlotArchiveRequest:
+      type: object
+      required: [farmId, plotCode, plotName]
+      properties:
+        farmId: { type: string, example: F001 }
+        plotCode: { type: string }
+        plotName: { type: string }
+        areaMu: { type: number, minimum: 0, nullable: true }
+        location: { type: string, nullable: true }
+        irrigationMethod: { type: string, nullable: true }
+        farmerUserId: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    EmployeeImportRequest:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              employeeNo: { type: string }
+              name: { type: string }
+              phone: { type: string }
+              email: { type: string, nullable: true }
+              role: { type: string, description: 预校验会把非法角色作为错误行返回 }
+              farmCode: { type: string, nullable: true }
+              plotCodes: { type: array, items: { type: string } }
+    ActivationVerifyRequest:
+      type: object
+      required: [employeeNo, phone, activationCode]
+      properties:
+        employeeNo: { type: string }
+        phone: { type: string }
+        activationCode: { type: string }
+    ActivationCompleteRequest:
+      type: object
+      required: [verificationToken, username, password]
+      properties:
+        verificationToken: { type: string }
+        username: { type: string }
+        password: { type: string, format: password, minLength: 8 }
+        email: { type: string, nullable: true }

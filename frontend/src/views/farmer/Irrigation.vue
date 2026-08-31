@@ -1,11 +1,13 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useFarmerStore } from '@/stores/farmer'
 import { useUserStore } from '@/stores/user'
+import { useRoute } from 'vue-router'
 
 const store = useFarmerStore()
 const userStore = useUserStore()
+const route = useRoute()
 const control = reactive({ loading: false, state: 'idle', message: '等待操作' })
 const activeCommand = ref(null)
 const selectedAction = ref('open')
@@ -15,6 +17,8 @@ const controlDevice = computed(() => plot.value?.devices?.irrigation || null)
 const controlOnline = computed(() => Boolean(controlDevice.value && (controlDevice.value.online ?? plot.value?.deviceOnline)))
 const records = computed(() => store.visibleRecords.filter((item) => item.plotId === plot.value?.plotId))
 const commandLogs = computed(() => store.commandLogs.filter((item) => item.plotId === plot.value?.plotId))
+const settings = reactive({ threshold: 35, irrigationDuration: 30, irrigationInterval: 60 })
+let realtimeTimer = null
 
 const advice = computed(() => {
   if (!plot.value) return {}
@@ -62,12 +66,57 @@ watch(
   () => plot.value?.plotId,
   () => {
     if (!plot.value) return
+    Object.assign(settings, {
+      threshold: plot.value.threshold,
+      irrigationDuration: plot.value.irrigationDuration ?? plot.value.maxDuration ?? 30,
+      irrigationInterval: plot.value.irrigationInterval ?? 60,
+    })
     selectedAction.value = plot.value.irrigating ? 'close' : 'open'
     control.state = 'idle'
     control.message = '等待操作'
   },
   { immediate: true },
 )
+
+async function saveSettings() {
+  if (!plot.value) return
+  try {
+    await store.updateThreshold(plot.value.plotId, settings)
+    ElMessage.success(`${plot.value.plotName}的灌溉设置已保存`)
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || error.message || '保存失败')
+  }
+}
+
+watch(
+  () => route.query.plotId,
+  (plotId) => { if (typeof plotId === 'string') store.selectPlot(plotId) },
+  { immediate: true },
+)
+
+watch(
+  () => plot.value?.irrigating,
+  (irrigating) => {
+    if (!control.loading) selectedAction.value = irrigating ? 'close' : 'open'
+  },
+)
+
+async function refreshIrrigationView() {
+  if (!plot.value?.plotId || control.loading) return
+  await Promise.allSettled([
+    store.refreshRealtimeData(),
+    store.refreshControlHistory(plot.value.plotId),
+  ])
+}
+
+onMounted(() => {
+  refreshIrrigationView()
+  realtimeTimer = window.setInterval(refreshIrrigationView, 5000)
+})
+
+onUnmounted(() => {
+  if (realtimeTimer) window.clearInterval(realtimeTimer)
+})
 
 async function execute(action) {
   const verb = action === 'open' ? '开启' : '关闭'
@@ -141,6 +190,15 @@ async function execute(action) {
           <div class="evidence-list">
             <div v-for="item in advice.evidence" :key="item" class="evidence-item"><el-icon><CircleCheck /></el-icon><span>{{ item }}</span></div>
           </div>
+          <div class="embedded-settings">
+            <div class="settings-head"><div><h3>阈值设置</h3><p>当前设置仅对 {{ plot.plotName }} 生效</p></div><span class="status-pill">独立配置</span></div>
+            <div class="settings-fields">
+              <label><span>土壤湿度阈值</span><small>低于该值时触发告警（%）</small><el-input-number v-model="settings.threshold" :min="10" :max="80" :step="1" controls-position="right" /></label>
+              <label><span>单次灌溉时长</span><small>对应 irrigation_length_minutes（分钟）</small><el-input-number v-model="settings.irrigationDuration" :min="1" :max="240" :step="5" controls-position="right" /></label>
+              <label><span>自动灌溉间隔</span><small>对应 irrigation_interval_minutes（分钟）</small><el-input-number v-model="settings.irrigationInterval" :min="1" :max="1440" :step="5" controls-position="right" /></label>
+            </div>
+            <div class="settings-footer"><span>{{ userStore.can('threshold_config', 'modify') ? '切换地块后将载入该地块自己的设置' : '当前角色没有修改阈值的权限' }}</span><el-button type="primary" :disabled="!userStore.can('threshold_config', 'modify')" @click="saveSettings"><el-icon><Check /></el-icon> 保存设置</el-button></div>
+          </div>
         </div>
 
         <div class="content-panel control-console">
@@ -173,7 +231,7 @@ async function execute(action) {
 
               <div class="duration-row">
                 <label>预计灌溉时长</label>
-                <strong>{{ selectedAction === 'open' ? `${configuredDuration} 分钟` : '立即关闭' }}</strong>
+                <strong>{{ selectedAction === 'open' ? `${configuredDuration} 分钟（到时自动关闭）` : '立即关闭' }}</strong>
               </div>
               <el-button class="confirm-command" type="success" size="large" :loading="control.loading" :disabled="commandDisabled" @click="execute(selectedAction)">
                 {{ selectedAction === 'open' ? '确认并开启灌溉' : '确认并关闭灌溉' }}
@@ -228,4 +286,5 @@ async function execute(action) {
 .duration-row{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 0 14px;padding:10px 12px;border-radius:10px;background:#f7faf8}
 .duration-row strong{color:#277b58;font-size:14px}
 .confirm-command{margin-top:0}
+.embedded-settings{margin-top:18px;padding-top:16px;border-top:1px solid #dfece5}.settings-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.settings-head h3{margin:0;color:#29473d;font-size:18px}.settings-head p{margin:4px 0 0;color:#81918b;font-size:11px}.settings-fields{display:grid;gap:10px}.settings-fields label{display:grid;grid-template-columns:minmax(0,1fr) 142px;align-items:center;gap:3px 12px;padding:10px 12px;border:1px solid #dfece5;border-radius:11px;background:rgba(255,255,255,.7)}.settings-fields label>span{color:#315347;font-size:13px;font-weight:650}.settings-fields label>small{grid-column:1;color:#8b9a94;font-size:10px}.settings-fields :deep(.el-input-number){grid-column:2;grid-row:1/3;width:142px}.settings-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px}.settings-footer>span{color:#84948d;font-size:10px}@media(max-width:700px){.settings-fields label{grid-template-columns:1fr}.settings-fields label>small,.settings-fields :deep(.el-input-number){grid-column:1;grid-row:auto}.settings-fields :deep(.el-input-number){width:100%}.settings-footer{align-items:stretch;flex-direction:column}.settings-footer .el-button{width:100%}}
 </style>

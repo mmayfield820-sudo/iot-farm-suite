@@ -27,6 +27,7 @@ export const useFarmerStore = defineStore('farmer', () => {
   const irrigationRecords = ref(isMock ? clone(farmerIrrigationRecords).map(normalizeIrrigationRecord) : [])
   const historyByPlot = ref({})
   const commandLogs = ref([])
+  const timelineRevision = ref(0)
   const selectedPlotId = ref(normalizeId(userStore.user?.roleScopes?.farmer?.plotIds?.[0] || userStore.user?.accessiblePlots?.[0] || plots.value[0]?.plotId))
   const loading = ref(false)
   const initialized = ref(false)
@@ -199,8 +200,11 @@ export const useFarmerStore = defineStore('farmer', () => {
       irrigationInterval: config.irrigationInterval,
     })
     Object.assign(plot, { threshold: config.threshold, irrigationDuration: config.irrigationDuration, irrigationInterval: config.irrigationInterval, maxDuration: config.irrigationDuration })
+    touchTimeline()
     await refreshAlerts()
   }
+
+  function touchTimeline() { timelineRevision.value += 1 }
 
   async function acknowledge(alertId) {
     const alert = visibleAlerts.value.find((item) => normalizeId(item.alertId) === normalizeId(alertId))
@@ -310,5 +314,5 @@ export const useFarmerStore = defineStore('farmer', () => {
     }
   }
 
-  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, refreshControlHistory, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
+  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, timelineRevision, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, refreshControlHistory, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, touchTimeline, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
 })

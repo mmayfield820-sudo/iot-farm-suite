@@ -9,6 +9,10 @@ const menu = [
   { label: '运行概况', path: '/admin/dashboard', icon: 'DataBoard' },
   { label: '全局告警', path: '/admin/alerts', icon: 'Warning' },
   { label: '用户管理', path: '/admin/users', icon: 'UserFilled' },
+  { label: '橙园档案', path: '/admin/farm-archives', icon: 'OfficeBuilding' },
+  { label: '地块档案', path: '/admin/plot-archives', icon: 'MapLocation' },
+  { label: '员工导入', path: '/admin/employees', icon: 'UploadFilled' },
+  { label: '管理模板', path: '/admin/cultivation-templates', icon: 'Collection' },
   { label: '系统参数', path: '/admin/settings', icon: 'Setting' },
   { label: '操作日志', path: '/admin/logs', icon: 'Document' },
 ]

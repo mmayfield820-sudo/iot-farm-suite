@@ -8,3 +8,5 @@ __pycache__/
 *.pyc
 *.log
 .venv/
+database/backups/*.sql
+database/backups/*.sql.gz

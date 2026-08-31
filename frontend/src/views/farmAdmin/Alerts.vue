@@ -18,11 +18,12 @@
           </div>
           <div class="header-right">
             <el-select v-model="filterForm.type" placeholder="告警类型" clearable style="width: 150px;">
+              <el-option label="计划变更申请" value="计划变更申请" />
               <el-option label="湿度过低" value="湿度过低" />
               <el-option label="设备离线" value="设备离线" />
               <el-option label="数据未更新" value="数据未更新" />
             </el-select>
-            <el-select v-model="filterForm.status" placeholder="处理状态" clearable style="width: 150px;">
+            <el-select v-model="filterForm.status" placeholder="状态 / 结果" clearable style="width: 150px;">
               <el-option label="未处理" value="未处理">
                 <el-tag type="danger" size="small">未处理</el-tag>
               </el-option>
@@ -35,6 +36,7 @@
               <el-option label="已忽略" value="已忽略">
                 <el-tag type="info" size="small">已忽略</el-tag>
               </el-option>
+              <el-option v-for="item in ['待生成新计划','待管理员确认','已确认新计划','已退回原状态']" :key="item" :label="item" :value="item" />
             </el-select>
             <el-date-picker
               v-model="filterForm.dateRange"
@@ -98,7 +100,7 @@
             <span v-else class="no-recover">尚未处理</span>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="处理状态" width="100" fixed="right">
+        <el-table-column prop="status" label="状态 / 结果" width="130" fixed="right">
           <template #default="scope">
             <el-tag :type="ALERT_STATUS_CONFIG[scope.row.status]?.type || 'info'" size="small" effect="dark">
               {{ scope.row.status }}
@@ -108,8 +110,12 @@
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="scope">
             <div class="action-row">
-                <el-button v-if="scope.row.status === '未处理'" type="primary" plain size="small" @click="handleConfirm(scope.row)"><el-icon><Check /></el-icon>确认告警</el-button>
-                <el-button v-if="scope.row.status !== '未处理'" type="info" plain size="small" disabled><el-icon><SuccessFilled /></el-icon>{{ scope.row.status }}</el-button>
+                <template v-if="scope.row.typeCode === 'plan_change_request' && scope.row.statusCode === 'PENDING_REVIEW'">
+                  <el-button type="success" plain size="small" @click="handleApprove(scope.row)">确认新计划</el-button>
+                  <el-button type="warning" plain size="small" @click="handleRollback(scope.row)">退回原状态</el-button>
+                </template>
+                <el-button v-else-if="scope.row.typeCode !== 'plan_change_request' && scope.row.status === '未处理'" type="primary" plain size="small" @click="handleConfirm(scope.row)"><el-icon><Check /></el-icon>确认告警</el-button>
+                <el-button v-else type="info" plain size="small" disabled><el-icon><SuccessFilled /></el-icon>{{ scope.row.status }}</el-button>
               <el-button type="primary" link size="small" @click="showDetail(scope.row)">详情</el-button>
             </div>
           </template>
@@ -152,6 +158,13 @@
           {{ detailDialog.data.handledAt || '尚未处理' }}
         </el-descriptions-item>
         <el-descriptions-item label="告警原因" :span="2">{{ detailDialog.data.reason }}</el-descriptions-item>
+        <template v-if="detailDialog.data.typeCode === 'plan_change_request'">
+          <el-descriptions-item label="申请人">{{ detailDialog.data.requestedBy }}</el-descriptions-item>
+          <el-descriptions-item label="申请原因">{{ detailDialog.data.requestReason }}</el-descriptions-item>
+          <el-descriptions-item label="原阶段 / 新阶段">{{ detailDialog.data.originalStageCode || '-' }} / {{ detailDialog.data.proposedStageCode || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="原计划 / 新计划">{{ detailDialog.data.originalPlanBatchNo || '-' }} / {{ detailDialog.data.proposedPlanBatchNo || '-' }}</el-descriptions-item>
+          <el-descriptions-item v-if="detailDialog.data.reviewComment" label="审核说明" :span="2">{{ detailDialog.data.reviewComment }}</el-descriptions-item>
+        </template>
       </el-descriptions>
     </el-dialog>
   </div>
@@ -165,6 +178,7 @@ import { useFarmAdminStore } from '@/stores/farmAdmin'
 import { normalizeAlert, parseDate } from '@/utils/dataAdapters'
 import { usePlatformStore } from '@/stores/platform'
 import { acknowledgeAlert } from '@/api/alert'
+import { approvePlanChangeRequest, getPlanChangeRequests, rollbackPlanChangeRequest } from '@/api/planChangeRequest'
 
 const loading = ref(false)
 const alertList = ref([])
@@ -194,21 +208,39 @@ async function loadAlerts(force = false) {
   try {
     await platformStore.loadData(force)
     const plotIds = farmAdminStore.visiblePlots.map((plot) => String(plot.plotNo))
-    alertList.value = platformStore.alerts.filter((alert) => plotIds.includes(String(alert.plotId || alert.plotNo))).map((alert) => {
+    const ordinaryAlerts = platformStore.alerts.filter((alert) => plotIds.includes(String(alert.plotId || alert.plotNo))).map((alert) => {
       const normalized = normalizeAlert(alert)
       return {
         ...alert,
         alertId: normalized.alertId,
         alertType: normalized.type,
         plotName: alert.plotName || normalized.plotId,
-        reason: normalized.description,
+        reason: normalized.reason,
         triggerValue: normalized.value,
         threshold: normalized.threshold,
         occurTime: normalized.occurTime,
         handledAt: normalized.handledAt || alert.recoverTime || '',
         status: normalized.status,
+        typeCode: normalized.typeCode,
       }
     })
+    const requests = isMock ? [] : await getPlanChangeRequests()
+    const requestStatus = { DRAFT: '待生成新计划', PENDING_REVIEW: '待管理员确认', APPROVED: '已确认新计划', ROLLED_BACK: '已退回原状态', CANCELLED: '已取消' }
+    const requestRows = requests.filter((item) => plotIds.includes(String(item.plotId))).map((item) => ({
+      ...item,
+      alertId: item.requestId,
+      alertType: '计划变更申请',
+      typeCode: 'plan_change_request',
+      reason: item.requestReason,
+      triggerValue: item.originalStageCode || '-',
+      threshold: item.proposedStageCode || '-',
+      occurTime: item.submittedAt || item.createdAt,
+      handledAt: item.reviewedAt || '',
+      status: requestStatus[item.status] || item.status,
+      statusCode: item.status,
+      deviceId: '-',
+    }))
+    alertList.value = [...requestRows, ...ordinaryAlerts]
   } catch (error) {
     ElMessage.error(error.message || '告警数据加载失败')
   } finally {
@@ -249,7 +281,7 @@ const paginatedAlerts = computed(() => {
   return filteredAlerts.value.slice(start, end)
 })
 
-const unhandledCount = computed(() => alertList.value.filter(a => a.status === '未处理').length)
+const unhandledCount = computed(() => alertList.value.filter(a => a.status === '未处理' || a.statusCode === 'PENDING_REVIEW').length)
 
 const handleSearch = () => {
   pagination.value.page = 1
@@ -277,6 +309,30 @@ const handleConfirm = (alert) => {
     if (idx !== -1) alertList.value[idx].status = '处理中'
     ElMessage.success('告警已确认')
   })
+}
+
+const handleApprove = async (item) => {
+  try {
+    await ElMessageBox.confirm(`确认采用 ${item.plotName} 由农户生成的新计划？`, '确认新计划', { type: 'success' })
+    await approvePlanChangeRequest(item.requestId, {})
+    await loadAlerts(true)
+    ElMessage.success('新计划已确认')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '确认失败')
+  }
+}
+
+const handleRollback = async (item) => {
+  try {
+    const { value } = await ElMessageBox.prompt('此操作将恢复人工修正前的生长阶段和原管理计划，请填写退回原因。', '退回原状态', {
+      inputValidator: (v) => Boolean(v?.trim()) || '请填写退回原因',
+    })
+    await rollbackPlanChangeRequest(item.requestId, { reviewComment: value.trim() })
+    await loadAlerts(true)
+    ElMessage.success('已恢复人工修正前的阶段和原计划')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '退回失败')
+  }
 }
 
 const showDetail = (alert) => {

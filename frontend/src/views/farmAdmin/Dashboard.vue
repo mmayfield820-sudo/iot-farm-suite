@@ -55,6 +55,8 @@
       </el-col>
     </el-row>
 
+    <FarmManagementStats :farm-ids="farmAdminStore.selectedFarmIds" />
+
     <!-- 状态筛选 + 地块卡片 -->
     <el-card class="plot-card-container">
       <template #header>
@@ -147,6 +149,7 @@ import { mockPlots } from '@/mock/farmAdminData'
 import { ElMessage } from 'element-plus'
 import { usePlatformStore } from '@/stores/platform'
 import { normalizePlot } from '@/utils/dataAdapters'
+import FarmManagementStats from '@/components/FarmManagementStats.vue'
 
 const router = useRouter()
 const plotStore = usePlotStore()

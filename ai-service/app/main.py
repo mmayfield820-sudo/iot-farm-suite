@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Any
@@ -62,7 +63,7 @@ def chat(session_id: str, request: ChatRequest) -> ChatResponse:
     web_result = None
     if should_search(question):
         web_result = search_web(build_search_query(question, request.context))
-    answer = generate_answer(question, request.context, documents, list(session_history[session_id]), web_result)
+    answer = clean_answer(generate_answer(question, request.context, documents, list(session_history[session_id]), web_result))
     sources = [document.source for document in documents]
     if web_result and web_result.get("success"):
         sources.extend(item["url"] for item in web_result["results"])
@@ -189,6 +190,8 @@ def generate_model_answer(
         "回答今天、明天等相对日期时，必须以 webSearch.queryLocalTime 和 webSearch.query 中的具体日期为准；"
         "不得使用与地块城市明显不匹配的天气结果。"
         "不得声称已经控制设备，不得跳过用户二次确认。"
+        "请使用自然、简洁的中文分段回答；不要输出思考过程、角色名、内部标记、XML 标签、JSON、"
+        "Markdown 代码围栏或模型专用符号。需要列举时使用普通中文序号或短横线。"
     )
     user_content = json.dumps(
         {
@@ -229,3 +232,27 @@ def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def clean_answer(value: str) -> str:
+    """Remove model protocol artefacts while retaining readable Chinese paragraphs."""
+    text_value = value.strip()
+    if text_value.startswith("{"):
+        try:
+            decoded = json.loads(text_value)
+            if isinstance(decoded, dict) and isinstance(decoded.get("answer"), str):
+                text_value = decoded["answer"]
+        except json.JSONDecodeError:
+            pass
+    text_value = re.sub(r"<think>[\s\S]*?</think>", "", text_value, flags=re.IGNORECASE)
+    text_value = re.sub(r"<think>[\s\S]*$", "", text_value, flags=re.IGNORECASE)
+    text_value = re.sub(r"<\|[^>]*\|>", "", text_value)
+    text_value = re.sub(r"\[/?(?:INST|SYSTEM|ASSISTANT|USER)\]", "", text_value, flags=re.IGNORECASE)
+    text_value = re.sub(r"^\s*(?:assistant|analysis|final)\s*[:：]\s*", "", text_value, flags=re.IGNORECASE)
+    text_value = re.sub(r"```(?:\w+)?\s*", "", text_value)
+    text_value = text_value.replace("```", "")
+    text_value = re.sub(r"【\d+†[^】]+】", "", text_value)
+    text_value = re.sub(r"\*\*(.*?)\*\*", r"\1", text_value)
+    text_value = re.sub(r"^#{1,6}\s*", "", text_value, flags=re.MULTILINE)
+    text_value = re.sub(r"\n{3,}", "\n\n", text_value)
+    return text_value.strip() or "暂未生成可读的建议，请稍后重试。"

@@ -15,6 +15,21 @@ const messages = ref([{ id: 1, role: 'assistant', text: '你好，我可以结�
 const plot = computed(() => store.currentPlot)
 const quick = ['现在需要浇水吗？', '为什么产生湿度告警？', '设备状态是否适合灌溉？', '分析最近灌溉效果']
 
+function readableAnswer(value) {
+  return String(value || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\|[^>]*\|>/g, '')
+    .replace(/\[\/?(?:INST|SYSTEM|ASSISTANT|USER)\]/gi, '')
+    .replace(/^\s*(?:assistant|analysis|final)\s*[:：]\s*/i, '')
+    .replace(/```(?:\w+)?\s*/g, '')
+    .replace(/```/g, '')
+    .replace(/【\d+†[^】]+】/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 async function refreshAssistantStatus() {
   if (isMock) {
     store.serviceStatus.assistant = true
@@ -51,7 +66,7 @@ async function ask(text = input.value) {
     } else {
       const response = await sendChatMessage(sessionId, { message: question, plotId: plot.value.plotId })
       const body = response?.data || response
-      messages.value.push({ id: Date.now() + 1, role: 'assistant', text: body.answer || '智能体暂未返回有效内容。', evidence: body.sources || [] })
+      messages.value.push({ id: Date.now() + 1, role: 'assistant', text: readableAnswer(body.answer) || '智能体暂未返回有效内容。', evidence: body.sources || [] })
       store.serviceStatus.assistant = true
     }
   } catch (error) {
@@ -145,4 +160,5 @@ async function ask(text = input.value) {
   </div>
 </template>
 <style scoped>.assistant-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;height:calc(100vh - 165px);min-height:570px}.context-panel{overflow:auto}.context-plot{padding:14px;border-radius:12px;background:#eef7f2}.context-plot strong,.context-plot small{display:block}.context-plot small{margin-top:5px;color:#7b8c85;font-size:11px}.context-panel dl{margin:15px 0}.context-panel dl div{display:flex;justify-content:space-between;padding:9px 2px;border-bottom:1px solid #edf2ef}.context-panel dt{color:#81918b;font-size:12px}.context-panel dd{margin:0;color:#29473d;font-size:13px;font-weight:650}.context-panel dd.danger{color:#c45353}.quick-title{margin:18px 0 8px;color:#50675e;font-size:12px;font-weight:700}.quick-question{width:100%;display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border:0;border-bottom:1px solid #edf2ef;color:#5d7169;background:transparent;text-align:left;font-size:12px;cursor:pointer}.quick-question:hover{color:#27835d}.chat-panel{display:flex;flex-direction:column;padding:0;overflow:hidden}.messages{min-height:0;flex:1;padding:22px;overflow-y:auto;background:#fbfdfc}.message{display:flex;align-items:flex-start;gap:10px;margin-bottom:18px}.message.user{flex-direction:row-reverse}.message-avatar{width:34px;height:34px;display:grid;place-items:center;flex:0 0 34px;border-radius:11px;color:#277e5b;background:#e3f3eb}.message.user .message-avatar{color:white;background:#3b8c6a}.bubble{max-width:74%;padding:12px 14px;border:1px solid var(--line);border-radius:4px 14px 14px;background:#fff;color:#3d574e}.message.user .bubble{border:0;border-radius:14px 4px 14px 14px;color:white;background:#398363}.bubble p{margin:0;font-size:13px;line-height:1.75}.answer-evidence{display:grid;gap:6px;margin-top:12px;padding-top:11px;border-top:1px solid #e7efeb}.answer-evidence strong{font-size:11px}.answer-evidence span{display:flex;align-items:center;gap:6px;color:#74867f;font-size:11px}.answer-evidence .el-icon{color:#2f9368}.bubble>.el-button{margin-top:12px}.typing{color:#7b8c85;font-size:12px}.composer{display:grid;grid-template-columns:1fr auto;gap:10px;padding:16px;border-top:1px solid var(--line);background:#fff}.composer .el-button{height:54px}.composer small{grid-column:1/-1;color:#98a49f;font-size:10px}@media(max-width:900px){.assistant-layout{grid-template-columns:1fr;height:auto}.context-panel{max-height:none}.chat-panel{height:650px}}@media(max-width:560px){.messages{padding:14px}.bubble{max-width:86%}.composer{grid-template-columns:1fr}.composer .el-button{height:40px}}
+.bubble p{white-space:pre-line}
 </style>

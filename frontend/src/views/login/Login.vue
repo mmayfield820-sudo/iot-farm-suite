@@ -51,8 +51,9 @@ async function submit() {
         <el-button class="submit" size="large" native-type="submit" :loading="loading">登录平台</el-button>
 
         <div class="register-entry">
-          <span>还没有账号？</span><button type="button" @click="router.push('/register')">立即注册</button>
-          <small>仅开放农户与农场管理员注册</small>
+          <span>首次使用平台？</span>
+          <button type="button" @click="router.push('/activation')">使用工号或手机号激活员工账号</button>
+          <small>需要管理员发放的激活凭证</small>
         </div>
         <p class="demo-note">演示账号：demo_farmer / DemoPass123!（农户）</p>
       </form>

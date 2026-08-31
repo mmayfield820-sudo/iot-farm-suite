@@ -463,6 +463,28 @@ class MqttService:
                 },
             )
 
+            # A complete temperature/humidity report proves that the two
+            # sensors for this plot are publishing compatible readings again.
+            # Pairing timeout alerts are operational faults, so recover them
+            # automatically instead of requiring a farmer to acknowledge a
+            # condition that has already cleared itself.
+            connection.execute(
+                text(
+                    """
+                    UPDATE alert
+                    SET alert_status = 'recovered', handled_at = :handled_at
+                    WHERE plot_id = :plot_id
+                      AND alert_type = 'device_fault'
+                      AND alert_status IN ('active', 'acknowledged')
+                      AND alert_description IN (
+                          '缺少配对的温度传感器数据',
+                          '缺少配对的湿度传感器数据'
+                      )
+                    """
+                ),
+                {"plot_id": plot_id, "handled_at": report_time},
+            )
+
             threshold = connection.execute(
                 text(
                     """
@@ -519,6 +541,7 @@ class MqttService:
                     )
                     self._record_missing_reading_alert(plot_id, missing_type, now)
                 self._expire_pending_commands(now)
+                self._close_expired_irrigations(now)
                 self._expire_offline_devices(now)
             except Exception:
                 logger.exception("Failed to run MQTT timeout checks")
@@ -573,6 +596,64 @@ class MqttService:
                         description=f"灌溉指令 {command['command_id']} 执行超时",
                         timestamp=timestamp,
                     )
+
+    def _close_expired_irrigations(self, timestamp: datetime) -> None:
+        """Issue an automatic OFF command when a confirmed timed irrigation expires."""
+        retry_cutoff = timestamp - timedelta(seconds=60)
+        with engine.connect() as connection:
+            due = connection.execute(
+                text(
+                    """
+                    SELECT started.device_id, device.device_uuid
+                    FROM irrigation_record AS started
+                    JOIN device ON device.device_id=started.device_id
+                    WHERE started.action_type='on'
+                      AND started.status='success'
+                      AND started.planned_duration_minutes IS NOT NULL
+                      AND started.planned_duration_minutes > 0
+                      AND device.status='online'
+                      AND DATE_ADD(
+                        COALESCE(started.executed_at, started.requested_at),
+                        INTERVAL started.planned_duration_minutes MINUTE
+                      ) <= :timestamp
+                      AND NOT EXISTS (
+                        SELECT 1 FROM irrigation_record AS newer_on
+                        WHERE newer_on.device_id=started.device_id
+                          AND newer_on.action_type='on'
+                          AND newer_on.status='success'
+                          AND newer_on.requested_at > started.requested_at
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM irrigation_record AS stopped
+                        WHERE stopped.device_id=started.device_id
+                          AND stopped.action_type='off'
+                          AND stopped.requested_at > started.requested_at
+                          AND (
+                            stopped.status IN ('pending','success')
+                            OR stopped.requested_at >= :retry_cutoff
+                          )
+                      )
+                    """
+                ),
+                {"timestamp": timestamp, "retry_cutoff": retry_cutoff},
+            ).mappings().all()
+        for irrigation in due:
+            try:
+                self.publish_control_command(
+                    device_uuid=irrigation["device_uuid"],
+                    switch="off",
+                    operator_id=None,
+                    activation_type="auto",
+                )
+                logger.info(
+                    "Issued timed automatic irrigation stop for device %s",
+                    irrigation["device_id"],
+                )
+            except (RuntimeError, ValueError):
+                logger.exception(
+                    "Failed to issue timed automatic irrigation stop for device %s",
+                    irrigation["device_id"],
+                )
 
     def _record_missing_reading_alert(
         self, plot_id: int, missing_type: str, timestamp: datetime
