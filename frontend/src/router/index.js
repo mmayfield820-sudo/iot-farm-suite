@@ -3,6 +3,7 @@ import { ROLE_HOME, useUserStore } from '@/stores/user'
 
 const routes = [
   { path: '/', redirect: '/login' },
+  { path: '/prototype/farmer-dashboard', name: 'prototype-farmer-dashboard', component: () => import('@/views/prototype/FarmerDashboardPrototype.vue'), meta: { prototype: true, title: '农户首页原型' } },
   { path: '/login', name: 'login', component: () => import('@/views/login/Login.vue'), meta: { public: true } },
   { path: '/register', name: 'register', component: () => import('@/views/login/Register.vue'), meta: { public: true, title: '用户注册' } },
   {
@@ -50,6 +51,7 @@ const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach((to) => {
   const store = useUserStore()
+  if (to.meta.prototype) return true
   if (to.meta.public) return store.isLoggedIn ? ROLE_HOME[store.role] : true
   if (!store.isLoggedIn) return { name: 'login', query: { redirect: to.fullPath } }
   const requiredRole = to.matched.find((record) => record.meta.role)?.meta.role
