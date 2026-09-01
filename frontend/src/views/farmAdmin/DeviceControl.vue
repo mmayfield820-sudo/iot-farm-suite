@@ -96,7 +96,7 @@
             <el-col :xs="24" :sm="8">
               <el-card class="metric-card">
                 <div class="metric-label">环境温度</div>
-                <div class="metric-value-large" style="color: #E6A23C;">
+                <div class="metric-value-large temperature-value">
                   {{ currentPlot.temperature }}<span class="unit">℃</span>
                 </div>
                 <div class="metric-desc">适宜作物生长</div>
@@ -129,48 +129,47 @@
             </el-col>
           </el-row>
 
-          <el-card class="records-card">
-            <template #header>
-              <div class="records-header">
-                <span><el-icon><Document /></el-icon> 近期灌溉记录</span>
-                <el-button type="primary" link @click="refreshRecords">
-                  <el-icon><Refresh /></el-icon> 刷新
-                </el-button>
-              </div>
-            </template>
-            <el-table :data="currentRecords" border stripe>
-              <el-table-column prop="startTime" label="开始时间" width="160" />
-              <el-table-column prop="endTime" label="结束时间" width="160">
-                <template #default="scope">
-                  <span v-if="scope.row.endTime">{{ scope.row.endTime }}</span>
-                  <el-tag v-else type="primary" size="small" effect="dark">进行中</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="durationText" label="计划/实际时长" min-width="165">
-                <template #default="scope">
-                  <span>{{ scope.row.durationText }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="operator" label="操作人" width="120" />
-              <el-table-column prop="source" label="来源" width="120">
-                <template #default="scope">
-                  <el-tag size="small" :type="scope.row.source === '页面' ? 'primary' : 'success'">
-                    {{ scope.row.source }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="status" label="执行状态" width="120">
-                <template #default="scope">
-                  <el-tag :type="IRRIGATION_STATUS[scope.row.status]?.type || 'info'" size="small">
-                    <el-icon v-if="scope.row.status === '进行中'" class="is-loading"><Loading /></el-icon>
-                    {{ scope.row.status }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-if="currentRecords.length === 0" description="暂无灌溉记录" />
-          </el-card>
         </div>
+      </el-col>
+
+      <el-col v-if="currentPlot" :span="24">
+        <el-card class="records-card records-card-wide">
+          <template #header>
+            <div class="records-header">
+              <span><el-icon><Document /></el-icon> 近期灌溉记录</span>
+              <el-button type="primary" link @click="refreshRecords">
+                <el-icon><Refresh /></el-icon> 刷新
+              </el-button>
+            </div>
+          </template>
+          <el-table :data="currentRecords" border stripe>
+            <el-table-column prop="startTime" label="开始时间" min-width="180" />
+            <el-table-column prop="endTime" label="结束时间" min-width="180">
+              <template #default="scope">
+                <span v-if="scope.row.endTime">{{ scope.row.endTime }}</span>
+                <el-tag v-else type="primary" size="small" effect="dark">进行中</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="durationText" label="计划/实际时长" min-width="190">
+              <template #default="scope"><span>{{ scope.row.durationText }}</span></template>
+            </el-table-column>
+            <el-table-column prop="operator" label="操作人" min-width="135" />
+            <el-table-column prop="source" label="来源" min-width="130">
+              <template #default="scope">
+                <el-tag size="small" :type="scope.row.source === '页面' ? 'primary' : 'success'">{{ scope.row.source }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="执行状态" min-width="130">
+              <template #default="scope">
+                <el-tag :type="IRRIGATION_STATUS[scope.row.status]?.type || 'info'" size="small">
+                  <el-icon v-if="scope.row.status === '进行中'" class="is-loading"><Loading /></el-icon>
+                  {{ scope.row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="currentRecords.length === 0" description="暂无灌溉记录" />
+        </el-card>
       </el-col>
     </el-row>
 
@@ -265,13 +264,13 @@ const handlePlotSelect = (plotId) => {
 
 const getHumidityColor = (humidity, threshold) => {
   const status = getHumidityStatus(humidity, threshold)
-  const colors = { alert: '#F56C6C', dry: '#E6A23C', normal: '#67C23A' }
+  const colors = { alert: '#d85c57', dry: '#d99a3d', normal: '#56a56a' }
   return colors[status]
 }
 const getProgressColor = (humidity, threshold) => {
-  if (humidity < threshold * 0.8) return '#F56C6C'
-  if (humidity < threshold) return '#E6A23C'
-  return '#67C23A'
+  if (humidity < threshold * 0.8) return '#d85c57'
+  if (humidity < threshold) return '#d99a3d'
+  return '#56a56a'
 }
 
 const refreshRecords = async () => {
@@ -285,49 +284,50 @@ const refreshRecords = async () => {
 </script>
 
 <style scoped>
-.device-status-page { animation: fadeIn .3s ease; }
+.device-status-page { --farm-ink:#4b3527;--farm-muted:#8e7d70;--farm-line:#eadfd2;--farm-soft:#fff8ef;--farm-card:rgba(255,253,249,.84);animation: fadeIn .3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .page-head { display: flex; justify-content: space-between; }
-.plot-list-card, .panel-header, .metric-card, .records-card { border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(20, 69, 53, .05); }
+.plot-list-card, .panel-header, .metric-card, .records-card { border: 1px solid var(--farm-line); border-radius: 16px; background:var(--farm-card);box-shadow: 0 10px 30px rgba(91,61,39,.055);backdrop-filter:blur(8px); }
 .plot-list-card { margin-bottom: 20px; overflow: hidden; }
-.plot-list-card :deep(.el-card__header), .records-card :deep(.el-card__header) { padding: 17px 20px; border-bottom-color: #edf2ef; }
+.plot-list-card :deep(.el-card__header), .records-card :deep(.el-card__header) { padding: 17px 20px; border-bottom-color: var(--farm-line);background:rgba(255,249,241,.62); }
 .plot-list-card :deep(.el-card__body) { padding: 8px; }
-.list-header, .records-header { display: flex; justify-content: space-between; align-items: center; color: #28483d; font-size: 15px; font-weight: 700; }
+.list-header, .records-header { display: flex; justify-content: space-between; align-items: center; color: var(--farm-ink); font-size: 15px; font-weight: 700; }
 .list-header > span, .records-header > span { display: flex; align-items: center; gap: 8px; }
 .list-header .el-icon, .records-header .el-icon { color: var(--accent); }
 .plot-menu { border: none; }
-.plot-menu :deep(.el-menu-item) { height: auto; min-height: 66px; margin: 4px 0; padding: 11px 13px !important; border-radius: 10px; color: #516860; line-height: 1.4; }
-.plot-menu :deep(.el-menu-item:hover) { background: #f3f8f5; }
-.plot-menu :deep(.el-menu-item.is-active) { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, white); font-weight: 700; }
+.plot-menu :deep(.el-menu-item) { height: auto; min-height: 66px; margin: 4px 0; padding: 11px 13px !important; border-radius: 10px; color: #6f6055; line-height: 1.4; }
+.plot-menu :deep(.el-menu-item:hover) { background: var(--farm-soft); }
+.plot-menu :deep(.el-menu-item.is-active) { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, #fffaf4); font-weight: 700; }
 .menu-item-content { display: flex; justify-content: space-between; align-items: center; width: 100%; }
 .menu-plot-info { min-width: 0; flex: 1; }
 .menu-plot-name { display: block; margin-bottom: 5px; font-size: 14px; font-weight: 650; }
 .menu-plot-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .menu-humidity { margin-left: 10px; font-size: 18px; font-weight: 750; }
 .is-offline .menu-plot-name { color: #909f99; }
-.panel-header { margin-bottom: 20px; background: linear-gradient(135deg, #fff, #f5faf7); }
+.panel-header { margin-bottom: 20px; background: linear-gradient(135deg, rgba(255,254,251,.94), rgba(255,246,235,.78)); }
 .panel-header :deep(.el-card__body) { padding: 21px 24px; }
 .header-content { display: flex; justify-content: space-between; align-items: center; gap: 18px; }
-.plot-title { margin: 0; color: #203c33; font-size: 22px; }
-.plot-crop { display: inline-block; margin-top: 5px; color: #82928c; font-size: 13px; }
+.plot-title { margin: 0; color: var(--farm-ink); font-size: 22px; }
+.plot-crop { display: inline-block; margin-top: 5px; color: var(--farm-muted); font-size: 13px; }
 .device-status-summary { text-align: right; }
 .status-tag { border: 0; border-radius: 9px; font-size: 13px; }
-.device-id { margin-top: 7px; color: #8b9994; font-size: 12px; }
+.device-id { margin-top: 7px; color: #9a8a7e; font-size: 12px; }
 .metrics-row { margin-bottom: 20px; }
 .metric-card { height: calc(100% - 12px); margin-bottom: 12px; text-align: center; }
 .metric-card :deep(.el-card__body) { padding: 22px 20px; }
-.metric-label { margin-bottom: 8px; color: #83928d; font-size: 13px; }
-.metric-value-large { color: #29473d; font-size: 42px; font-weight: 750; line-height: 1.25; }
+.metric-label { margin-bottom: 8px; color: var(--farm-muted); font-size: 13px; }
+.metric-value-large { color: var(--farm-ink); font-size: 42px; font-weight: 750; line-height: 1.25; }
+.temperature-value{color:#d89535}
 .irrigation-limit { color: var(--accent); }
 .unit { margin-left: 4px; font-size: 14px; font-weight: 600; }
-.metric-desc, .metric-threshold { margin-top: 9px; color: #93a19c; font-size: 12px; }
-.metric-device-state { display: flex; min-height: 28px; align-items: center; justify-content: center; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #edf2ef; }
+.metric-desc, .metric-threshold { margin-top: 9px; color: #a09185; font-size: 12px; }
+.metric-device-state { display: flex; min-height: 28px; align-items: center; justify-content: center; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--farm-line); }
 .metric-device-state .el-tag { display: inline-flex; align-items: center; gap: 3px; border-radius: 8px; }
-.metric-device-state > span { color: #92a19b; font-size: 11px; }
+.metric-device-state > span { color: #9d8f84; font-size: 11px; }
 .humidity-progress { margin: 13px 0 7px; }
-.records-card { margin-bottom: 20px; overflow: hidden; }
+.records-card { margin-bottom: 20px; overflow: hidden; }.records-card-wide{margin-top:0}
 .records-card :deep(.el-card__body) { padding: 0 20px 20px; }
-.records-card :deep(.el-table) { --el-table-header-bg-color: #f3f8f5; --el-table-row-hover-bg-color: #f5faf7; border-radius: 10px; }
+.records-card :deep(.el-table) { --el-table-header-bg-color: #fff4e8;--el-table-header-text-color:#745b49; --el-table-row-hover-bg-color: #fff9f2; border-radius: 10px; }
 @media (max-width: 900px) { .plot-list-card { margin-bottom: 20px; } }
 @media (max-width: 560px) { .header-content { align-items: flex-start; flex-direction: column; }.device-status-summary { text-align: left; }.records-card :deep(.el-card__body) { padding: 0 12px 14px; } }
 </style>
