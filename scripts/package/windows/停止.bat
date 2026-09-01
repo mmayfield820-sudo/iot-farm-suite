@@ -1,12 +1,11 @@
-ï»¿@echo off
-chcp 65001 >nul
-title æ™ºæ…§å†œä¸šå¹³å° Â· åœæ­¢æœåŠ¡
+@echo off
+title ÖÇ»ÛÅ©ÒµÆ½Ì¨ ¡¤ Í£Ö¹·şÎñ
 cd /d "%~dp0"
 
 echo.
-echo  æ­£åœ¨åœæ­¢æ™ºæ…§å†œä¸šå¹³å°...
+echo  ÕıÔÚÍ£Ö¹ÖÇ»ÛÅ©ÒµÆ½Ì¨...
 docker compose --env-file "%~dp0iot-farm-suite\.env" -f "%~dp0iot-farm-suite\infra\docker-compose.yml" down
 echo.
-echo  å¹³å°å·²åœæ­¢ã€‚æ•°æ®ä¿å­˜åœ¨ Docker é‡Œï¼Œä¸‹æ¬¡åŒå‡»ã€Œå¯åŠ¨.batã€æ•°æ®è¿˜åœ¨ã€‚
+echo  Æ½Ì¨ÒÑÍ£Ö¹¡£Êı¾İ±£´æÔÚ Docker Àï£¬ÏÂ´ÎË«»÷¡¸Æô¶¯.bat¡¹Êı¾İ»¹ÔÚ¡£
 echo.
 pause
