@@ -47,6 +47,7 @@ services:
 
   # ─── 后端业务服务（FastAPI :8080）───
   backend:
+    image: smart-farm/backend:latest   # 固定名：预构建镜像包 load 后可直接用，不在才构建
     build:
       context: ..
       dockerfile: backend/Dockerfile
@@ -92,6 +93,7 @@ services:
 
   # ─── AI 服务（RAG :8001，调 DeepSeek API）───
   ai-service:
+    image: smart-farm/ai-service:latest   # 固定名：预构建镜像包 load 后可直接用
     build:
       context: ..
       dockerfile: ai-service/Dockerfile
@@ -125,6 +127,7 @@ services:
 
   # ─── 前端（Nginx :80）───
   frontend:
+    image: smart-farm/frontend:latest   # 固定名：预构建镜像包 load 后可直接用
     build:
       context: ..
       dockerfile: frontend/Dockerfile
