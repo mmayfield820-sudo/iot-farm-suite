@@ -1,17 +1,38 @@
-# Smart agriculture local dependencies
+# 智慧农业项目 —— Docker Compose（全栈）
+# 一条命令起全套：docker compose up -d
+# 访问：http://<服务器IP>   （前端）
+# MQTT：<服务器IP>:1883     （板子 / 客户端连这里）
+#
+# 使用前：把 .env.example 复制为 .env 并填写真实密钥
+# （JWT_SECRET / AI_MODEL_API_KEY / BOCHA_API_KEY 必填）
+
 services:
+  # ─── 消息中转（MQTT Broker）───
+  emqx:
+    image: emqx/emqx:5.8
+    container_name: emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # MQTT 端口（板子/模拟器/客户端连这个，匿名）
+      - "18083:18083" # EMQX 管理台（浏览器 http://IP:18083 查看连接，admin/public）
+      - "8083:8083"   # WebSocket 端口（如前端需要实时推送）
+    volumes:
+      - emqx_data:/opt/emqx/data
+
+  # ─── 业务数据库（MySQL）───
   mysql:
     image: mysql:8.0
-    command: ["--default-time-zone=+00:00"]
     container_name: farm-mysql
     restart: unless-stopped
+    command: ["--default-time-zone=+00:00"]
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-farm}
       MYSQL_USER: ${MYSQL_USER:-farm}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-farm}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-farm-root}
-    ports:
-      - "3306:3306"
+    # 不映射宿主机端口：MySQL 只在容器网络内被后端访问，外部不可达（最安全）
+    expose:
+      - "3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ../database/schema/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
@@ -21,16 +42,102 @@ services:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 30s
 
-  emqx:
-    image: emqx/emqx
-    container_name: emqx
+  # ─── 后端业务服务（FastAPI :8080）───
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: smart-farm-backend
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      emqx:
+        condition: service_started
+      ai-service:
+        condition: service_started
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-farm}:${MYSQL_PASSWORD:-farm}@mysql:3306/${MYSQL_DATABASE:-farm}
+      MQTT_HOST: emqx
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: ""
+      MQTT_PASSWORD: ""
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES:-1440}
+      AI_SERVICE_URL: http://ai-service:8001
+      # 清掉 Docker Desktop 注入的代理：容器内 127.0.0.1 指向容器自己，代理不生效，
+      # 反而会让 backend→ai-service 的 urllib 调用走代理而失败。云端服务器本无代理，直连正确。
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+      PUBLIC_REGISTRATION_ENABLED: ${PUBLIC_REGISTRATION_ENABLED:-true}
+      TELEMETRY_PAIR_TIMEOUT_SECONDS: ${TELEMETRY_PAIR_TIMEOUT_SECONDS:-30}
+      DEVICE_OFFLINE_TIMEOUT_SECONDS: ${DEVICE_OFFLINE_TIMEOUT_SECONDS:-90}
+      COMMAND_ACK_TIMEOUT_SECONDS: ${COMMAND_ACK_TIMEOUT_SECONDS:-30}
+      AI_SERVICE_TIMEOUT_SECONDS: ${AI_SERVICE_TIMEOUT_SECONDS:-120}
     ports:
-      - "2883:1883"
-      - "8083:8083"
-      - "18083:18083"
+      - "127.0.0.1:8080:8080"   # 仅本机可连（生产不对外，前端走 nginx 反代）
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8080/health',timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ─── AI 服务（RAG :8001，调 DeepSeek API）───
+  ai-service:
+    build:
+      context: ..
+      dockerfile: ai-service/Dockerfile
+    container_name: smart-farm-ai
+    restart: unless-stopped
+    environment:
+      # DeepSeek API（硅基流动，OpenAI 兼容）—— 详见 .env.example
+      AI_MODEL_BASE_URL: ${AI_MODEL_BASE_URL:-https://api.siliconflow.cn/v1}
+      AI_MODEL_API_KEY: ${AI_MODEL_API_KEY}
+      AI_MODEL_NAME: ${AI_MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
+      AI_MODEL_TIMEOUT_SECONDS: ${AI_MODEL_TIMEOUT_SECONDS:-15}
+      # 联网搜索（博查，可留空关闭）
+      BOCHA_API_KEY: ${BOCHA_API_KEY:-}
+      # 同上：ai-service 需直连硅基流动/博查，清掉 Docker 注入的失效代理
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+      BOCHA_TIMEOUT_SECONDS: ${BOCHA_TIMEOUT_SECONDS:-10}
+      AI_LOCAL_TIMEZONE: ${AI_LOCAL_TIMEZONE:-Asia/Shanghai}
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8001/health',timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ─── 前端（Nginx :80）───
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    container_name: smart-farm-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"   # 对外访问入口 http://<IP>
+    environment:
+      # 构建期参数（--build 时生效）
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
 
 volumes:
   mysql_data:
+  emqx_data:

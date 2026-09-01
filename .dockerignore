@@ -1,0 +1,17 @@
+# 构建上下文忽略（加速 + 安全）
+.git
+.env
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+hardware/
+device-simulator/
+docs/UI/
+database/backups/
+*.md
+*.mp4
+*.png
