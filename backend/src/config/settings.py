@@ -30,6 +30,9 @@ class MqttSettings:
     username: str
     password: str
     keepalive: int = 60
+    device_offline_seconds: int = 120
+    command_timeout_seconds: int = 30
+    monitor_interval_seconds: int = 10
 
 
 def _required_env(name: str) -> str:
@@ -61,6 +64,9 @@ def get_mqtt_settings() -> MqttSettings:
         username=os.getenv("MQTT_USERNAME", ""),
         password=os.getenv("MQTT_PASSWORD", ""),
         keepalive=int(os.getenv("MQTT_KEEPALIVE", "60")),
+        device_offline_seconds=int(os.getenv("MQTT_DEVICE_OFFLINE_SECONDS", "120")),
+        command_timeout_seconds=int(os.getenv("MQTT_COMMAND_TIMEOUT_SECONDS", "30")),
+        monitor_interval_seconds=int(os.getenv("MQTT_MONITOR_INTERVAL_SECONDS", "10")),
     )
 
 

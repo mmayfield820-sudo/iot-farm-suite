@@ -22,3 +22,9 @@ class CommandService:
         self, device_id: int, action: str, operator_id: int | None = None
     ) -> dict | None:
         return self._repository.create_command(device_id, action, operator_id)
+
+    def get_mqtt_device_id(self, record_id: int) -> str | None:
+        return self._repository.get_mqtt_device_id(record_id)
+
+    def mark_publish_failed(self, record_id: int) -> None:
+        self._repository.mark_publish_failed(record_id)

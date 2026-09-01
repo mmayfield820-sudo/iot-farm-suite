@@ -67,3 +67,23 @@ class CommandRepository:
                 return None
             record_id = result.lastrowid
         return self.get_command(record_id)
+
+    def get_mqtt_device_id(self, record_id: int) -> str | None:
+        """取得待下发指令对应的 MQTT 通信标识。"""
+        statement = text(
+            "SELECT d.mqtt_device_id FROM irrigation_records r "
+            "JOIN devices d ON d.device_id = r.device_id "
+            "WHERE r.record_id = :record_id AND r.status = 'PENDING'"
+        )
+        with self._engine.connect() as connection:
+            row = connection.execute(statement, {"record_id": record_id}).mappings().first()
+        return row["mqtt_device_id"] if row is not None else None
+
+    def mark_publish_failed(self, record_id: int) -> None:
+        """Broker 不可用或发布失败时结束指令，避免永久停留在 pending。"""
+        statement = text(
+            "UPDATE irrigation_records SET status = 'FAILED', executed_at = CURRENT_TIMESTAMP "
+            "WHERE record_id = :record_id AND status = 'PENDING'"
+        )
+        with self._engine.begin() as connection:
+            connection.execute(statement, {"record_id": record_id})

@@ -16,9 +16,9 @@ class TelemetryRepositoryTest(unittest.TestCase):
         result = MagicMock()
         result.mappings.return_value.all.return_value = [
             {
-                "plot_moisture": 42.5,
-                "temperature": 26.8,
-                "report_datetime": datetime(2026, 8, 24, 9),
+                "metric_type": "humidity",
+                "metric_value": 42.5,
+                "reported_at": datetime(2026, 8, 24, 9),
             },
         ]
         connection.execute.return_value = result
