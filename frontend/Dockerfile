@@ -4,10 +4,20 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
-# 国内网络：npm 统一走 npmmirror 国内镜像（本机 Docker Desktop 与云服务器均直连可用）
-# 注意：不要设 host.docker.internal 代理 —— 那是 Windows Docker Desktop 专属地址，
-# 云服务器上不存在，会导致 npm ci 崩溃（Exit handler never called）。
-RUN npm config set registry https://registry.npmmirror.com \
+# npm registry 默认走 npmmirror 国内镜像（云服务器自动部署直连可用）。
+# 本机若连 npm 镜像不稳（常见：开着代理/VPN 干扰 Docker 出网导致 ECONNREFUSED），
+# 可用 build-arg 覆盖（见 scripts/make_package.sh 顶部说明）：
+#   --build-arg NPM_REGISTRY=https://registry.npmjs.org
+#   --build-arg http_proxy=http://host.docker.internal:7890
+# 注意：代理只在构建时通过 build-arg 临时传入，绝不写死在 Dockerfile 里 ——
+# 云服务器上没有 host.docker.internal 这个地址，写死会导致 npm ci 崩溃（Exit handler never called）。
+# replace-registry-host always：npm ci 严格按 package-lock.json 的 resolved 字段下载，
+# 该配置强制统一走上面的 registry，避免 lock 锁死的镜像源地址连不上。
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG http_proxy=
+ARG https_proxy=
+RUN npm config set registry "$NPM_REGISTRY" \
+ && npm config set replace-registry-host always \
  && npm ci
 COPY frontend/ ./
 # 构建时写入 API 前缀（/api，由 nginx 反代到后端）

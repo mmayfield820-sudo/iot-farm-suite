@@ -24,7 +24,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$PROJECT_ROOT/dist"
 BUILD_DIR="$DIST_DIR/预构建镜像包"
 IMAGES_DIR="$BUILD_DIR/images"
-SOURCE_APP_DIR="$BUILD_DIR/iot-farm-suite"
+# 包内运行时目录。目录名固定为 iot-farm-suite（启动.bat 与部署文档引用了该路径，勿改）
+APP_DIR="$BUILD_DIR/iot-farm-suite"
 PACKAGE_WIN_DIR="$PROJECT_ROOT/scripts/package/windows"
 DEPLOY_DOC="$PROJECT_ROOT/docs/deployment/部署文档.md"
 
@@ -37,17 +38,23 @@ declare -A IMAGES=(
   [frontend]="smart-farm/frontend:latest"
 )
 
-# 组装源码时排除的目录/文件（.env 绝不进包！）
-SOURCE_EXCLUDES=(
-  "--exclude=.git"
-  "--exclude=.env"
-  "--exclude=node_modules"
-  "--exclude=__pycache__"
-  "--exclude=dist"
-  "--exclude=*.log"
-  "--exclude=*.pyc"
-  # 注意：device-simulator 不再排除 —— 模拟器（jar + sensors.dat + 使用文档）要随包交付给老师
-  "--exclude=农户界面当前演示.mp4"
+# 发布包内"运行时必需文件"白名单（相对仓库根）。
+# 交付规范：发布包内不放源码 —— 平台源码（backend/frontend/ai-service 等）单独走 Git 仓库交付，
+# 包内只带运行必需文件，避免踩"包内带源码"红线，也让包更小。
+# 各文件的用途（启动.bat / docker-compose.yml 直接依赖，缺了老师跑不起来）：
+#   - .env.example                             启动.bat 首次运行 copy 成 .env（含 JWT 密钥占位）
+#   - infra/docker-compose.yml                 启动.bat cd 进来执行 docker compose up -d
+#   - database/schema + seed 的 3 个 .sql      MySQL 容器首次启动自动建库建表 + 预置演示数据（compose 挂载）
+#   - device-simulator/鸿蒙模拟器/*            交付的传感器模拟器：jar 成品 + 预置 sensors.dat + 使用文档
+RUNTIME_FILES=(
+  ".env.example"
+  "infra/docker-compose.yml"
+  "database/schema/001_schema.sql"
+  "database/schema/002_reference_data.sql"
+  "database/seed/001_demo_data.sql"
+  "device-simulator/鸿蒙模拟器/javafx-demo-1.0-SNAPSHOT.jar"
+  "device-simulator/鸿蒙模拟器/sensors.dat"
+  "device-simulator/鸿蒙模拟器/使用文档.md"
 )
 
 log()  { echo -e "\033[1;36m[打包]\033[0m $*"; }
@@ -64,13 +71,31 @@ log "开始打包智慧农业平台 ..."
 log "仓库根：$PROJECT_ROOT"
 
 # ──────────── 1. 构建镜像 ────────────
+# npm 源默认 npmmirror（云服务器自动部署直连，无需传参）。
+# 本机若连 npm 镜像不稳（开着代理/VPN 干扰 Docker 出网，报 ECONNREFUSED），
+# 构建 frontend 前请显式传代理出口，例如（Clash 默认 7890）：
+#   NPM_REGISTRY=https://registry.npmjs.org NPM_HTTP_PROXY=http://host.docker.internal:7890 \
+#   bash scripts/make_package.sh
+NPM_REGISTRY="${NPM_REGISTRY:-}"
+NPM_HTTP_PROXY="${NPM_HTTP_PROXY:-}"
+
 log "第 1/5 步：构建平台镜像（首次约 10 分钟，需联网）..."
 cd "$PROJECT_ROOT/infra"
+BUILD_ARGS=()
+if [ -n "$NPM_REGISTRY" ]; then BUILD_ARGS+=(--build-arg "NPM_REGISTRY=$NPM_REGISTRY"); fi
+if [ -n "$NPM_HTTP_PROXY" ]; then
+  BUILD_ARGS+=(--build-arg "http_proxy=$NPM_HTTP_PROXY" --build-arg "https_proxy=$NPM_HTTP_PROXY")
+fi
+if [ ${#BUILD_ARGS[@]} -gt 0 ]; then
+  log "frontend 构建参数：NPM_REGISTRY=${NPM_REGISTRY:-npmmirror}${NPM_HTTP_PROXY:+ 代理=$NPM_HTTP_PROXY}"
+fi
 if [ -f "$PROJECT_ROOT/.env" ]; then
-  docker compose --env-file "$PROJECT_ROOT/.env" build backend ai-service frontend
+  docker compose --env-file "$PROJECT_ROOT/.env" build backend ai-service
+  docker compose --env-file "$PROJECT_ROOT/.env" build "${BUILD_ARGS[@]}" frontend
 else
   log "提示：未找到 .env，构建使用默认配置；运行部署时需填写密钥（见部署文档）"
-  docker compose build backend ai-service frontend
+  docker compose build backend ai-service
+  docker compose build "${BUILD_ARGS[@]}" frontend
 fi
 docker pull "${IMAGES[emqx]}"
 docker pull "${IMAGES[mysql]}"
@@ -79,11 +104,11 @@ log "镜像构建完成"
 # ──────────── 2. 组装目录 ────────────
 log "第 2/5 步：组装部署包目录 ..."
 rm -rf "$BUILD_DIR"
-mkdir -p "$IMAGES_DIR" "$SOURCE_APP_DIR"
+mkdir -p "$IMAGES_DIR" "$APP_DIR"
 
-# 复制源码（排除敏感/无用文件）
-( cd "$PROJECT_ROOT" && tar "${SOURCE_EXCLUDES[@]}" -cf - . ) \
-  | ( cd "$SOURCE_APP_DIR" && tar -xf - )
+# 复制运行时必需文件（白名单，绝不带源码 / .env）
+( cd "$PROJECT_ROOT" && tar -cf - "${RUNTIME_FILES[@]}" ) \
+  | ( cd "$APP_DIR" && tar -xf - )
 
 # 复制 Windows 一键启动文件 + 部署文档
 cp "$PACKAGE_WIN_DIR/启动.bat"  "$BUILD_DIR/"
@@ -104,10 +129,10 @@ log "镜像导出完成：$(du -sh "$IMAGES_DIR" | cut -f1)"
 
 # ──────────── 4. 安全校验 ────────────
 log "第 4/5 步：安全校验 ..."
-if [ -f "$SOURCE_APP_DIR/.env" ]; then
-  die "校验失败：.env 被组装进包了！请检查 SOURCE_EXCLUDES 后重试"
+if [ -f "$APP_DIR/.env" ]; then
+  die "校验失败：.env 被组装进包了！请检查 RUNTIME_FILES 白名单后重试"
 fi
-if find "$SOURCE_APP_DIR" -iname "*复盘*" -o -iname "*.key" -o -iname "*.pem" 2>/dev/null | grep -q .; then
+if find "$APP_DIR" -iname "*复盘*" -o -iname "*.key" -o -iname "*.pem" 2>/dev/null | grep -q .; then
   die "校验失败：发现敏感文件（复盘/密钥/证书），请确认后重试"
 fi
 log "校验通过：无 .env、无敏感文件"
