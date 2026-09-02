@@ -44,6 +44,7 @@ services:
       - ../database/schema/028_task_change_orders_and_temporary_tasks.sql:/docker-entrypoint-initdb.d/028_task_change_orders_and_temporary_tasks.sql:ro
       - ../database/schema/029_append_only_task_completion_corrections.sql:/docker-entrypoint-initdb.d/029_append_only_task_completion_corrections.sql:ro
       - ../database/schema/030_historical_stage_supplements.sql:/docker-entrypoint-initdb.d/030_historical_stage_supplements.sql:ro
+      - ../database/schema/031_annual_production_archives.sql:/docker-entrypoint-initdb.d/031_annual_production_archives.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]

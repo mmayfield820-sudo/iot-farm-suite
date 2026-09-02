@@ -5,6 +5,7 @@ from datetime import date
 
 from backend.app.main import (
     annual_stage_window,
+    archive_page,
     decoded_json_object,
     management_record_type_for_task,
     production_year_bounds,
@@ -47,6 +48,13 @@ class ProductionLifecycleTests(unittest.TestCase):
         self.assertEqual(decoded_json_object('{"reason":"field change"}'), {"reason": "field change"})
         self.assertEqual(decoded_json_object("invalid"), {})
         self.assertEqual(decoded_json_object(["not", "an", "object"]), {})
+
+    def test_archive_categories_page_independently(self) -> None:
+        records = [{"id": value} for value in range(1, 8)]
+        self.assertEqual(
+            archive_page(records, 2, 3),
+            {"items": [{"id": 4}, {"id": 5}, {"id": 6}], "page": 2, "pageSize": 3, "total": 7},
+        )
 
 
 if __name__ == "__main__":

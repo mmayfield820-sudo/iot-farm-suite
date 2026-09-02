@@ -178,7 +178,7 @@ async function saveProfileSettings() {
 }
 function openMilestone(type) {
   milestoneType.value = type
-  const value = type === 'harvest' ? profile.value?.harvestCompletedAt : profile.value?.cleanupCompletedAt
+  const value = type === 'harvest' ? context.value?.harvestCompletedAt : context.value?.cleanupCompletedAt
   milestoneForm.completedAt = value?.slice(0, 19) || ''
   milestoneOpen.value = true
 }
@@ -187,7 +187,7 @@ async function saveMilestone() {
   saving.value = true
   try {
     const api = milestoneType.value === 'harvest' ? confirmFarmHarvestCompletion : confirmFarmCleanupCompletion
-    await api(selectedFarmId.value, { completedAt: milestoneForm.completedAt })
+    await api(selectedFarmId.value, { productionYear: context.value.productionYear, completedAt: milestoneForm.completedAt })
     milestoneOpen.value = false
     await loadContext()
     ElMessage.success(`${milestoneLabel.value}时间已记录`)
@@ -393,8 +393,8 @@ onMounted(loadResources)
           <el-button class="add-plan-stage" plain type="primary" @click="addPlanStage"><el-icon><Plus/></el-icon>添加生长阶段</el-button>
         </section>
         <section class="milestone-grid">
-          <article class="content-panel cycle-closeout"><div><span>采收完成时间</span><strong>{{ profile?.harvestCompletedAt?.replace('T', ' ') || '尚未记录' }}</strong><small>作为生产档案留存，不触发生产年度切换。</small></div><el-button plain @click="openMilestone('harvest')">{{ profile?.harvestCompletedAt ? '更新记录' : '记录采收完成' }}</el-button></article>
-          <article class="content-panel cycle-closeout"><div><span>清园完成时间</span><strong>{{ profile?.cleanupCompletedAt?.replace('T', ' ') || '尚未记录' }}</strong><small>作为验收、成本和追溯记录，不触发计划逻辑。</small></div><el-button plain @click="openMilestone('cleanup')">{{ profile?.cleanupCompletedAt ? '更新记录' : '记录清园完成' }}</el-button></article>
+          <article class="content-panel cycle-closeout"><div><span>采收完成时间</span><strong>{{ context?.harvestCompletedAt?.replace('T', ' ') || '尚未记录' }}</strong><small>作为生产档案留存，不触发生产年度切换。</small></div><el-button plain @click="openMilestone('harvest')">{{ context?.harvestCompletedAt ? '更新记录' : '记录采收完成' }}</el-button></article>
+          <article class="content-panel cycle-closeout"><div><span>清园完成时间</span><strong>{{ context?.cleanupCompletedAt?.replace('T', ' ') || '尚未记录' }}</strong><small>作为验收、成本和追溯记录，不触发计划逻辑。</small></div><el-button plain @click="openMilestone('cleanup')">{{ context?.cleanupCompletedAt ? '更新记录' : '记录清园完成' }}</el-button></article>
         </section>
         <section class="content-panel plot-offsets">
           <div class="section-head"><div><h3>地块日期偏移</h3><p>在全园年度计划框架上，按地块物候提前或推迟任务日期。</p></div></div>

@@ -281,6 +281,7 @@ class FarmProductionProfileRequest(BaseModel):
 
 
 class FarmMilestoneCompletionRequest(BaseModel):
+    productionYear: int = Field(ge=2000, le=2100)
     completedAt: datetime
 
 
@@ -1679,7 +1680,9 @@ def annual_production_context(connection: Any, farm_id: int, *, production_year:
     active_state = next((state for state in stage_states.values() if state["stage_status"] == "active"), None)
     has_undispatched_changes = annual is not None and active_state is not None and active_state["dispatched_template_version_id"] is None
     overdue_stages = [item for item in timeline if item["overdueConfirmation"]]
-    return {"plotId": business_id("P", plot_id) if plot_id is not None else None, "farmId": business_id("F", farm_id), "farmName": farm["farm_name"], "productionYear": production_year, "productionYearStartsOn": production_year_bounds(production_year)[0].isoformat(), "productionYearEndsOn": production_year_bounds(production_year)[1].isoformat(), "templateId": business_id("CT", template["template_id"]), "templateVersionId": business_id("CTV", version_id), "templateName": template["template_name"], "templateScope": "farm" if template["farm_id"] is not None else "standard", "crop": template["crop_name"], "versionNo": template["version_no"], "versionDefinition": template_definition(connection, version_id), "annualConfigured": annual is not None, "annualStatus": annual["annual_status"] if annual else None, "activePlanCount": active_plan_count, "hasUndispatchedChanges": has_undispatched_changes, "canCustomizeInitialTemplate": annual is None and not active_plan_count, "plantingDate": farm["planting_date"].isoformat(), "treeAgeYears": tree_age_years, "track": track, "trackSource": annual["track_source"] if annual else "auto", "trackOverrideReason": annual["track_override_reason"] if annual else None, "stage": current_stage, "stages": timeline, "overdueStages": overdue_stages, "planItems": plan_items, "suggestions": suggestions}
+    milestone_rows = connection.execute(text("SELECT milestone_type,completed_at FROM farm_production_milestone WHERE farm_id=:farm AND production_year=:year"), {"farm": farm_id, "year": production_year}).mappings().all()
+    milestones = {row["milestone_type"]: iso(row["completed_at"]) for row in milestone_rows}
+    return {"plotId": business_id("P", plot_id) if plot_id is not None else None, "farmId": business_id("F", farm_id), "farmName": farm["farm_name"], "productionYear": production_year, "productionYearStartsOn": production_year_bounds(production_year)[0].isoformat(), "productionYearEndsOn": production_year_bounds(production_year)[1].isoformat(), "templateId": business_id("CT", template["template_id"]), "templateVersionId": business_id("CTV", version_id), "templateName": template["template_name"], "templateScope": "farm" if template["farm_id"] is not None else "standard", "crop": template["crop_name"], "versionNo": template["version_no"], "versionDefinition": template_definition(connection, version_id), "annualConfigured": annual is not None, "annualStatus": annual["annual_status"] if annual else None, "activePlanCount": active_plan_count, "hasUndispatchedChanges": has_undispatched_changes, "canCustomizeInitialTemplate": annual is None and not active_plan_count, "plantingDate": farm["planting_date"].isoformat(), "treeAgeYears": tree_age_years, "track": track, "trackSource": annual["track_source"] if annual else "auto", "trackOverrideReason": annual["track_override_reason"] if annual else None, "harvestCompletedAt": milestones.get("harvest"), "cleanupCompletedAt": milestones.get("cleanup"), "stage": current_stage, "stages": timeline, "overdueStages": overdue_stages, "planItems": plan_items, "suggestions": suggestions}
 
 
 def ensure_farmer_task_access(plot_id: int, user: dict[str, Any]) -> dict[str, Any]:
@@ -1705,7 +1708,7 @@ def task_status_value(row: Any) -> str:
 
 
 def task_payload(row: Any, *, include_completion: bool = True) -> dict[str, Any]:
-    payload = {"id": business_id("MT", row["task_id"]), "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None, "plotId": business_id("P", row["plot_id"]), "plotName": row["plot_name"], "stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "source": row["source"], "scheduledDate": row["scheduled_date"].isoformat(), "status": task_status_value(row), "note": row["note"], "updatedAt": iso(row["updated_at"])}
+    payload = {"id": business_id("MT", row["task_id"]), "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None, "plotId": business_id("P", row["plot_id"]), "plotName": row["plot_name"], "stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "source": row["source"], "productionYear": row["production_year"] or production_year_for(row["scheduled_date"]), "scheduledDate": row["scheduled_date"].isoformat(), "status": task_status_value(row), "note": row["note"], "updatedAt": iso(row["updated_at"])}
     if include_completion:
         payload["completion"] = None if row["task_completion_id"] is None else {"id": business_id("TC", row["task_completion_id"]), "result": row["result"], "executedAt": iso(row["executed_at"]), "executorUserId": business_id("U", row["executor_user_id"]), "executorName": row["executor_name"], "note": row["completion_note"], "irrigationRecordId": business_id("IR", row["irrigation_record_id"]) if row["irrigation_record_id"] is not None else None, "recordType": row["record_type"], "correctsCompletionId": business_id("TC", row["corrects_completion_id"]) if row["corrects_completion_id"] is not None else None}
     return payload
@@ -2269,7 +2272,7 @@ def generate_farm_plans(farm_id: str, request: FarmPlanGenerateRequest, user: di
                 scheduled_date = task["scheduledDate"] + timedelta(days=int(plot["production_date_offset_days"] or 0))
                 if scheduled_date < today:
                     continue
-                connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:stage,:type,:title,'template',:scheduled,'pending',:note)"), {"plan": plan_id, "plot": plot_id, "stage": task["stageCode"], "type": task["taskType"], "title": task["title"], "scheduled": scheduled_date, "note": task["note"]})
+                connection.execute(text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:year,:stage,:type,:title,'template',:scheduled,'pending',:note)"), {"plan": plan_id, "plot": plot_id, "year": annual_context["productionYear"], "stage": task["stageCode"], "type": task["taskType"], "title": task["title"], "scheduled": scheduled_date, "note": task["note"]})
             task_count = sum(1 for task in task_rules if task["scheduledDate"] + timedelta(days=int(plot["production_date_offset_days"] or 0)) >= today)
             generated.append({"id": business_id("MP", plan_id), "plotId": business_id("P", plot_id), "taskCount": task_count, "dateOffsetDays": int(plot["production_date_offset_days"] or 0)})
         for old_plan in previous_plans:
@@ -2640,6 +2643,290 @@ def list_farm_management_records(
     }
 
 
+def production_archive_header(connection: Any, farm_id: int, production_year: int) -> dict[str, Any]:
+    row = connection.execute(
+        text(
+            "SELECT a.production_year,a.orchard_track,a.annual_status,a.updated_at,f.farm_name,"
+            "v.template_version_id,v.version_no,t.template_name,t.crop_name,"
+            "h.completed_at AS harvest_completed_at,c.completed_at AS cleanup_completed_at "
+            "FROM farm_annual_production a JOIN farm f ON f.farm_id=a.farm_id "
+            "JOIN crop_template_version v ON v.template_version_id=a.template_version_id "
+            "JOIN crop_template t ON t.template_id=v.template_id "
+            "LEFT JOIN farm_production_milestone h ON h.farm_id=a.farm_id AND h.production_year=a.production_year AND h.milestone_type='harvest' "
+            "LEFT JOIN farm_production_milestone c ON c.farm_id=a.farm_id AND c.production_year=a.production_year AND c.milestone_type='cleanup' "
+            "WHERE a.farm_id=:farm AND a.production_year=:year"
+        ),
+        {"farm": farm_id, "year": production_year},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="PRODUCTION_ARCHIVE_NOT_FOUND")
+    starts_on, ends_on = production_year_bounds(production_year)
+    return {
+        "farmId": business_id("F", farm_id),
+        "farmName": row["farm_name"],
+        "productionYear": production_year,
+        "startsOn": starts_on.isoformat(),
+        "endsOn": ends_on.isoformat(),
+        "templateVersionId": business_id("CTV", row["template_version_id"]),
+        "templateName": row["template_name"],
+        "crop": row["crop_name"],
+        "versionNo": row["version_no"],
+        "track": row["orchard_track"],
+        "status": row["annual_status"],
+        "harvest": {"completed": row["harvest_completed_at"] is not None, "completedAt": iso(row["harvest_completed_at"])},
+        "cleanup": {"completed": row["cleanup_completed_at"] is not None, "completedAt": iso(row["cleanup_completed_at"])},
+        "lastUpdatedAt": iso(row["updated_at"]),
+    }
+
+
+def archive_page(items: list[dict[str, Any]], page: int, page_size: int) -> dict[str, Any]:
+    offset = (page - 1) * page_size
+    return {"items": items[offset:offset + page_size], "page": page, "pageSize": page_size, "total": len(items)}
+
+
+@app.get("/api/farms/{farm_id}/production-archives")
+def list_farm_production_archives(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    with engine.connect() as connection:
+        years = connection.execute(text("SELECT production_year FROM farm_annual_production WHERE farm_id=:farm ORDER BY production_year DESC"), {"farm": numeric_farm_id}).scalars().all()
+        archives: list[dict[str, Any]] = []
+        for production_year in years:
+            starts_on, ends_on = production_year_bounds(production_year)
+            starts_at = datetime.combine(starts_on, time.min)
+            ends_at = datetime.combine(ends_on + timedelta(days=1), time.min)
+            params = {"farm": numeric_farm_id, "year": production_year, "starts": starts_at, "ends": ends_at}
+            intervention_count = int(connection.execute(text(
+                "SELECT "
+                "(SELECT COUNT(*) FROM management_task t JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year AND t.source IN ('temporary','historical_supplement')) + "
+                "(SELECT COUNT(*) FROM management_task_adjustment a JOIN management_task t ON t.task_id=a.task_id JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year AND a.adjustment_type='change_order')"
+            ), params).scalar_one())
+            execution_count = int(connection.execute(text(
+                "SELECT "
+                "(SELECT COUNT(*) FROM management_task_completion c JOIN management_task t ON t.task_id=c.task_id JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year AND t.source<>'historical_supplement') + "
+                "(SELECT COUNT(*) FROM irrigation_record r JOIN plot p ON p.plot_id=r.plot_id WHERE p.farm_id=:farm AND r.requested_at>=:starts AND r.requested_at<:ends) + "
+                "(SELECT COUNT(*) FROM farm_production_milestone m WHERE m.farm_id=:farm AND m.production_year=:year)"
+            ), params).scalar_one())
+            latest_values = connection.execute(text(
+                "SELECT "
+                "(SELECT MAX(t.updated_at) FROM management_task t JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year) AS task_at,"
+                "(SELECT MAX(c.created_at) FROM management_task_completion c JOIN management_task t ON t.task_id=c.task_id JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year) AS completion_at,"
+                "(SELECT MAX(a.created_at) FROM management_task_adjustment a JOIN management_task t ON t.task_id=a.task_id JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year) AS adjustment_at,"
+                "(SELECT MAX(r.requested_at) FROM irrigation_record r JOIN plot p ON p.plot_id=r.plot_id WHERE p.farm_id=:farm AND r.requested_at>=:starts AND r.requested_at<:ends) AS irrigation_at,"
+                "(SELECT MAX(m.updated_at) FROM farm_production_milestone m WHERE m.farm_id=:farm AND m.production_year=:year) AS milestone_at"
+            ), params).mappings().one()
+            archive = production_archive_header(connection, numeric_farm_id, production_year)
+            last_updates = [datetime.fromisoformat(archive["lastUpdatedAt"].replace("Z", "+00:00")).replace(tzinfo=None)]
+            last_updates.extend(value for value in latest_values.values() if value is not None)
+            archive.update({"interventionCount": intervention_count, "executionCount": execution_count, "lastUpdatedAt": iso(max(last_updates))})
+            archives.append(archive)
+    return {"farmId": business_id("F", numeric_farm_id), "items": archives}
+
+
+@app.get("/api/farms/{farm_id}/production-archives/{production_year}")
+def get_farm_production_archive(
+    farm_id: str,
+    production_year: int,
+    plot_id: str | None = Query(default=None, alias="plotId"),
+    category: str | None = None,
+    record_type: str | None = Query(default=None, alias="recordType"),
+    intervention_page: int = Query(default=1, ge=1, alias="interventionPage"),
+    intervention_page_size: int = Query(default=6, ge=1, le=100, alias="interventionPageSize"),
+    execution_page: int = Query(default=1, ge=1, alias="executionPage"),
+    execution_page_size: int = Query(default=6, ge=1, le=100, alias="executionPageSize"),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    if category not in {None, "intervention", "execution"}:
+        raise HTTPException(status_code=400, detail="INVALID_ARCHIVE_CATEGORY")
+    numeric_plot_id = None
+    if plot_id:
+        numeric_plot_id = parse_resource_id(plot_id, "P")
+        scoped_plot = plot_scope(numeric_plot_id, user)
+        if scoped_plot["farm_id"] != numeric_farm_id:
+            raise HTTPException(status_code=400, detail="PLOT_NOT_IN_FARM")
+    starts_on, ends_on = production_year_bounds(production_year)
+    params = {
+        "farm": numeric_farm_id,
+        "year": production_year,
+        "plot": numeric_plot_id,
+        "starts": datetime.combine(starts_on, time.min),
+        "ends": datetime.combine(ends_on + timedelta(days=1), time.min),
+    }
+    task_plot_clause = " AND t.plot_id=:plot" if numeric_plot_id is not None else ""
+    irrigation_plot_clause = " AND r.plot_id=:plot" if numeric_plot_id is not None else ""
+    task_columns = (
+        "t.task_id,t.plan_id,t.plot_id,t.production_year,t.stage_code,t.task_type,t.title,t.source,"
+        "t.scheduled_date,t.task_status,t.note AS task_note,t.updated_at,p.plot_name,f.farm_name"
+    )
+    with engine.connect() as connection:
+        header = production_archive_header(connection, numeric_farm_id, production_year)
+        historical_rows = connection.execute(text(
+            f"SELECT {task_columns},c.task_completion_id,c.result,c.executed_at,c.executor_name,c.note AS completion_note,"
+            "a.task_adjustment_id,a.after_value,a.created_at AS intervention_at,u.real_name AS recorded_by_name "
+            "FROM management_task t JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+            "JOIN management_task_completion c ON c.task_id=t.task_id AND c.record_type='completion' "
+            "LEFT JOIN management_task_adjustment a ON a.task_id=t.task_id AND a.adjustment_type='historical_stage_supplement' "
+            "LEFT JOIN users u ON u.user_id=a.changed_by WHERE p.farm_id=:farm AND t.production_year=:year "
+            f"AND t.source='historical_supplement'{task_plot_clause} ORDER BY c.executed_at DESC,c.task_completion_id DESC"
+        ), params).mappings().all()
+        temporary_rows = connection.execute(text(
+            f"SELECT {task_columns},a.task_adjustment_id,a.after_value,a.created_at AS intervention_at,u.real_name AS recorded_by_name "
+            "FROM management_task t JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+            "LEFT JOIN management_task_adjustment a ON a.task_id=t.task_id AND a.adjustment_type='temporary_task' "
+            "LEFT JOIN users u ON u.user_id=a.changed_by WHERE p.farm_id=:farm AND t.production_year=:year "
+            f"AND t.source='temporary'{task_plot_clause} ORDER BY COALESCE(a.created_at,t.updated_at) DESC,t.task_id DESC"
+        ), params).mappings().all()
+        change_rows = connection.execute(text(
+            f"SELECT {task_columns},a.task_adjustment_id,a.before_value,a.after_value,a.created_at AS intervention_at,u.real_name AS recorded_by_name "
+            "FROM management_task_adjustment a JOIN management_task t ON t.task_id=a.task_id "
+            "JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id LEFT JOIN users u ON u.user_id=a.changed_by "
+            "WHERE p.farm_id=:farm AND t.production_year=:year AND a.adjustment_type='change_order'"
+            f"{task_plot_clause} ORDER BY a.created_at DESC,a.task_adjustment_id DESC"
+        ), params).mappings().all()
+        completion_rows = connection.execute(text(
+            f"SELECT {task_columns},c.task_completion_id,c.result,c.executed_at,c.executor_name,c.note AS completion_note,"
+            "c.irrigation_record_id,c.record_type,c.corrects_completion_id,c.created_at AS completion_created_at "
+            "FROM management_task_completion c JOIN management_task t ON t.task_id=c.task_id "
+            "JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+            "WHERE p.farm_id=:farm AND t.production_year=:year AND t.source<>'historical_supplement'"
+            f"{task_plot_clause} ORDER BY c.executed_at DESC,c.task_completion_id DESC"
+        ), params).mappings().all()
+        correction_adjustments = connection.execute(text(
+            "SELECT a.task_id,a.after_value FROM management_task_adjustment a JOIN management_task t ON t.task_id=a.task_id "
+            "JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm AND t.production_year=:year AND a.adjustment_type='completion_correction'"
+        ), params).mappings().all()
+        irrigation_rows = connection.execute(text(
+            "SELECT r.record_id,r.command_id,r.plot_id,r.device_id,r.action_type,r.activation_type,r.status,r.requested_at,r.executed_at,"
+            "r.planned_duration_minutes,r.scheduled_stop_at,u.real_name AS operator_name,p.plot_name,f.farm_name,d.device_code "
+            "FROM irrigation_record r JOIN plot p ON p.plot_id=r.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+            "JOIN device d ON d.device_id=r.device_id LEFT JOIN users u ON u.user_id=r.operator_id "
+            "WHERE p.farm_id=:farm AND r.requested_at>=:starts AND r.requested_at<:ends"
+            f"{irrigation_plot_clause} ORDER BY r.requested_at DESC,r.record_id DESC"
+        ), params).mappings().all()
+        milestone_rows = [] if numeric_plot_id is not None else connection.execute(text(
+            "SELECT m.*,u.real_name AS recorded_by_name,f.farm_name FROM farm_production_milestone m "
+            "JOIN farm f ON f.farm_id=m.farm_id LEFT JOIN users u ON u.user_id=m.recorded_by "
+            "WHERE m.farm_id=:farm AND m.production_year=:year ORDER BY m.completed_at DESC"
+        ), params).mappings().all()
+
+        replacement_ids: set[int] = set()
+        for row in change_rows:
+            replacement_value = decoded_json_object(row["after_value"]).get("replacementTaskId")
+            if replacement_value:
+                try:
+                    replacement_ids.add(parse_resource_id(str(replacement_value), "MT"))
+                except HTTPException:
+                    pass
+        replacements: dict[int, Any] = {}
+        if replacement_ids:
+            rows = connection.execute(text(
+                f"SELECT {task_columns} FROM management_task t JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id WHERE t.task_id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)), {"ids": list(replacement_ids)}).mappings().all()
+            replacements = {row["task_id"]: row for row in rows}
+
+    def task_context(row: Any) -> dict[str, Any]:
+        return {
+            "id": business_id("MT", row["task_id"]),
+            "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None,
+            "source": row["source"],
+            "taskType": row["task_type"],
+            "title": row["title"],
+            "stageCode": row["stage_code"],
+            "scheduledDate": row["scheduled_date"].isoformat(),
+            "status": task_status_value(row),
+            "note": row["task_note"],
+        }
+
+    def base_task_record(row: Any, record_id: str, record_kind: str, occurred_at: datetime) -> dict[str, Any]:
+        return {
+            "id": record_id,
+            "recordType": record_kind,
+            "occurredAt": iso(occurred_at),
+            "farmId": business_id("F", numeric_farm_id),
+            "farmName": row["farm_name"],
+            "plotId": business_id("P", row["plot_id"]),
+            "plotName": row["plot_name"],
+            "productionYear": production_year,
+            "stageCode": row["stage_code"],
+            "title": row["title"],
+            "referenceId": business_id("MT", row["task_id"]),
+            "task": task_context(row),
+        }
+
+    interventions: list[dict[str, Any]] = []
+    for row in historical_rows:
+        adjustment = decoded_json_object(row["after_value"])
+        item = base_task_record(row, f"historical:{business_id('TC', row['task_completion_id'])}", "historical_supplement", row["executed_at"])
+        item.update({"status": "completed", "executorName": row["executor_name"], "result": row["result"], "note": row["completion_note"], "reason": adjustment.get("reason"), "recordedByName": row["recorded_by_name"]})
+        interventions.append(item)
+    for row in temporary_rows:
+        adjustment = decoded_json_object(row["after_value"])
+        item = base_task_record(row, f"temporary:{business_id('MT', row['task_id'])}", "temporary_task", row["intervention_at"] or row["updated_at"])
+        item.update({"status": task_status_value(row), "executorName": row["recorded_by_name"], "result": None, "note": row["task_note"], "reason": adjustment.get("reason"), "recordedByName": row["recorded_by_name"]})
+        interventions.append(item)
+    for row in change_rows:
+        before = decoded_json_object(row["before_value"])
+        after = decoded_json_object(row["after_value"])
+        replacement = None
+        if after.get("replacementTaskId"):
+            try:
+                replacement_row = replacements.get(parse_resource_id(str(after["replacementTaskId"]), "MT"))
+                replacement = task_context(replacement_row) if replacement_row else None
+            except HTTPException:
+                replacement = None
+        item = base_task_record(row, f"change:{business_id('TA', row['task_adjustment_id'])}", "change_order", row["intervention_at"])
+        item.update({"status": "completed", "executorName": row["recorded_by_name"], "result": "已生成替代任务", "note": after.get("reason"), "reason": after.get("reason"), "changeOrder": {"id": business_id("TA", row["task_adjustment_id"]), "before": before, "after": after, "originalTask": task_context(row), "replacementTask": replacement}})
+        interventions.append(item)
+
+    correction_reasons: dict[str, str | None] = {}
+    for adjustment in correction_adjustments:
+        after = decoded_json_object(adjustment["after_value"])
+        if after.get("completionId"):
+            correction_reasons[str(after["completionId"])] = after.get("reason")
+    executions: list[dict[str, Any]] = []
+    for row in completion_rows:
+        record_kind = "completion_correction" if row["record_type"] == "correction" else ("ad_hoc_task" if row["source"] == "ad_hoc" else "task_completion")
+        completion_id = business_id("TC", row["task_completion_id"])
+        item = base_task_record(row, f"completion:{completion_id}", record_kind, row["executed_at"])
+        item.update({"status": "completed", "executorName": row["executor_name"], "result": row["result"], "note": row["completion_note"], "completion": {"id": completion_id, "recordType": row["record_type"], "correctsCompletionId": business_id("TC", row["corrects_completion_id"]) if row["corrects_completion_id"] is not None else None, "reason": correction_reasons.get(completion_id), "createdAt": iso(row["completion_created_at"]), "irrigationRecordId": business_id("IR", row["irrigation_record_id"]) if row["irrigation_record_id"] is not None else None}})
+        executions.append(item)
+    for row in irrigation_rows:
+        executions.append({
+            "id": f"irrigation:{business_id('IR', row['record_id'])}", "recordType": "irrigation", "occurredAt": iso(row["executed_at"] or row["requested_at"]),
+            "farmId": business_id("F", numeric_farm_id), "farmName": row["farm_name"], "plotId": business_id("P", row["plot_id"]), "plotName": row["plot_name"],
+            "productionYear": production_year, "stageCode": None, "title": "开启灌溉" if row["action_type"] == "on" else "关闭灌溉", "status": row["status"],
+            "executorName": row["operator_name"] or ("系统" if row["activation_type"] == "auto" else "农户"), "result": row["status"], "note": None, "referenceId": business_id("IR", row["record_id"]),
+            "irrigation": {"commandId": row["command_id"], "deviceId": business_id("D", row["device_id"]), "deviceNo": row["device_code"], "action": row["action_type"], "activationType": row["activation_type"], "requestedAt": iso(row["requested_at"]), "executedAt": iso(row["executed_at"]), "durationMinutes": row["planned_duration_minutes"], "scheduledStopAt": iso(row["scheduled_stop_at"])},
+        })
+    for row in milestone_rows:
+        record_kind = f"{row['milestone_type']}_milestone"
+        title = "采收完成" if row["milestone_type"] == "harvest" else "清园完成"
+        executions.append({
+            "id": f"milestone:{business_id('FM', row['milestone_id'])}", "recordType": record_kind, "occurredAt": iso(row["completed_at"]),
+            "farmId": business_id("F", numeric_farm_id), "farmName": row["farm_name"], "plotId": None, "plotName": "全场节点", "productionYear": production_year,
+            "stageCode": None, "title": title, "status": "completed", "executorName": row["recorded_by_name"], "result": "已记录", "note": "年度生产节点，不触发计划关闭。",
+            "referenceId": business_id("FM", row["milestone_id"]), "milestone": {"type": row["milestone_type"], "completedAt": iso(row["completed_at"]), "recordedBy": business_id("U", row["recorded_by"]), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])},
+        })
+
+    interventions.sort(key=lambda item: (item["occurredAt"] or "", item["id"]), reverse=True)
+    executions.sort(key=lambda item: (item["occurredAt"] or "", item["id"]), reverse=True)
+    if record_type:
+        interventions = [item for item in interventions if item["recordType"] == record_type]
+        executions = [item for item in executions if item["recordType"] == record_type]
+    if category == "intervention":
+        executions = []
+    elif category == "execution":
+        interventions = []
+    header.update({"interventionCount": len(interventions), "executionCount": len(executions)})
+    return {
+        "archive": header,
+        "interventions": archive_page(interventions, intervention_page, intervention_page_size),
+        "executions": archive_page(executions, execution_page, execution_page_size),
+    }
+
+
 @app.patch("/api/tasks/{task_id}")
 def update_management_task(task_id: str, request: TaskUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     numeric_task_id = parse_resource_id(task_id, "MT")
@@ -2678,7 +2965,7 @@ def create_task_change_order(task_id: str, request: TaskChangeOrderRequest, user
         ensure_farm_admin_access(user, row["farm_id"])
         if row["task_status"] != "pending" or row["plan_status"] == "superseded":
             raise HTTPException(status_code=409, detail="TASK_CHANGE_ORDER_NOT_ALLOWED")
-        production_year = production_year_for(date.today())
+        production_year = row["production_year"] or production_year_for(row["scheduled_date"])
         stage = connection.execute(text("SELECT stage_status,planned_start_date,planned_end_date FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_code=:stage FOR UPDATE"), {"farm": row["farm_id"], "year": production_year, "stage": row["stage_code"]}).mappings().first()
         if stage is None or stage["stage_status"] != "active":
             raise HTTPException(status_code=409, detail="ACTIVE_STAGE_REQUIRED")
@@ -2691,7 +2978,7 @@ def create_task_change_order(task_id: str, request: TaskChangeOrderRequest, user
         replacement_note = request.note if "note" in request.model_fields_set else row["note"]
         if scheduled_date == row["scheduled_date"] and replacement_note == row["note"]:
             raise HTTPException(status_code=400, detail="CHANGE_ORDER_HAS_NO_CHANGES")
-        replacement_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:stage,:type,:title,:source,:scheduled,'pending',:note)"), {"plan": row["plan_id"], "plot": row["plot_id"], "stage": row["stage_code"], "type": row["task_type"], "title": row["title"], "source": row["source"], "scheduled": scheduled_date, "note": replacement_note}).lastrowid
+        replacement_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:year,:stage,:type,:title,:source,:scheduled,'pending',:note)"), {"plan": row["plan_id"], "plot": row["plot_id"], "year": production_year, "stage": row["stage_code"], "type": row["task_type"], "title": row["title"], "source": row["source"], "scheduled": scheduled_date, "note": replacement_note}).lastrowid
         connection.execute(text("UPDATE management_task SET task_status='cancelled' WHERE task_id=:task"), {"task": numeric_task_id})
         before = {"scheduledDate": row["scheduled_date"].isoformat(), "note": row["note"], "status": "pending"}
         after = {"replacementTaskId": business_id("MT", replacement_id), "scheduledDate": scheduled_date.isoformat(), "note": replacement_note, "reason": request.reason.strip()}
@@ -2719,7 +3006,7 @@ def create_temporary_management_task(farm_id: str, request: TemporaryTaskCreateR
             raise HTTPException(status_code=409, detail="ACTIVE_STAGE_REQUIRED")
         if scheduled_date < date.today() or scheduled_date > stage["planned_end_date"]:
             raise HTTPException(status_code=400, detail="INVALID_TEMPORARY_TASK_DATE")
-        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:stage,:type,:title,'temporary',:scheduled,'pending',:note)"), {"plot": numeric_plot_id, "stage": stage["stage_code"], "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": scheduled_date, "note": request.note}).lastrowid
+        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:year,:stage,:type,:title,'temporary',:scheduled,'pending',:note)"), {"plot": numeric_plot_id, "year": production_year, "stage": stage["stage_code"], "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": scheduled_date, "note": request.note}).lastrowid
         record_task_adjustment(connection, task_id, user["user_id"], "temporary_task", {}, {"reason": request.reason.strip()})
         record_audit_log(connection, user, "production_plan", "create_temporary_task", target_type="task", target_id=business_id("MT", task_id), detail=request.reason.strip())
         return task_payload(task_row(connection, task_id))
@@ -2761,8 +3048,8 @@ def create_historical_stage_supplement(farm_id: str, stage_code: str, request: H
                 detail={"code": "HISTORICAL_SUPPLEMENT_DATE_OUTSIDE_STAGE", "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat()},
             )
         task_id = connection.execute(
-            text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:stage,:type,:title,'historical_supplement',:scheduled,'completed',:note)"),
-            {"plot": numeric_plot_id, "stage": stage_code, "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note},
+            text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:year,:stage,:type,:title,'historical_supplement',:scheduled,'completed',:note)"),
+            {"plot": numeric_plot_id, "year": request.productionYear, "stage": stage_code, "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note},
         ).lastrowid
         completion_id = connection.execute(
             text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id) VALUES (:task,:result,:executed,:user,:name,:note,NULL)"),
@@ -2835,7 +3122,7 @@ def create_ad_hoc_task(plot_id: str, request: AdHocTaskRequest, user: dict[str, 
     with engine.begin() as connection:
         ensure_farmer_task_access(numeric_plot_id, user)
         irrigation_record_id = task_irrigation_record_id(connection, request.irrigationRecordId, numeric_plot_id)
-        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,NULL,:type,:title,'ad_hoc',:scheduled,'completed',:note)"), {"plot": numeric_plot_id, "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note}).lastrowid
+        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:year,NULL,:type,:title,'ad_hoc',:scheduled,'completed',:note)"), {"plot": numeric_plot_id, "year": production_year_for(executed_at.date()), "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note}).lastrowid
         connection.execute(text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id) VALUES (:task,'completed',:executed,:user,:name,:note,:irrigation)"), {"task": task_id, "executed": executed_at, "user": user["user_id"], "name": request.executorName.strip(), "note": request.note, "irrigation": irrigation_record_id})
         record_audit_log(connection, user, "task_execution", "create_ad_hoc_task", target_type="task", target_id=business_id("MT", task_id), detail=f"Added completed ad-hoc task for {business_id('P', numeric_plot_id)}")
         return task_payload(task_row(connection, task_id))
@@ -2871,7 +3158,7 @@ def save_farm_production_profile(farm_id: str, request: FarmProductionProfileReq
     return {"farmId":business_id("F",numeric_farm_id),"templateVersionId":business_id("CTV",version_id),"plantingDate":planting_date.isoformat()}
 
 
-def record_farm_production_milestone(farm_id: str, completed_at: datetime, user: dict[str, Any], *, column: str, action: str, response_key: str) -> dict[str, Any]:
+def record_farm_production_milestone(farm_id: str, production_year: int, completed_at: datetime, user: dict[str, Any], *, milestone_type: str, column: str, action: str, response_key: str) -> dict[str, Any]:
     numeric_farm_id = parse_resource_id(farm_id, "F")
     ensure_farm_admin_access(user, numeric_farm_id)
     if completed_at.tzinfo is not None:
@@ -2885,27 +3172,33 @@ def record_farm_production_milestone(farm_id: str, completed_at: datetime, user:
             raise HTTPException(status_code=409, detail="ORCHARD_PLANTING_DATE_REQUIRED")
         if completed_at.date() < planting_date:
             raise HTTPException(status_code=400, detail="INVALID_PRODUCTION_MILESTONE_TIME")
+        if not connection.execute(text("SELECT 1 FROM farm_annual_production WHERE farm_id=:farm AND production_year=:year FOR UPDATE"), {"farm": numeric_farm_id, "year": production_year}).scalar():
+            raise HTTPException(status_code=404, detail="PRODUCTION_ARCHIVE_NOT_FOUND")
+        connection.execute(
+            text("INSERT INTO farm_production_milestone (farm_id,production_year,milestone_type,completed_at,recorded_by) VALUES (:farm,:year,:kind,:completed,:user) ON DUPLICATE KEY UPDATE completed_at=VALUES(completed_at),recorded_by=VALUES(recorded_by)"),
+            {"farm": numeric_farm_id, "year": production_year, "kind": milestone_type, "completed": completed_at, "user": user["user_id"]},
+        )
         result = connection.execute(text(f"UPDATE farm_production_profile SET {column}=:completed,next_cycle_starts_on=NULL,updated_by=:user WHERE farm_id=:farm"), {"completed": completed_at, "user": user["user_id"], "farm": numeric_farm_id})
         if result.rowcount == 0:
             raise HTTPException(status_code=409, detail="PRODUCTION_TEMPLATE_REQUIRED")
-        record_audit_log(connection, user, "production_plan", action, target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Recorded production milestone at {completed_at.isoformat()}")
-    return {"farmId": business_id("F", numeric_farm_id), response_key: iso(completed_at)}
+        record_audit_log(connection, user, "production_plan", action, target_type="production_archive", target_id=f"{business_id('F', numeric_farm_id)}:{production_year}", detail=f"Recorded production milestone at {completed_at.isoformat()}")
+    return {"farmId": business_id("F", numeric_farm_id), "productionYear": production_year, response_key: iso(completed_at)}
 
 
 @app.put("/api/farms/{farm_id}/harvest-completion")
 def confirm_farm_harvest_completion(farm_id: str, request: FarmMilestoneCompletionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    return record_farm_production_milestone(farm_id, request.completedAt, user, column="harvest_completed_at", action="record_harvest_completion", response_key="harvestCompletedAt")
+    return record_farm_production_milestone(farm_id, request.productionYear, request.completedAt, user, milestone_type="harvest", column="harvest_completed_at", action="record_harvest_completion", response_key="harvestCompletedAt")
 
 
 @app.put("/api/farms/{farm_id}/cleanup-completion")
 def confirm_farm_cleanup_completion(farm_id: str, request: FarmMilestoneCompletionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    return record_farm_production_milestone(farm_id, request.completedAt, user, column="harvest_cleanup_completed_at", action="record_cleanup_completion", response_key="cleanupCompletedAt")
+    return record_farm_production_milestone(farm_id, request.productionYear, request.completedAt, user, milestone_type="cleanup", column="harvest_cleanup_completed_at", action="record_cleanup_completion", response_key="cleanupCompletedAt")
 
 
 @app.put("/api/farms/{farm_id}/harvest-cleanup")
 def confirm_farm_harvest_cleanup(farm_id: str, request: FarmMilestoneCompletionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     """Backward-compatible cleanup endpoint."""
-    return record_farm_production_milestone(farm_id, request.completedAt, user, column="harvest_cleanup_completed_at", action="record_cleanup_completion", response_key="cleanupCompletedAt")
+    return record_farm_production_milestone(farm_id, request.productionYear, request.completedAt, user, milestone_type="cleanup", column="harvest_cleanup_completed_at", action="record_cleanup_completion", response_key="cleanupCompletedAt")
 
 
 @app.get("/api/farms/{farm_id}/production-profile")
@@ -3013,7 +3306,7 @@ def save_farm_planting_schedule(farm_id: str, request: FarmPlantingScheduleReque
         connection.execute(text("UPDATE management_task mt JOIN plot p ON p.plot_id=mt.plot_id SET mt.task_status='cancelled' WHERE p.farm_id=:farm AND mt.source='planting' AND mt.task_status IN ('pending','in_progress')"), {"farm": numeric_farm_id})
         connection.execute(text("UPDATE farm SET planned_planting_date=:planned,planting_template_version_id=:version WHERE farm_id=:farm"), {"planned": planned_date, "version": version_id, "farm": numeric_farm_id})
         for plot in plots:
-            connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,'planting','planting','完成脐橙定植','planting',:scheduled,'pending','按定植方案完成苗木栽植，并记录现场结果。')"), {"plot": plot["plot_id"], "scheduled": planned_date})
+            connection.execute(text("INSERT INTO management_task (plan_id,plot_id,production_year,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:year,'planting','planting','完成脐橙定植','planting',:scheduled,'pending','按定植方案完成苗木栽植，并记录现场结果。')"), {"plot": plot["plot_id"], "year": production_year_for(planned_date), "scheduled": planned_date})
         record_audit_log(connection, user, "production_plan", "schedule_farm_planting", target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Scheduled planting tasks for {planned_date.isoformat()}")
     return get_farm_planting_schedule(farm_id, user)
 
@@ -3266,8 +3559,11 @@ def farm_management_statistics(
                 SELECT p.plot_id, p.plot_name,
                        COALESCE(task_stats.total_count, 0) AS task_total,
                        COALESCE(task_stats.completed_count, 0) AS completed_count,
+                       COALESCE(task_stats.yesterday_completed_count, 0) AS yesterday_completed_count,
                        COALESCE(task_stats.pending_count, 0) AS pending_count,
+                       COALESCE(task_stats.yesterday_pending_count, 0) AS yesterday_pending_count,
                        COALESCE(task_stats.overdue_count, 0) AS overdue_count,
+                       COALESCE(task_stats.yesterday_overdue_count, 0) AS yesterday_overdue_count,
                        COALESCE(reminder_stats.pending_count, 0) AS pending_reminder_count,
                        irrigation.record_id, irrigation.action_type, irrigation.activation_type,
                        irrigation.status AS irrigation_status, irrigation.requested_at,
@@ -3277,8 +3573,27 @@ def farm_management_statistics(
                     SELECT t.plot_id,
                            COUNT(*) AS total_count,
                            SUM(CASE WHEN t.task_status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
-                           SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending_count,
-                           SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date < CURRENT_DATE THEN 1 ELSE 0 END) AS overdue_count
+                           SUM(CASE WHEN EXISTS (
+                               SELECT 1 FROM management_task_completion AS previous_completion
+                               WHERE previous_completion.task_id = t.task_id
+                                 AND previous_completion.executed_at < CURRENT_DATE
+                            ) THEN 1 ELSE 0 END) AS yesterday_completed_count,
+                            SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending_count,
+                            SUM(CASE WHEN t.task_status <> 'cancelled'
+                                      AND t.scheduled_date >= CURRENT_DATE - INTERVAL 1 DAY
+                                      AND NOT EXISTS (
+                                          SELECT 1 FROM management_task_completion AS previous_completion
+                                          WHERE previous_completion.task_id = t.task_id
+                                            AND previous_completion.executed_at < CURRENT_DATE
+                                      ) THEN 1 ELSE 0 END) AS yesterday_pending_count,
+                            SUM(CASE WHEN t.task_status IN ('pending', 'in_progress') AND t.scheduled_date < CURRENT_DATE THEN 1 ELSE 0 END) AS overdue_count,
+                            SUM(CASE WHEN t.task_status <> 'cancelled'
+                                      AND t.scheduled_date < CURRENT_DATE - INTERVAL 1 DAY
+                                      AND NOT EXISTS (
+                                          SELECT 1 FROM management_task_completion AS previous_completion
+                                          WHERE previous_completion.task_id = t.task_id
+                                            AND previous_completion.executed_at < CURRENT_DATE
+                                      ) THEN 1 ELSE 0 END) AS yesterday_overdue_count
                     FROM management_task AS t
                     JOIN management_plan AS mp
                       ON mp.plan_id = t.plan_id AND mp.plan_status = 'active'
@@ -3325,8 +3640,11 @@ def farm_management_statistics(
                 "pendingReminderCount": int(row["pending_reminder_count"]),
                 "taskTotal": task_total,
                 "completedTaskCount": completed_count,
+                "yesterdayCompletedTaskCount": int(row["yesterday_completed_count"]),
                 "pendingTaskCount": int(row["pending_count"]),
+                "yesterdayPendingTaskCount": int(row["yesterday_pending_count"]),
                 "overdueTaskCount": int(row["overdue_count"]),
+                "yesterdayOverdueTaskCount": int(row["yesterday_overdue_count"]),
                 "taskCompletionRate": round(completed_count * 100 / task_total, 1) if task_total else 0,
                 "latestIrrigation": latest_irrigation,
             }
