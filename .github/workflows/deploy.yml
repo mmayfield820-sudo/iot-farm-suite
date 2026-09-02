@@ -17,7 +17,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd ~/iot-farm-suite
+            cd /root/farm/iot-farm-suite
             git pull
             cd infra
             docker compose --env-file ../.env up -d --build
