@@ -197,7 +197,7 @@
              异常状态装饰
         ================================== -->
         <div
-          v-if="farm.status === 'danger'"
+          v-if="farm.status === 'danger' || farm.status === 'offline'"
           class="danger-glow"
         ></div>
 
