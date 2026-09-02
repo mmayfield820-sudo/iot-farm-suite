@@ -1711,6 +1711,26 @@ def task_payload(row: Any, *, include_completion: bool = True) -> dict[str, Any]
     return payload
 
 
+def management_record_type_for_task(source: str) -> str:
+    return {
+        "temporary": "temporary_task",
+        "ad_hoc": "ad_hoc_task",
+        "historical_supplement": "historical_supplement",
+    }.get(source, "plan_task")
+
+
+def decoded_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 def finalize_farm_planting_if_ready(connection: Any, row: Any, completed_on: date, user: dict[str, Any]) -> None:
     if row["source"] != "planting":
         return
@@ -2321,6 +2341,303 @@ def get_management_task(task_id: str, user: dict[str, Any] = Depends(current_use
     payload["adjustments"] = [{"id": business_id("TA", item["task_adjustment_id"]), "changedBy": business_id("U", item["changed_by"]), "type": item["adjustment_type"], "before": json.loads(item["before_value"]) if isinstance(item["before_value"], str) else item["before_value"], "after": json.loads(item["after_value"]) if isinstance(item["after_value"], str) else item["after_value"], "createdAt": iso(item["created_at"])} for item in adjustments]
     payload["completionHistory"] = [{"id": business_id("TC", item["task_completion_id"]), "result": item["result"], "executedAt": iso(item["executed_at"]), "executorUserId": business_id("U", item["executor_user_id"]), "executorName": item["executor_name"], "note": item["note"], "irrigationRecordId": business_id("IR", item["irrigation_record_id"]) if item["irrigation_record_id"] is not None else None, "recordType": item["record_type"], "correctsCompletionId": business_id("TC", item["corrects_completion_id"]) if item["corrects_completion_id"] is not None else None, "createdAt": iso(item["created_at"])} for item in completions]
     return payload
+
+
+@app.get("/api/farms/{farm_id}/management-records")
+def list_farm_management_records(
+    farm_id: str,
+    production_year: int | None = Query(default=None, alias="productionYear", ge=2000, le=2100),
+    plot_id: str | None = Query(default=None, alias="plotId"),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """Return a read-only production archive for one authorized farm and year."""
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    selected_year = production_year or production_year_for(date.today())
+    starts_on, ends_on = production_year_bounds(selected_year)
+    starts_at = datetime.combine(starts_on, time.min)
+    ends_at = datetime.combine(ends_on + timedelta(days=1), time.min)
+    numeric_plot_id = None
+    if plot_id:
+        numeric_plot_id = parse_resource_id(plot_id, "P")
+        plot = plot_scope(numeric_plot_id, user)
+        if plot["farm_id"] != numeric_farm_id:
+            raise HTTPException(status_code=400, detail="PLOT_NOT_IN_FARM")
+
+    params = {
+        "farm": numeric_farm_id,
+        "plot": numeric_plot_id,
+        "starts_on": starts_on,
+        "ends_on": ends_on,
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+    }
+    plot_clause = " AND t.plot_id=:plot" if numeric_plot_id is not None else ""
+    irrigation_plot_clause = " AND r.plot_id=:plot" if numeric_plot_id is not None else ""
+    task_columns = (
+        "t.task_id,t.plan_id,t.plot_id,t.stage_code,t.task_type,t.title,t.source,"
+        "t.scheduled_date,t.task_status,t.note AS task_note,t.updated_at,"
+        "p.plot_name,p.farm_id,f.farm_name,mp.production_year,mp.plan_status"
+    )
+
+    with engine.connect() as connection:
+        task_rows = connection.execute(
+            text(
+                f"SELECT {task_columns} FROM management_task t "
+                "JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+                "LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id "
+                "WHERE p.farm_id=:farm AND t.scheduled_date>=:starts_on AND t.scheduled_date<=:ends_on"
+                f"{plot_clause} ORDER BY t.scheduled_date DESC,t.task_id DESC"
+            ),
+            params,
+        ).mappings().all()
+        completion_rows = connection.execute(
+            text(
+                f"SELECT {task_columns},c.task_completion_id,c.result,c.executed_at,c.executor_user_id,"
+                "c.executor_name,c.note AS completion_note,c.irrigation_record_id,c.record_type,"
+                "c.corrects_completion_id,c.created_at AS completion_created_at "
+                "FROM management_task_completion c JOIN management_task t ON t.task_id=c.task_id "
+                "JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+                "LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id "
+                "WHERE p.farm_id=:farm AND c.executed_at>=:starts_at AND c.executed_at<:ends_at"
+                f"{plot_clause} ORDER BY c.executed_at DESC,c.task_completion_id DESC"
+            ),
+            params,
+        ).mappings().all()
+        change_rows = connection.execute(
+            text(
+                f"SELECT {task_columns},a.task_adjustment_id,a.changed_by,a.adjustment_type,"
+                "a.before_value,a.after_value,a.created_at AS adjustment_created_at,u.real_name AS changed_by_name "
+                "FROM management_task_adjustment a JOIN management_task t ON t.task_id=a.task_id "
+                "JOIN plot p ON p.plot_id=t.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+                "LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN users u ON u.user_id=a.changed_by "
+                "WHERE p.farm_id=:farm AND a.adjustment_type='change_order' "
+                "AND a.created_at>=:starts_at AND a.created_at<:ends_at"
+                f"{plot_clause} ORDER BY a.created_at DESC,a.task_adjustment_id DESC"
+            ),
+            params,
+        ).mappings().all()
+        irrigation_rows = connection.execute(
+            text(
+                "SELECT r.record_id,r.command_id,r.plot_id,r.device_id,r.action_type,r.activation_type,"
+                "r.status,r.requested_at,r.executed_at,r.planned_duration_minutes,r.scheduled_stop_at,"
+                "r.operator_id,u.real_name AS operator_name,p.plot_name,p.farm_id,f.farm_name,d.device_code "
+                "FROM irrigation_record r JOIN plot p ON p.plot_id=r.plot_id JOIN farm f ON f.farm_id=p.farm_id "
+                "JOIN device d ON d.device_id=r.device_id LEFT JOIN users u ON u.user_id=r.operator_id "
+                "WHERE p.farm_id=:farm AND r.requested_at>=:starts_at AND r.requested_at<:ends_at"
+                f"{irrigation_plot_clause} ORDER BY r.requested_at DESC,r.record_id DESC"
+            ),
+            params,
+        ).mappings().all()
+        profile = connection.execute(
+            text(
+                "SELECT f.farm_id,f.farm_name,p.harvest_completed_at,p.harvest_cleanup_completed_at "
+                "FROM farm f LEFT JOIN farm_production_profile p ON p.farm_id=f.farm_id WHERE f.farm_id=:farm"
+            ),
+            {"farm": numeric_farm_id},
+        ).mappings().first()
+        year_rows = connection.execute(
+            text(
+                "SELECT production_year FROM farm_annual_production WHERE farm_id=:farm "
+                "UNION SELECT mp.production_year FROM management_plan mp JOIN plot p ON p.plot_id=mp.plot_id "
+                "WHERE p.farm_id=:farm AND mp.production_year IS NOT NULL "
+                "UNION SELECT YEAR(DATE_ADD(t.scheduled_date,INTERVAL 1 MONTH)) FROM management_task t "
+                "JOIN plot p ON p.plot_id=t.plot_id WHERE p.farm_id=:farm"
+            ),
+            {"farm": numeric_farm_id},
+        ).fetchall()
+
+        task_ids = {row["task_id"] for row in (*task_rows, *completion_rows, *change_rows)}
+        completion_history_rows: list[Any] = []
+        adjustment_history_rows: list[Any] = []
+        if task_ids:
+            completion_history_rows = connection.execute(
+                text(
+                    "SELECT task_completion_id,task_id,result,executed_at,executor_user_id,executor_name,note,"
+                    "irrigation_record_id,record_type,corrects_completion_id,created_at "
+                    "FROM management_task_completion WHERE task_id IN :task_ids ORDER BY task_id,task_completion_id"
+                ).bindparams(bindparam("task_ids", expanding=True)),
+                {"task_ids": list(task_ids)},
+            ).mappings().all()
+            adjustment_history_rows = connection.execute(
+                text(
+                    "SELECT a.task_adjustment_id,a.task_id,a.changed_by,a.adjustment_type,a.before_value,"
+                    "a.after_value,a.created_at,u.real_name AS changed_by_name FROM management_task_adjustment a "
+                    "LEFT JOIN users u ON u.user_id=a.changed_by WHERE a.task_id IN :task_ids "
+                    "ORDER BY a.task_id,a.task_adjustment_id"
+                ).bindparams(bindparam("task_ids", expanding=True)),
+                {"task_ids": list(task_ids)},
+            ).mappings().all()
+
+    completions_by_task: dict[int, list[dict[str, Any]]] = {}
+    for item in completion_history_rows:
+        completions_by_task.setdefault(item["task_id"], []).append({
+            "id": business_id("TC", item["task_completion_id"]),
+            "result": item["result"],
+            "executedAt": iso(item["executed_at"]),
+            "executorUserId": business_id("U", item["executor_user_id"]),
+            "executorName": item["executor_name"],
+            "note": item["note"],
+            "irrigationRecordId": business_id("IR", item["irrigation_record_id"]) if item["irrigation_record_id"] is not None else None,
+            "recordType": item["record_type"],
+            "correctsCompletionId": business_id("TC", item["corrects_completion_id"]) if item["corrects_completion_id"] is not None else None,
+            "createdAt": iso(item["created_at"]),
+        })
+    adjustments_by_task: dict[int, list[dict[str, Any]]] = {}
+    for item in adjustment_history_rows:
+        adjustments_by_task.setdefault(item["task_id"], []).append({
+            "id": business_id("TA", item["task_adjustment_id"]),
+            "type": item["adjustment_type"],
+            "changedBy": business_id("U", item["changed_by"]),
+            "changedByName": item["changed_by_name"] or "系统用户",
+            "before": decoded_json_object(item["before_value"]),
+            "after": decoded_json_object(item["after_value"]),
+            "createdAt": iso(item["created_at"]),
+        })
+
+    def task_detail(row: Any) -> dict[str, Any]:
+        task_year = row["production_year"] or production_year_for(row["scheduled_date"])
+        return {
+            "id": business_id("MT", row["task_id"]),
+            "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None,
+            "source": row["source"],
+            "taskType": row["task_type"],
+            "stageCode": row["stage_code"],
+            "scheduledDate": row["scheduled_date"].isoformat(),
+            "status": task_status_value(row),
+            "note": row["task_note"],
+            "productionYear": int(task_year),
+            "completionHistory": completions_by_task.get(row["task_id"], []),
+            "adjustments": adjustments_by_task.get(row["task_id"], []),
+        }
+
+    def task_record(row: Any, record_type: str, occurred_at: datetime, *, record_id: str, result: str | None = None, executor: str | None = None, note: str | None = None) -> dict[str, Any]:
+        return {
+            "id": record_id,
+            "recordType": record_type,
+            "occurredAt": iso(occurred_at),
+            "farmId": business_id("F", row["farm_id"]),
+            "farmName": row["farm_name"],
+            "plotId": business_id("P", row["plot_id"]),
+            "plotName": row["plot_name"],
+            "productionYear": selected_year,
+            "stageCode": row["stage_code"],
+            "title": row["title"],
+            "status": task_status_value(row),
+            "executorName": executor,
+            "result": result,
+            "note": note if note is not None else row["task_note"],
+            "referenceId": business_id("MT", row["task_id"]),
+            "task": task_detail(row),
+        }
+
+    records: list[dict[str, Any]] = []
+    for row in task_rows:
+        if row["source"] == "historical_supplement":
+            continue
+        records.append(task_record(
+            row,
+            management_record_type_for_task(row["source"]),
+            datetime.combine(row["scheduled_date"], time.min),
+            record_id=f"task:{business_id('MT', row['task_id'])}",
+        ))
+    for row in completion_rows:
+        if row["record_type"] == "correction":
+            record_type = "completion_correction"
+        else:
+            record_type = management_record_type_for_task(row["source"]) if row["source"] == "historical_supplement" else "task_completion"
+        records.append(task_record(
+            row,
+            record_type,
+            row["executed_at"],
+            record_id=f"completion:{business_id('TC', row['task_completion_id'])}",
+            result=row["result"],
+            executor=row["executor_name"],
+            note=row["completion_note"],
+        ))
+    for row in change_rows:
+        after = decoded_json_object(row["after_value"])
+        record = task_record(
+            row,
+            "change_order",
+            row["adjustment_created_at"],
+            record_id=f"change:{business_id('TA', row['task_adjustment_id'])}",
+            result="已生成替代任务",
+            executor=row["changed_by_name"] or "农场管理员",
+            note=after.get("reason"),
+        )
+        record["changeOrder"] = {
+            "id": business_id("TA", row["task_adjustment_id"]),
+            "before": decoded_json_object(row["before_value"]),
+            "after": after,
+        }
+        records.append(record)
+    for row in irrigation_rows:
+        records.append({
+            "id": f"irrigation:{business_id('IR', row['record_id'])}",
+            "recordType": "irrigation",
+            "occurredAt": iso(row["executed_at"] or row["requested_at"]),
+            "farmId": business_id("F", row["farm_id"]),
+            "farmName": row["farm_name"],
+            "plotId": business_id("P", row["plot_id"]),
+            "plotName": row["plot_name"],
+            "productionYear": selected_year,
+            "stageCode": None,
+            "title": "开启灌溉" if row["action_type"] == "on" else "关闭灌溉",
+            "status": row["status"],
+            "executorName": row["operator_name"] or ("系统" if row["activation_type"] == "auto" else "农户"),
+            "result": row["status"],
+            "note": None,
+            "referenceId": business_id("IR", row["record_id"]),
+            "irrigation": {
+                "commandId": row["command_id"],
+                "deviceId": business_id("D", row["device_id"]),
+                "deviceNo": row["device_code"],
+                "action": row["action_type"],
+                "activationType": row["activation_type"],
+                "requestedAt": iso(row["requested_at"]),
+                "executedAt": iso(row["executed_at"]),
+                "durationMinutes": row["planned_duration_minutes"],
+                "scheduledStopAt": iso(row["scheduled_stop_at"]),
+            },
+        })
+    if profile:
+        for record_type, title, completed_at in (
+            ("harvest_milestone", "采收完成", profile["harvest_completed_at"]),
+            ("cleanup_milestone", "清园完成", profile["harvest_cleanup_completed_at"]),
+        ):
+            if completed_at is None or not starts_at <= completed_at < ends_at:
+                continue
+            records.append({
+                "id": f"milestone:{record_type}:{selected_year}",
+                "recordType": record_type,
+                "occurredAt": iso(completed_at),
+                "farmId": business_id("F", profile["farm_id"]),
+                "farmName": profile["farm_name"],
+                "plotId": None,
+                "plotName": "全场节点",
+                "productionYear": selected_year,
+                "stageCode": None,
+                "title": title,
+                "status": "completed",
+                "executorName": None,
+                "result": "已记录",
+                "note": "独立生产档案节点，不触发年度计划或阶段变化。",
+                "referenceId": business_id("F", profile["farm_id"]),
+                "milestone": {"completedAt": iso(completed_at)},
+            })
+
+    records.sort(key=lambda item: (item["occurredAt"] or "", item["id"]), reverse=True)
+    years = {selected_year, production_year_for(date.today())}
+    years.update(int(row[0]) for row in year_rows if row[0] is not None)
+    return {
+        "farmId": business_id("F", numeric_farm_id),
+        "productionYear": selected_year,
+        "productionYearStartsOn": starts_on.isoformat(),
+        "productionYearEndsOn": ends_on.isoformat(),
+        "productionYears": sorted(years, reverse=True),
+        "records": records,
+    }
 
 
 @app.patch("/api/tasks/{task_id}")

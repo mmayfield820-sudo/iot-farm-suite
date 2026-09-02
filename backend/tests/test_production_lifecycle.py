@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from backend.app.main import annual_stage_window, production_year_bounds, stage_status_is_locked
+from backend.app.main import (
+    annual_stage_window,
+    decoded_json_object,
+    management_record_type_for_task,
+    production_year_bounds,
+    stage_status_is_locked,
+)
 
 
 class ProductionLifecycleTests(unittest.TestCase):
@@ -30,6 +36,17 @@ class ProductionLifecycleTests(unittest.TestCase):
         self.assertTrue(stage_status_is_locked("active"))
         self.assertTrue(stage_status_is_locked("completed"))
         self.assertFalse(stage_status_is_locked("planned"))
+
+    def test_management_record_types_preserve_task_sources(self) -> None:
+        self.assertEqual(management_record_type_for_task("template"), "plan_task")
+        self.assertEqual(management_record_type_for_task("temporary"), "temporary_task")
+        self.assertEqual(management_record_type_for_task("ad_hoc"), "ad_hoc_task")
+        self.assertEqual(management_record_type_for_task("historical_supplement"), "historical_supplement")
+
+    def test_management_record_json_values_are_safe_to_render(self) -> None:
+        self.assertEqual(decoded_json_object('{"reason":"field change"}'), {"reason": "field change"})
+        self.assertEqual(decoded_json_object("invalid"), {})
+        self.assertEqual(decoded_json_object(["not", "an", "object"]), {})
 
 
 if __name__ == "__main__":

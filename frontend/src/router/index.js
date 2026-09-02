@@ -30,6 +30,7 @@ const routes = [
       { path: 'control', redirect: '/farm/status' },
       { path: 'devices', name: 'farm-devices', component: () => import('@/views/farmAdmin/Devices.vue'), meta: { title: '设备管理' } },
       { path: 'alerts', name: 'farm-alerts', component: () => import('@/views/farmAdmin/Alerts.vue'), meta: { title: '告警日志' } },
+      { path: 'records', name: 'farm-records', component: () => import('@/views/farmAdmin/ManagementRecords.vue'), meta: { title: '管理记录' } },
       { path: 'production', name: 'farm-production', component: () => import('@/views/farmAdmin/Production.vue'), meta: { title: '年度生产管理计划' } },
       { path: 'cycle-draft', name: 'farm-cycle-draft', component: () => import('@/views/farmAdmin/CycleDraft.vue'), meta: { title: '下一年度管理计划' } },
     ],

@@ -12,6 +12,7 @@ const menu = [
   { label: '地块设备监测', path: '/farm/status', icon: 'Monitor' },
   { label: '设备管理', path: '/farm/devices', icon: 'Cpu' },
   { label: '告警日志', path: '/farm/alerts', icon: 'Bell' },
+  { label: '管理记录', path: '/farm/records', icon: 'Document' },
   { label: '年度生产管理计划', path: '/farm/production', icon: 'Calendar' },
   { label: '下一年度管理计划', path: '/farm/cycle-draft', icon: 'EditPen' },
 ]
