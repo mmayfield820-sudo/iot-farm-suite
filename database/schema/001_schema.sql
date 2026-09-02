@@ -8,6 +8,7 @@ CREATE TABLE users (
   password_hash VARCHAR(255) NOT NULL,
   email VARCHAR(100) NULL,
   phone VARCHAR(20) NULL,
+  avatar_data MEDIUMTEXT NULL,
   user_status VARCHAR(20) NOT NULL DEFAULT 'active',
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -88,6 +89,8 @@ CREATE TABLE device (
   device_type VARCHAR(30) NOT NULL,
   plot_id BIGINT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'offline',
+  switch_state VARCHAR(10) NULL,
+  switch_changed_at DATETIME(6) NULL,
   last_heartbeat DATETIME(6) NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (device_id),
@@ -97,7 +100,8 @@ CREATE TABLE device (
   UNIQUE KEY uq_device_id_plot (device_id, plot_id),
   CONSTRAINT fk_device_plot FOREIGN KEY (plot_id) REFERENCES plot (plot_id),
   CONSTRAINT chk_device_type CHECK (device_type IN ('temperature', 'humidity', 'irrigation')),
-  CONSTRAINT chk_device_status CHECK (status IN ('online', 'offline'))
+  CONSTRAINT chk_device_status CHECK (status IN ('online', 'offline')),
+  CONSTRAINT chk_device_switch_state CHECK (switch_state IS NULL OR switch_state IN ('on', 'off'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE threshold_config (
@@ -147,18 +151,22 @@ CREATE TABLE irrigation_record (
   operator_id BIGINT NULL,
   requested_at DATETIME(6) NOT NULL,
   executed_at DATETIME(6) NULL,
+  planned_duration_minutes INT NULL,
+  scheduled_stop_at DATETIME(6) NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
   PRIMARY KEY (record_id),
   UNIQUE KEY uq_irrigation_command_id (command_id),
   KEY idx_irrigation_plot_requested (plot_id, requested_at),
   KEY idx_irrigation_operator (operator_id),
+  KEY idx_irrigation_scheduled_stop (scheduled_stop_at, status),
   CONSTRAINT fk_irrigation_plot FOREIGN KEY (plot_id) REFERENCES plot (plot_id),
   CONSTRAINT fk_irrigation_device FOREIGN KEY (device_id, plot_id)
     REFERENCES device (device_id, plot_id),
   CONSTRAINT fk_irrigation_operator FOREIGN KEY (operator_id) REFERENCES users (user_id),
   CONSTRAINT chk_irrigation_action CHECK (action_type IN ('on', 'off')),
   CONSTRAINT chk_irrigation_activation CHECK (activation_type IN ('manual', 'auto')),
-  CONSTRAINT chk_irrigation_status CHECK (status IN ('pending', 'success', 'failed', 'timeout'))
+  CONSTRAINT chk_irrigation_status CHECK (status IN ('pending', 'success', 'failed', 'timeout')),
+  CONSTRAINT chk_irrigation_duration CHECK (planned_duration_minutes IS NULL OR planned_duration_minutes BETWEEN 1 AND 1440)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE alert (

@@ -12,11 +12,13 @@ const routes = [
     children: [
       { path: 'dashboard', name: 'farmer-dashboard', component: () => import('@/views/farmer/Dashboard.vue'), meta: { title: '农场首页' } },
       { path: 'management', name: 'farmer-management', component: () => import('@/views/farmer/PlotManagement.vue'), meta: { title: '地块管理' } },
+      { path: 'plan', name: 'farmer-plan', component: () => import('@/views/farmer/Plan.vue'), meta: { title: '管理计划' } },
       { path: 'tasks', name: 'farmer-tasks', component: () => import('@/views/farmer/Tasks.vue'), meta: { title: '我的农事' } },
       { path: 'monitor', name: 'farmer-monitor', redirect: (to) => ({ path: '/farmer/management', query: { ...to.query, tab: 'monitor' } }) },
       { path: 'history', name: 'farmer-history', redirect: (to) => ({ path: '/farmer/management', query: { ...to.query, tab: 'history' } }) },
       { path: 'irrigation', name: 'farmer-irrigation', component: () => import('@/views/farmer/Irrigation.vue'), meta: { title: '智慧灌溉' } },
       { path: 'alarm', name: 'farmer-alarm', component: () => import('@/views/farmer/Alarm.vue'), meta: { title: '告警中心' } },
+      { path: 'ai', name: 'farmer-ai', component: () => import('@/views/farmer/AiAssistant.vue'), meta: { title: '小橙子·农事助手' } },
     ],
   },
   {
@@ -28,8 +30,8 @@ const routes = [
       { path: 'control', redirect: '/farm/status' },
       { path: 'devices', name: 'farm-devices', component: () => import('@/views/farmAdmin/Devices.vue'), meta: { title: '设备管理' } },
       { path: 'alerts', name: 'farm-alerts', component: () => import('@/views/farmAdmin/Alerts.vue'), meta: { title: '告警日志' } },
-      { path: 'production', name: 'farm-production', component: () => import('@/views/farmAdmin/Production.vue'), meta: { title: '年度生产管理' } },
-      { path: 'cycle-draft', name: 'farm-cycle-draft', component: () => import('@/views/farmAdmin/CycleDraft.vue'), meta: { title: '下一生产年度方案' } },
+      { path: 'production', name: 'farm-production', component: () => import('@/views/farmAdmin/Production.vue'), meta: { title: '年度生产管理计划' } },
+      { path: 'cycle-draft', name: 'farm-cycle-draft', component: () => import('@/views/farmAdmin/CycleDraft.vue'), meta: { title: '下一年度管理计划' } },
     ],
   },
   {

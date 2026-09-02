@@ -6,7 +6,7 @@ from typing import Any
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
@@ -15,6 +15,13 @@ from .db import engine
 
 _ALGORITHM = "HS256"
 _bearer = HTTPBearer(auto_error=False)
+_ROLE_ALIASES = {
+    "farmer": "farmer",
+    "farm_admin": "farm_admin",
+    "farmAdmin": "farm_admin",
+    "system_admin": "system_admin",
+    "systemAdmin": "system_admin",
+}
 
 
 def _jwt_secret() -> str:
@@ -63,6 +70,16 @@ def _role_for(connection: Any, user_id: int) -> str:
     ).scalar():
         return "farm_admin"
     return "farmer"
+
+
+def resolve_active_role(requested_role: str | None, roles: list[str], fallback_role: str) -> str:
+    if not requested_role:
+        return fallback_role
+    active_role = _ROLE_ALIASES.get(requested_role)
+    assigned_roles = roles or [fallback_role]
+    if active_role is None or active_role not in assigned_roles:
+        raise HTTPException(status_code=403, detail="ROLE_NOT_ASSIGNED")
+    return active_role
 
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
@@ -145,6 +162,7 @@ def profile_setup_user_id(token: str) -> int:
 
 def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    active_role: str | None = Header(default=None, alias="X-Active-Role"),
 ) -> dict[str, Any]:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="UNAUTHORIZED")
@@ -170,9 +188,11 @@ def current_user(
         if user is None:
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
 
+        roles = _role_codes_for(connection, user["user_id"])
+        fallback_role = _role_for(connection, user["user_id"])
         return {
             "user_id": user["user_id"],
             "username": user["username"],
-            "role": _role_for(connection, user["user_id"]),
-            "roles": _role_codes_for(connection, user["user_id"]),
+            "role": resolve_active_role(active_role, roles, fallback_role),
+            "roles": roles,
         }

@@ -77,7 +77,7 @@ async function saveBind() {
 }
 
 function unbind(row) {
-  ElMessageBox.confirm(`解绑 ${row.deviceNo} 后，该地块的数据监测或远程控制可能受影响，历史记录会继续保留。`, '确认解绑', { type: 'warning', confirmButtonText: '确认解绑' }).then(async () => {
+  ElMessageBox.confirm(`解绑 ${row.deviceNo} 后，该地块的数据监测或远程控制可能受影响，历史记录会继续保留。`, '确认解绑', { type: 'warning', confirmButtonText: '确认解绑', cancelButtonText: '取消' }).then(async () => {
     try {
       await store.unbindDevice(row.id)
       ElMessage.success('设备已解绑，历史记录已保留')

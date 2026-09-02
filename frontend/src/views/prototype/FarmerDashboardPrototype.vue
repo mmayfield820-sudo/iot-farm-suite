@@ -75,12 +75,12 @@ const irrigationActions = [
             <div class="empty-work">
               <span class="calendar-mark"><Calendar /></span>
               <strong>今天可安排现场巡查</strong>
-              <small>明日有 2 项墒情巡查</small>
+              <small>明日有 2 项土壤湿度巡查</small>
             </div>
 
             <div class="next-task">
               <span class="task-date"><small>09</small><strong>01</strong></span>
-              <div><b>明日待办 · 2 项墒情巡查</b><span>一号田地、二号田地</span></div>
+              <div><b>明日待办 · 2 项土壤湿度巡查</b><span>一号田地、二号田地</span></div>
               <button aria-label="查看明日农事"><ArrowRight /></button>
             </div>
           </article>
@@ -93,7 +93,7 @@ const irrigationActions = [
             <div class="action-list">
               <div v-for="item in irrigationActions" :key="item.plot" class="action-row">
                 <span class="attention-icon"><WarningFilled /></span>
-                <div class="action-copy"><b>{{ item.plot }} · 墒情低于阶段下限</b><span>{{ item.moisture }} <i></i> {{ item.threshold }}</span></div>
+                <div class="action-copy"><b>{{ item.plot }} · 土壤湿度低于阶段下限</b><span>{{ item.moisture }} <i></i> {{ item.threshold }}</span></div>
                 <button class="action-link">查看灌溉建议 <ArrowRight /></button>
               </div>
             </div>

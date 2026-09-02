@@ -33,6 +33,14 @@ services:
       - ../database/schema/017_phase2_audit_logs.sql:/docker-entrypoint-initdb.d/017_phase2_audit_logs.sql:ro
       - ../database/schema/018_farm_annual_production.sql:/docker-entrypoint-initdb.d/018_farm_annual_production.sql:ro
       - ../database/schema/019_farm_planting_workflow.sql:/docker-entrypoint-initdb.d/019_farm_planting_workflow.sql:ro
+      - ../database/schema/020_scheduled_irrigation_stop.sql:/docker-entrypoint-initdb.d/020_scheduled_irrigation_stop.sql:ro
+      - ../database/schema/021_device_switch_state.sql:/docker-entrypoint-initdb.d/021_device_switch_state.sql:ro
+      - ../database/schema/022_today_weather_reminders.sql:/docker-entrypoint-initdb.d/022_today_weather_reminders.sql:ro
+      - ../database/schema/023_expand_orchard_management_plan.sql:/docker-entrypoint-initdb.d/023_expand_orchard_management_plan.sql:ro
+      - ../database/schema/024_recurring_management_tasks.sql:/docker-entrypoint-initdb.d/024_recurring_management_tasks.sql:ro
+      - ../database/schema/025_user_avatar.sql:/docker-entrypoint-initdb.d/025_user_avatar.sql:ro
+      - ../database/schema/026_standardize_soil_moisture_wording.sql:/docker-entrypoint-initdb.d/026_standardize_soil_moisture_wording.sql:ro
+      - ../database/schema/027_annual_stage_workflow.sql:/docker-entrypoint-initdb.d/027_annual_stage_workflow.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
@@ -45,7 +53,7 @@ services:
     container_name: emqx
     restart: unless-stopped
     ports:
-      - "2883:1883"
+      - "1884:1883"
       - "8083:8083"
       - "18083:18083"
 

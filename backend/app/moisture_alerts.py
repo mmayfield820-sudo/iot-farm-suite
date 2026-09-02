@@ -5,7 +5,6 @@ from typing import Any
 
 from sqlalchemy import text
 
-from .plan_adjustment_reminders import sync_low_moisture_reminder
 
 
 def current_moisture_rule(
@@ -82,7 +81,7 @@ def moisture_alert_description(
     comparison = "低于" if direction == "low" else "高于"
     bound = "下限" if direction == "low" else "上限"
     if rule["source"] == "production_stage":
-        basis = f"{rule['stageName']}墒情目标{bound} {threshold:g}%"
+        basis = f"{rule['stageName']}土壤湿度目标{bound} {threshold:g}%"
     else:
         basis = f"地块基础阈值 {threshold:g}%"
     task_text = f"；未来7天关联任务：{'、'.join(tasks)}" if tasks else "；未来7天暂无关联计划任务"
@@ -178,15 +177,6 @@ def evaluate_moisture_alerts(
         )
     else:
         _recover_alert(connection, plot_id=plot_id, alert_type="low_moisture", timestamp=timestamp)
-
-    sync_low_moisture_reminder(
-        connection,
-        plot_id=plot_id,
-        moisture=moisture,
-        lower_bound=lower,
-        stage_name=rule["stageName"],
-        timestamp=timestamp,
-    )
 
     if upper is not None and moisture > upper:
         _open_alert(

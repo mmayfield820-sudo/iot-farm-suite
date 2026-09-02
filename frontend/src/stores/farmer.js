@@ -30,6 +30,7 @@ export const useFarmerStore = defineStore('farmer', () => {
   const weather = ref(isMock ? clone(weatherCurrent) : null)
   const commandLogs = ref([])
   const selectedPlotId = ref(normalizeId(userStore.user?.roleScopes?.farmer?.plotIds?.[0] || userStore.user?.accessiblePlots?.[0] || plots.value[0]?.plotId))
+  const selectedFarmId = ref(normalizeId(plots.value[0]?.farmId))
   const loading = ref(false)
   const initialized = ref(false)
   const loadError = ref('')
@@ -40,11 +41,19 @@ export const useFarmerStore = defineStore('farmer', () => {
     return ids.map(normalizeId)
   })
   const accessiblePlots = computed(() => scopedPlotIds.value.length ? plots.value.filter((plot) => scopedPlotIds.value.includes(normalizeId(plot.plotId))) : plots.value)
-  const currentPlot = computed(() => accessiblePlots.value.find((plot) => normalizeId(plot.plotId) === normalizeId(selectedPlotId.value)) || accessiblePlots.value[0] || null)
+  const accessibleFarms = computed(() => [...new Map(accessiblePlots.value.map((plot) => [normalizeId(plot.farmId), {
+    farmId: normalizeId(plot.farmId), farmName: plot.farmName || '未命名农场',
+  }])).values()])
+  const currentFarm = computed(() => accessibleFarms.value.find((farm) => farm.farmId === normalizeId(selectedFarmId.value)) || accessibleFarms.value[0] || null)
+  const farmPlots = computed(() => accessiblePlots.value.filter((plot) => normalizeId(plot.farmId) === currentFarm.value?.farmId))
+  const currentPlot = computed(() => farmPlots.value.find((plot) => normalizeId(plot.plotId) === normalizeId(selectedPlotId.value)) || farmPlots.value[0] || null)
   const accessibleIds = computed(() => accessiblePlots.value.map((plot) => normalizeId(plot.plotId)))
+  const farmIds = computed(() => farmPlots.value.map((plot) => normalizeId(plot.plotId)))
   const visibleAlerts = computed(() => alerts.value.filter((alert) => accessibleIds.value.includes(normalizeId(alert.plotId))))
   const visibleRecords = computed(() => irrigationRecords.value.filter((record) => accessibleIds.value.includes(normalizeId(record.plotId))))
-  const unhandledCount = computed(() => visibleAlerts.value.filter((alert) => alert.status === '未处理').length)
+  const farmAlerts = computed(() => alerts.value.filter((alert) => farmIds.value.includes(normalizeId(alert.plotId))))
+  const farmRecords = computed(() => irrigationRecords.value.filter((record) => farmIds.value.includes(normalizeId(record.plotId))))
+  const unhandledCount = computed(() => farmAlerts.value.filter((alert) => alert.status === '未处理').length)
 
   async function refreshAlerts() {
     if (isMock) return
@@ -55,12 +64,22 @@ export const useFarmerStore = defineStore('farmer', () => {
     })
   }
 
+  function ensureSelectedFarm() {
+    if (!accessibleFarms.value.some((farm) => farm.farmId === normalizeId(selectedFarmId.value))) selectedFarmId.value = accessibleFarms.value[0]?.farmId || ''
+  }
   function ensureSelectedPlot() {
-    if (!accessibleIds.value.includes(normalizeId(selectedPlotId.value))) selectedPlotId.value = accessibleIds.value[0] || ''
+    if (!farmIds.value.includes(normalizeId(selectedPlotId.value))) selectedPlotId.value = farmIds.value[0] || ''
+  }
+  function selectFarm(farmId) {
+    const id = normalizeId(farmId)
+    if (!accessibleFarms.value.some((farm) => farm.farmId === id)) return
+    selectedFarmId.value = id
+    const nextPlot = accessiblePlots.value.find((plot) => normalizeId(plot.farmId) === id)
+    if (nextPlot) selectPlot(nextPlot.plotId)
   }
   function selectPlot(plotId) {
     const id = normalizeId(plotId)
-    if (accessibleIds.value.includes(id)) {
+    if (farmIds.value.includes(id)) {
       selectedPlotId.value = id
       if (!isMock) loadWeather(id)
     }
@@ -69,7 +88,7 @@ export const useFarmerStore = defineStore('farmer', () => {
 
   async function loadFarmerData(force = false) {
     if (initialized.value && !force) return
-    if (isMock) { initialized.value = true; ensureSelectedPlot(); return }
+    if (isMock) { initialized.value = true; ensureSelectedFarm(); ensureSelectedPlot(); return }
     loading.value = true; loadError.value = ''
     try {
       const farmRows = unwrapList(await getFarmList()).map(normalizeFarm)
@@ -112,6 +131,7 @@ export const useFarmerStore = defineStore('farmer', () => {
       })
       irrigationRecords.value = plotResults.flatMap((item) => item.records)
       initialized.value = true
+      ensureSelectedFarm()
       ensureSelectedPlot()
       await loadWeather(selectedPlotId.value)
     } catch (error) {
@@ -151,6 +171,26 @@ export const useFarmerStore = defineStore('farmer', () => {
     })
   }
 
+  async function refreshIrrigationRecords(plotId = selectedPlotId.value) {
+    if (isMock || !plotId) return
+    const normalizedPlotId = normalizeId(plotId)
+    const records = unwrapList(await getIrrigationRecords(normalizedPlotId)).map(normalizeIrrigationRecord)
+    irrigationRecords.value = [
+      ...irrigationRecords.value.filter((record) => normalizeId(record.plotId) !== normalizedPlotId),
+      ...records,
+    ]
+    const current = getPlot(normalizedPlotId)
+    if (!current) return
+    const latestSuccessful = records.find((record) => record.status === '成功' && ['开启', '关闭'].includes(record.operationType))
+    const switchState = current.devices?.irrigation?.switchState
+    current.irrigating = switchState === 'on'
+      ? true
+      : switchState === 'off'
+        ? false
+        : latestSuccessful?.operationType === '开启'
+    current.status = current.irrigating ? 'irrigating' : (current.humidity < current.threshold ? 'alert' : 'normal')
+  }
+
   async function loadWeather(plotId = selectedPlotId.value) {
     if (isMock || !plotId) return
     try {
@@ -159,6 +199,8 @@ export const useFarmerStore = defineStore('farmer', () => {
       const current = body.current || body.currentWeather || body.current_weather || body
       weather.value = {
         ...current,
+        hourly: Array.isArray(body.hourly) ? body.hourly : [],
+        daily: Array.isArray(body.daily) ? body.daily : [],
         city: current.city || current.location || body.city || '',
         condition: current.condition || current.weather || '',
         temperature: Number(current.temperature ?? current.temp ?? 0),
@@ -183,7 +225,8 @@ export const useFarmerStore = defineStore('farmer', () => {
     if (!plotId) return
     if (isMock) return
     const to = period === 'custom' ? dateRange[1] : new Date()
-    const from = period === 'custom' ? dateRange[0] : new Date(to.getTime() - (period === '7d' ? 7 * 24 : 24) * 60 * 60 * 1000)
+    const hours = period === '30d' ? 30 * 24 : period === '7d' ? 7 * 24 : 24
+    const from = period === 'custom' ? dateRange[0] : new Date(to.getTime() - hours * 60 * 60 * 1000)
     const params = { from: from.toISOString(), to: to.toISOString() }
     const [temperature, humidity] = await Promise.all([
       getPlotMetrics(plotId, { ...params, type: 'temperature' }),
@@ -239,7 +282,7 @@ export const useFarmerStore = defineStore('farmer', () => {
     }))
   }
 
-  function beginCommand(plotId, action) {
+  function beginCommand(plotId, action, durationMinutes = null, activationType = 'manual') {
     const plot = getPlot(plotId)
     const device = plot?.devices?.irrigation
     if (!plot || !device?.deviceNo) throw new Error('当前地块未绑定可用的灌溉控制器')
@@ -252,6 +295,8 @@ export const useFarmerStore = defineStore('farmer', () => {
       deviceId: device.deviceId || device.id || device.deviceNo,
       topic: built.topic,
       action: action === 'open' ? 'irrigation_on' : 'irrigation_off',
+      durationMinutes: action === 'open' ? durationMinutes : null,
+      activationType,
       payload: built.payload,
       status: '下发中',
       sentAt: nowText(),
@@ -263,7 +308,7 @@ export const useFarmerStore = defineStore('farmer', () => {
 
   async function sendControl(command) {
     if (isMock) return { result: 'success' }
-    let response = await createDeviceCommand(command.deviceId, command.action)
+    let response = await createDeviceCommand(command.deviceId, command.action, command.durationMinutes, command.activationType)
     response = response?.data || response
     if (response.commandId) {
       const sequence = Number(response.commandId)
@@ -301,5 +346,5 @@ export const useFarmerStore = defineStore('farmer', () => {
     }
   }
 
-  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, weather, selectedPlotId, serviceStatus, loading, initialized, loadError, accessiblePlots, currentPlot, visibleAlerts, visibleRecords, unhandledCount, loadFarmerData, refreshRealtimeData, loadHistory, loadWeather, refreshAlerts, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
+  return { plots, alerts, irrigationRecords, historyByPlot, commandLogs, weather, selectedPlotId, selectedFarmId, serviceStatus, loading, initialized, loadError, accessiblePlots, accessibleFarms, currentFarm, farmPlots, currentPlot, visibleAlerts, visibleRecords, farmAlerts, farmRecords, unhandledCount, loadFarmerData, refreshRealtimeData, refreshIrrigationRecords, loadHistory, loadWeather, refreshAlerts, selectFarm, selectPlot, getPlot, getTrend, updateThreshold, acknowledge, finishControl, beginCommand, sendControl, waitCommandResult, completeCommand }
 })

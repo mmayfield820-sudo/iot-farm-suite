@@ -72,6 +72,8 @@ export function normalizeDevice(row = {}, options = {}) {
     type,
     online: Boolean(online),
     status: online ? '在线' : '离线',
+    switchState: firstDefined(row.switchState, row.switch_state, null),
+    switchChangedAt: firstDefined(row.switchChangedAt, row.switch_changed_at, ''),
     lastHeartbeat,
     createdAt: firstDefined(row.createdAt, row.created_at, ''),
     latestValue: firstDefined(row.latestValue, row.latest_value, row.value, '-'),
@@ -138,6 +140,16 @@ export function normalizeAlert(row = {}) {
   }
   const occurTime = firstDefined(row.occurTime, row.triggeredAt, row.triggered_at, row.alertDatetime, row.alert_datetime, '')
   const handledAt = firstDefined(row.handledAt, row.handled_at, '')
+  const value = firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-')
+  const threshold = firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-')
+  const rawReason = firstDefined(row.reason, row.description, row.alertDescription, row.alert_description, '')
+  const reason = rawReason && !/^\?+$/.test(String(rawReason).replace(/[^?]/g, '')) ? rawReason : ({
+    low_moisture: `当前湿度 ${value}%，低于阈值 ${threshold}%`,
+    high_moisture: `当前湿度 ${value}%，高于阈值 ${threshold}%`,
+    device_offline: '设备已离线，请检查设备连接状态',
+    device_fault: '设备状态异常，请及时检查',
+    irrigation_failed: '灌溉执行失败，请检查设备状态',
+  }[rawType] || '请查看告警详情并及时处理')
   return {
     ...row,
     alertId: normalizeId(firstDefined(row.alertId, row.alert_id, row.id)),
@@ -145,9 +157,9 @@ export function normalizeAlert(row = {}) {
     deviceId: normalizeId(firstDefined(row.deviceId, row.device_id)),
     typeCode: rawType,
     type: typeMap[rawType] || rawType,
-    reason: firstDefined(row.reason, row.alertDescription, row.alert_description, '暂无告警说明'),
-    value: firstDefined(row.value, row.triggerValue, row.alertValue, row.alert_value, '-'),
-    threshold: firstDefined(row.threshold, row.alertThreshold, row.alert_threshold, '-'),
+    reason,
+    value,
+    threshold,
     occurTime: formatDateTime(occurTime, ''),
     status: statusMap[row.status] || statusMap[row.alert_status] || firstDefined(row.status, row.alert_status, '未处理'),
     handledBy: normalizeId(firstDefined(row.handledBy, row.handled_by)),
@@ -167,8 +179,14 @@ export function normalizePlot(row = {}, related = {}) {
     humidity: devices.find((item) => item.type.includes('湿度')),
     irrigation: devices.find((item) => item.type.includes('灌溉')),
   }
-  const activeIrrigation = irrigationRecords.find((item) => item.operationType === '开启' && item.status === '进行中')
+  const reportedIrrigationState = deviceByType.irrigation?.switchState
+  const recordIrrigationState = irrigationRecords.find((item) => item.operationType === '开启' && item.status === '进行中')
     || (irrigationRecords.find((item) => ['开启', '关闭'].includes(item.operationType) && item.status === '成功')?.operationType === '开启')
+  const activeIrrigation = reportedIrrigationState === 'on'
+    ? true
+    : reportedIrrigationState === 'off'
+      ? false
+      : Boolean(recordIrrigationState)
   const lastIrrigation = irrigationRecords.find((item) => item.operationType === '开启')
   const allOnline = devices.length > 0 && devices.every((item) => item.online)
   const plotId = normalizeId(firstDefined(row.plotId, row.plot_id, row.id))

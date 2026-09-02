@@ -100,7 +100,7 @@
 | `reason` | 是 | `local` / `remote` / `auto` / `heartbeat` |
 | `values` | 是 | 当前业务值对象；马达为空对象 `{}` |
 
-数据库映射：后端以 `deviceId` 找到设备，更新 `device.status = 'online'`、`device.last_heartbeat = ts`。当前数据库没有保存设备“当前开关状态”的字段，因此 `switch` 仅用于实时展示和诊断，不写入 `device` 表；若前端需要历史开关状态，应另行新增设备状态表或字段。
+数据库映射：后端以 `deviceId` 找到设备，更新 `device.status = 'online'`、`device.last_heartbeat = ts`、`device.switch_state = switch` 和 `device.switch_changed_at = ts`。灌溉设备以该状态作为实时真相源；`reason = local/auto` 的实际状态变化还会生成成功的灌溉开关记录，远程控制广播则由原命令 ACK 结算，避免重复记录。
 
 ## 6. 信息流 D：心跳快照
 

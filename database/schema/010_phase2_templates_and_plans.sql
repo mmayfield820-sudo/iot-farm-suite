@@ -60,8 +60,12 @@ CREATE TABLE management_task_template (
   offset_days INT NOT NULL DEFAULT 0,
   suggested_time TIME NULL,
   note VARCHAR(1000) NULL,
+  repeat_days INT NULL,
+  repeat_until_stage_end TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (task_template_id),
   KEY idx_task_template_stage (stage_template_id, offset_days),
+  CONSTRAINT chk_task_template_repeat_days CHECK (repeat_days IS NULL OR repeat_days > 0),
+  CONSTRAINT chk_task_template_repeat_rule CHECK (repeat_until_stage_end = 0 OR repeat_days IS NOT NULL),
   CONSTRAINT fk_task_template_stage FOREIGN KEY (stage_template_id) REFERENCES growth_stage_template(stage_template_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

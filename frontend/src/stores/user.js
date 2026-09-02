@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { login as loginApi } from '@/api/auth'
+import { getMyProfile as getMyProfileApi, login as loginApi, updateMyProfile as updateMyProfileApi } from '@/api/auth'
 
 const STORAGE_KEY = 'smart-agriculture-user'
 const APPROVED_ACCOUNT_KEY = 'smart-agriculture-approved-accounts'
@@ -52,6 +52,8 @@ function normalizeUser(raw = {}) {
   const suppliedScopes = raw.roleScopes || raw.role_scopes || {}
   const plotIds = asArray(suppliedScopes.farmer?.plotIds || suppliedScopes.farmer?.plot_ids || raw.accessiblePlots || raw.plotIds || raw.plot_ids || farmerAssignments.map((item) => item.plotId || item.plot_id))
   const farmIds = asArray(suppliedScopes.farmAdmin?.farmIds || suppliedScopes.farmAdmin?.farm_ids || raw.farmIds || raw.farm_ids || farmAssignments.map((item) => item.farmId || item.farm_id))
+  const farmScopeDetails = (raw.farmScopes || raw.farm_scopes || []).map((item) => ({ id: String(item.id || item.farmId || item.farm_id || ''), name: item.name || item.farmName || item.farm_name || '' }))
+  const plotScopeDetails = (raw.plotScopes || raw.plot_scopes || []).map((item) => ({ id: String(item.id || item.plotId || item.plot_id || ''), name: item.name || item.plotName || item.plot_name || '', farmId: String(item.farmId || item.farm_id || ''), farmName: item.farmName || item.farm_name || '' }))
   const permissions = (raw.permissions || []).map((item) => {
     if (typeof item === 'string') return item
     const code = item?.permissionCode || item?.permission_code || item?.code
@@ -65,6 +67,10 @@ function normalizeUser(raw = {}) {
     displayName: raw.displayName || raw.name || raw.realName || raw.username || '',
     email: raw.email || '',
     phone: raw.phone || raw.Phone || '',
+    avatarData: raw.avatarData || raw.avatar_data || '',
+    employeeNo: raw.employeeNo || raw.employee_no || '',
+    farmScopes: farmScopeDetails,
+    plotScopes: plotScopeDetails,
     status: raw.active === false || raw.Active === false ? 'disabled' : raw.status || 'normal',
     roles,
     permissions,
@@ -84,7 +90,7 @@ export const useUserStore = defineStore('user', () => {
   const refreshedMock = import.meta.env.VITE_USE_MOCK === 'true' && saved
     ? mockAccounts.find((item) => item.id === saved.id)
     : null
-  const restoredProfile = refreshedMock ? { ...refreshedMock, activeRole: saved.activeRole } : saved
+  const restoredProfile = refreshedMock ? { ...refreshedMock, ...saved, activeRole: saved.activeRole } : saved
   const user = ref(restoredProfile ? normalizeUser(restoredProfile) : null)
   const roles = computed(() => user.value?.roles || [])
   const role = computed(() => user.value?.activeRole || '')
@@ -110,7 +116,7 @@ export const useUserStore = defineStore('user', () => {
     } else {
       const response = await loginApi({ username: payload.username.trim(), password: payload.password })
       if (response.requiresProfileCompletion) {
-        return { requiresProfileCompletion: true, profileSetupToken: response.profileSetupToken }
+        return { requiresProfileCompletion: true, profileSetupToken: response.profileSetupToken, setupProfile: normalizeUser(response.user || {}) }
       }
       profile = response.user || response.data?.user || response.data || response
       token = response.token || response.data?.token
@@ -147,11 +153,31 @@ export const useUserStore = defineStore('user', () => {
     return resources.some((resourceName) => actions.some((actionName) => [`${resourceName}:${actionName}`, `${resourceName}.${actionName}`, `${resourceName}_${actionName}`, `${resourceName}:*`, `${resourceName}.*`].some((candidate) => normalized.includes(candidate.toLowerCase()))))
   }
 
+  async function updateProfile(payload) {
+    if (!user.value) throw new Error('请先登录')
+    if (import.meta.env.VITE_USE_MOCK === 'true') {
+      user.value = { ...user.value, displayName: payload.name.trim(), email: payload.email?.trim() || '', phone: payload.phone?.trim() || '', avatarData: payload.avatarData || '' }
+    } else {
+      const profile = await updateMyProfileApi(payload)
+      user.value = normalizeUser({ ...profile, activeRole: user.value.activeRole })
+    }
+    persistUser()
+    return user.value
+  }
+
+  async function refreshProfile() {
+    if (!user.value || import.meta.env.VITE_USE_MOCK === 'true') return user.value
+    const profile = await getMyProfileApi()
+    user.value = normalizeUser({ ...profile, activeRole: user.value.activeRole })
+    persistUser()
+    return user.value
+  }
+
   function logout() {
     user.value = null
     localStorage.removeItem(STORAGE_KEY)
     localStorage.removeItem('smart-agriculture-token')
   }
 
-  return { user, roles, role, permissions, isLoggedIn, login, switchRole, can, logout }
+  return { user, roles, role, permissions, isLoggedIn, login, switchRole, can, updateProfile, refreshProfile, logout }
 })

@@ -1,26 +1,164 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import os
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 
-def affected_plan_tasks(connection: Any, *, plot_id: int, as_of: date) -> list[dict[str, Any]]:
-    """Return upcoming irrigation or patrol work affected by a field condition."""
+SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
+WEATHER_REMINDER_TYPES = {
+    "continuous_rain",
+    "high_rain_probability",
+    "high_temperature",
+    "frost_risk",
+    "strong_wind",
+}
+RAIN_TASK_KEYWORDS = {
+    "irrigation", "patrol", "fertil", "spray", "pesticide", "harvest",
+    "灌溉", "巡园", "巡查", "施肥", "喷药", "打药", "用药", "植保",
+    "采收", "采摘", "除草", "清园", "套袋",
+}
+HEAT_TASK_KEYWORDS = {
+    "patrol", "fertil", "spray", "pesticide", "prun", "harvest",
+    "巡园", "巡查", "施肥", "喷药", "打药", "用药", "植保", "修剪",
+    "采收", "采摘", "除草", "清园", "套袋",
+}
+WIND_TASK_KEYWORDS = {
+    "patrol", "spray", "pesticide", "prun", "harvest",
+    "巡园", "巡查", "喷药", "打药", "用药", "植保", "修剪", "采收",
+    "采摘", "套袋",
+}
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _threshold(name: str, default: float) -> float:
+    value = _number(os.getenv(name))
+    return default if value is None else value
+
+
+def shanghai_day(timestamp: datetime) -> date:
+    aware = timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
+    return aware.astimezone(SHANGHAI).date()
+
+
+def shanghai_day_utc_bounds(timestamp: datetime) -> tuple[datetime, datetime]:
+    local_day = shanghai_day(timestamp)
+    local_start = datetime.combine(local_day, time.min, tzinfo=SHANGHAI)
+    start = local_start.astimezone(UTC).replace(tzinfo=None)
+    return start, (local_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None)
+
+
+def consecutive_rainy_days(forecast: Any) -> int:
+    """Count consecutive rainy forecast days beginning today."""
+    if not isinstance(forecast, list):
+        return 0
+    count = 0
+    for item in forecast:
+        if not isinstance(item, dict):
+            break
+        condition = str(item.get("condition") or item.get("weather") or "")
+        probability = _number(
+            item.get("rainProbability")
+            if item.get("rainProbability") is not None
+            else item.get("rain_probability", item.get("precipitation_probability"))
+        ) or 0
+        if "雨" not in condition and "rain" not in condition.lower() and probability < 60:
+            break
+        count += 1
+    return count
+
+
+def weather_reminder_conditions(forecast: Any) -> list[dict[str, Any]]:
+    """Return today's weather conditions that may affect field work."""
+    if not isinstance(forecast, dict):
+        return []
+    current = forecast.get("current") if isinstance(forecast.get("current"), dict) else {}
+    hourly = forecast.get("hourly") if isinstance(forecast.get("hourly"), list) else []
+    daily = forecast.get("daily") if isinstance(forecast.get("daily"), list) else []
+    today = daily[0] if daily and isinstance(daily[0], dict) else {}
+    rainy_days = consecutive_rainy_days(daily)
+    today_key = str(today.get("date") or today.get("time") or "")[:10]
+    today_hourly = [
+        item for item in hourly
+        if isinstance(item, dict) and (not today_key or str(item.get("time") or "")[:10] == today_key)
+    ]
+    probabilities = [
+        value for value in (
+            _number(item.get("rainProbability"))
+            for item in today_hourly[:24]
+        ) if value is not None
+    ]
+    daily_rain = _number(today.get("rainProbability"))
+    rain_probability = max(probabilities + ([daily_rain] if daily_rain is not None else []), default=0)
+    high = _number(today.get("high", current.get("high")))
+    low = _number(today.get("low", current.get("low")))
+    wind_values = [
+        value for value in (
+            _number(current.get("windSpeed", current.get("wind_speed"))),
+            _number(today.get("windSpeedMax", today.get("wind_speed_max"))),
+        ) if value is not None
+    ]
+    wind_speed = max(wind_values, default=None)
+    rain_threshold = _threshold("WEATHER_REMINDER_RAIN_PROBABILITY", 60)
+    high_threshold = _threshold("WEATHER_REMINDER_HIGH_TEMPERATURE_C", 35)
+    frost_threshold = _threshold("WEATHER_REMINDER_FROST_TEMPERATURE_C", 2)
+    wind_threshold = _threshold("WEATHER_REMINDER_STRONG_WIND_KMH", 39)
+    conditions: list[dict[str, Any]] = []
+
+    if rainy_days >= 2:
+        conditions.append({
+            "type": "continuous_rain",
+            "description": f"天气预报显示从今天起连续 {rainy_days} 天有降雨",
+        })
+    elif rain_probability >= rain_threshold:
+        conditions.append({
+            "type": "high_rain_probability",
+            "description": f"今天最高降雨概率为 {rain_probability:g}%",
+        })
+    if high is not None and high >= high_threshold:
+        conditions.append({
+            "type": "high_temperature",
+            "description": f"今天最高气温预计达到 {high:g}℃",
+        })
+    if low is not None and low <= frost_threshold:
+        conditions.append({
+            "type": "frost_risk",
+            "description": f"今天最低气温预计为 {low:g}℃，存在低温霜冻风险",
+        })
+    if wind_speed is not None and wind_speed >= wind_threshold:
+        conditions.append({
+            "type": "strong_wind",
+            "description": f"今天最大风速预计达到 {wind_speed:g} km/h，户外作业可能受到影响",
+        })
+    return conditions
+
+
+def task_is_affected(task: dict[str, Any], reminder_type: str) -> bool:
+    value = f"{task.get('taskType') or ''} {task.get('title') or ''}".lower()
+    if reminder_type == "frost_risk":
+        return True
+    keywords = HEAT_TASK_KEYWORDS if reminder_type == "high_temperature" else WIND_TASK_KEYWORDS if reminder_type == "strong_wind" else RAIN_TASK_KEYWORDS
+    return any(keyword in value for keyword in keywords)
+
+
+def today_plan_tasks(connection: Any, *, plot_id: int, as_of: date) -> list[dict[str, Any]]:
     rows = connection.execute(
         text(
             "SELECT t.task_id, t.title, t.task_type, t.scheduled_date "
             "FROM management_task t JOIN management_plan p ON p.plan_id = t.plan_id "
             "WHERE t.plot_id = :plot AND p.plan_status = 'active' "
-            "AND t.task_status IN ('pending', 'in_progress') "
-            "AND t.scheduled_date BETWEEN :start AND :end "
-            "AND (LOWER(t.task_type) IN ('irrigation', 'patrol') "
-            "OR t.task_type IN ('灌溉', '巡园', '巡查') "
-            "OR t.title LIKE '%灌溉%' OR t.title LIKE '%巡园%' OR t.title LIKE '%巡查%') "
-            "ORDER BY t.scheduled_date, t.task_id LIMIT 5"
+            "AND t.task_status IN ('pending', 'in_progress') AND t.scheduled_date = :today "
+            "ORDER BY t.task_id"
         ),
-        {"plot": plot_id, "start": as_of, "end": as_of + timedelta(days=7)},
+        {"plot": plot_id, "today": as_of},
     ).mappings().all()
     return [
         {
@@ -33,7 +171,48 @@ def affected_plan_tasks(connection: Any, *, plot_id: int, as_of: date) -> list[d
     ]
 
 
-def open_plan_adjustment_reminder(
+def purge_non_today_reminders(connection: Any, *, timestamp: datetime) -> None:
+    start, end = shanghai_day_utc_bounds(timestamp)
+    stale_ids = text(
+        "SELECT reminder_id FROM plan_adjustment_reminder "
+        "WHERE triggered_at < :start OR triggered_at >= :end "
+        "OR reminder_type NOT IN :weather_types"
+    ).bindparams(bindparam("weather_types", expanding=True))
+    params = {"start": start, "end": end, "weather_types": sorted(WEATHER_REMINDER_TYPES)}
+    ids = connection.execute(stale_ids, params).scalars().all()
+    if not ids:
+        return
+    connection.execute(
+        text("DELETE FROM plan_adjustment_reminder_task WHERE reminder_id IN :ids").bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
+    )
+    connection.execute(
+        text("DELETE FROM plan_adjustment_reminder WHERE reminder_id IN :ids").bindparams(bindparam("ids", expanding=True)),
+        {"ids": ids},
+    )
+
+
+def _delete_today_reminder(
+    connection: Any, *, plot_id: int, reminder_type: str, timestamp: datetime
+) -> None:
+    dedupe_key = f"{shanghai_day(timestamp).isoformat()}:{reminder_type}:{plot_id}"
+    reminder_id = connection.execute(
+        text("SELECT reminder_id FROM plan_adjustment_reminder WHERE dedupe_key = :key"),
+        {"key": dedupe_key},
+    ).scalar()
+    if reminder_id is None:
+        return
+    connection.execute(
+        text("DELETE FROM plan_adjustment_reminder_task WHERE reminder_id = :reminder"),
+        {"reminder": reminder_id},
+    )
+    connection.execute(
+        text("DELETE FROM plan_adjustment_reminder WHERE reminder_id = :reminder"),
+        {"reminder": reminder_id},
+    )
+
+
+def _upsert_today_reminder(
     connection: Any,
     *,
     plot_id: int,
@@ -42,27 +221,21 @@ def open_plan_adjustment_reminder(
     tasks: list[dict[str, Any]],
     timestamp: datetime,
 ) -> int:
-    """Keep one active reminder per plot and trigger type, refreshing its task snapshot."""
-    dedupe_key = f"{reminder_type}:{plot_id}"
+    dedupe_key = f"{shanghai_day(timestamp).isoformat()}:{reminder_type}:{plot_id}"
+    task_text = "、".join(task["title"] for task in tasks)
     result = connection.execute(
         text(
             "INSERT INTO plan_adjustment_reminder "
             "(plot_id, reminder_type, dedupe_key, reminder_description, triggered_at, reminder_status) "
             "VALUES (:plot, :type, :key, :description, :timestamp, 'active') "
             "ON DUPLICATE KEY UPDATE reminder_id = LAST_INSERT_ID(reminder_id), "
-            "reminder_description = VALUES(reminder_description), triggered_at = VALUES(triggered_at), "
-            "disposition_action = IF(reminder_status = 'recovered', NULL, disposition_action), "
-            "disposition_note = IF(reminder_status = 'recovered', NULL, disposition_note), "
-            "disposed_by = IF(reminder_status = 'recovered', NULL, disposed_by), "
-            "disposed_at = IF(reminder_status = 'recovered', NULL, disposed_at), "
-            "recovered_at = IF(reminder_status = 'recovered', NULL, recovered_at), "
-            "reminder_status = IF(reminder_status = 'recovered', 'active', reminder_status)"
+            "reminder_description = VALUES(reminder_description), reminder_status = 'active'"
         ),
         {
             "plot": plot_id,
             "type": reminder_type,
             "key": dedupe_key,
-            "description": description,
+            "description": f"{description}；可能影响今天的{task_text}任务，请结合现场情况合理安排。",
             "timestamp": timestamp,
         },
     )
@@ -89,114 +262,32 @@ def open_plan_adjustment_reminder(
     return reminder_id
 
 
-def recover_plan_adjustment_reminder(
+def sync_weather_reminders(
     connection: Any,
     *,
     plot_id: int,
-    reminder_type: str,
+    forecast: Any,
     timestamp: datetime,
 ) -> None:
-    connection.execute(
-        text(
-            "UPDATE plan_adjustment_reminder SET reminder_status = 'recovered', recovered_at = :timestamp "
-            "WHERE dedupe_key = :key AND reminder_status IN ('active', 'handled')"
-        ),
-        {"key": f"{reminder_type}:{plot_id}", "timestamp": timestamp},
-    )
-
-
-def sync_low_moisture_reminder(
-    connection: Any,
-    *,
-    plot_id: int,
-    moisture: float,
-    lower_bound: float | None,
-    stage_name: str | None,
-    timestamp: datetime,
-) -> None:
-    if lower_bound is None or moisture >= lower_bound:
-        recover_plan_adjustment_reminder(
-            connection, plot_id=plot_id, reminder_type="low_moisture", timestamp=timestamp
-        )
-        return
-    tasks = affected_plan_tasks(connection, plot_id=plot_id, as_of=timestamp.date())
-    basis = f"{stage_name}墒情目标下限 {lower_bound:g}%" if stage_name else f"墒情阈值 {lower_bound:g}%"
-    task_text = "、".join(task["title"] for task in tasks) if tasks else "未来 7 天暂无灌溉或巡园任务"
-    open_plan_adjustment_reminder(
-        connection,
-        plot_id=plot_id,
-        reminder_type="low_moisture",
-        description=f"当前土壤湿度 {moisture:g}% 低于{basis}；受影响任务：{task_text}",
-        tasks=tasks,
-        timestamp=timestamp,
-    )
-
-
-def sync_device_offline_reminder(
-    connection: Any,
-    *,
-    plot_id: int,
-    device_code: str,
-    timestamp: datetime,
-) -> None:
-    tasks = affected_plan_tasks(connection, plot_id=plot_id, as_of=timestamp.date())
-    task_text = "、".join(task["title"] for task in tasks) if tasks else "未来 7 天暂无灌溉或巡园任务"
-    open_plan_adjustment_reminder(
-        connection,
-        plot_id=plot_id,
-        reminder_type="device_offline",
-        description=f"设备 {device_code} 已离线；受影响任务：{task_text}",
-        tasks=tasks,
-        timestamp=timestamp,
-    )
-
-
-def sync_continuous_rain_reminder(
-    connection: Any,
-    *,
-    plot_id: int,
-    rainy_days: int,
-    timestamp: datetime,
-) -> None:
-    if rainy_days < 2:
-        recover_plan_adjustment_reminder(
-            connection, plot_id=plot_id, reminder_type="continuous_rain", timestamp=timestamp
-        )
-        return
-    tasks = affected_plan_tasks(connection, plot_id=plot_id, as_of=timestamp.date())
-    task_text = "、".join(task["title"] for task in tasks) if tasks else "未来 7 天暂无灌溉或巡园任务"
-    open_plan_adjustment_reminder(
-        connection,
-        plot_id=plot_id,
-        reminder_type="continuous_rain",
-        description=f"天气预报显示未来连续 {rainy_days} 天有降雨；受影响任务：{task_text}",
-        tasks=tasks,
-        timestamp=timestamp,
-    )
-
-
-def consecutive_rainy_days(forecast: Any) -> int:
-    """Treat two forecast days with rain or a >=60% probability as continuous rain."""
-    if not isinstance(forecast, list):
-        return 0
-    longest = current = 0
-    for item in forecast:
-        if not isinstance(item, dict):
-            current = 0
+    purge_non_today_reminders(connection, timestamp=timestamp)
+    tasks = today_plan_tasks(connection, plot_id=plot_id, as_of=shanghai_day(timestamp))
+    conditions = {item["type"]: item for item in weather_reminder_conditions(forecast)}
+    for reminder_type in WEATHER_REMINDER_TYPES:
+        condition = conditions.get(reminder_type)
+        affected = [task for task in tasks if task_is_affected(task, reminder_type)] if condition else []
+        if not affected:
+            _delete_today_reminder(
+                connection,
+                plot_id=plot_id,
+                reminder_type=reminder_type,
+                timestamp=timestamp,
+            )
             continue
-        condition = str(item.get("condition") or item.get("weather") or "")
-        raw_probability = (
-            item.get("rainProbability")
-            if item.get("rainProbability") is not None
-            else item.get("rain_probability", item.get("precipitation_probability", 0))
+        _upsert_today_reminder(
+            connection,
+            plot_id=plot_id,
+            reminder_type=reminder_type,
+            description=condition["description"],
+            tasks=affected,
+            timestamp=timestamp,
         )
-        try:
-            probability = float(raw_probability)
-        except (TypeError, ValueError):
-            probability = 0
-        if "雨" in condition or "rain" in condition.lower() or probability >= 60:
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-    return longest

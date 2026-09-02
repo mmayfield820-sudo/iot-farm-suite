@@ -8,6 +8,12 @@ const request = axios.create({
 request.interceptors.request.use((config) => {
   const token = localStorage.getItem('smart-agriculture-token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  try {
+    const activeRole = JSON.parse(localStorage.getItem('smart-agriculture-user') || 'null')?.activeRole
+    if (activeRole) config.headers['X-Active-Role'] = activeRole
+  } catch {
+    localStorage.removeItem('smart-agriculture-user')
+  }
   return config
 })
 
