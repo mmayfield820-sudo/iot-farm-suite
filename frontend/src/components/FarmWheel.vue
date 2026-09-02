@@ -1711,9 +1711,9 @@ onUnmounted(() => {
 
   bottom: 0;
 
-  width: 10px;
+  width: 14px;
 
-  z-index: 6;
+  z-index: 999;
 
   background:
     linear-gradient(
@@ -1742,7 +1742,7 @@ onUnmounted(() => {
     #e36a5d;
 
   box-shadow:
-    0 0 8px
+    0 0 20px
     rgba(227,106,93,.35);
 
 }
