@@ -1,0 +1,5 @@
+base_url=https://submodelhub.ilaien.com
+
+api_key=sk-12f0232b1426e5392c94255ce78b6dd5fcd2bb15ccd095db3e24c2938140b317
+
+image-model=gpt-image-2

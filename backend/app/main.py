@@ -243,6 +243,10 @@ class TaskCompletionRequest(BaseModel):
     irrigationRecordId: str | None = None
 
 
+class TaskCompletionCorrectionRequest(TaskCompletionRequest):
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class AdHocTaskRequest(BaseModel):
     taskType: str = Field(min_length=1, max_length=50)
     title: str = Field(min_length=1, max_length=150)
@@ -1391,6 +1395,7 @@ def validate_template_definition(definition: dict[str, Any]) -> list[dict[str, A
         raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
 
     stage_codes: set[str] = set()
+    total_duration_days = 0
     for stage in stages:
         try:
             code = str(stage["code"]).strip()
@@ -1406,6 +1411,7 @@ def validate_template_definition(definition: dict[str, Any]) -> list[dict[str, A
         if minimum is not None and maximum is not None and float(minimum) > float(maximum):
             raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
         stage_codes.add(code)
+        total_duration_days += duration
         for task in tasks:
             try:
                 title = str(task.get("title", "任务")).strip()
@@ -1423,6 +1429,8 @@ def validate_template_definition(definition: dict[str, Any]) -> list[dict[str, A
                 raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
             if task.get("track") not in {None, "young", "fruiting"}:
                 raise HTTPException(status_code=400, detail="INVALID_TEMPLATE_DEFINITION")
+    if total_duration_days != 365:
+        raise HTTPException(status_code=400, detail="ANNUAL_STAGE_DURATION_MUST_TOTAL_365")
     return stages
 
 
@@ -1488,19 +1496,21 @@ def production_year_bounds(production_year: int) -> tuple[date, date]:
 
 
 def annual_stage_window(stage_code: str, production_year: int, fallback_start: date, duration_days: int) -> tuple[date, date]:
-    starts = {"S1": date(production_year - 1, 12, 1), "S2": date(production_year, 2, 1), "S3": date(production_year, 4, 1), "S4": date(production_year, 5, 1), "S5": date(production_year, 7, 1), "S6": date(production_year, 9, 1), "S7": date(production_year, 11, 1)}
-    ends = {"S1": date(production_year, 1, 31), "S2": date(production_year, 3, 31), "S3": date(production_year, 4, 30), "S4": date(production_year, 6, 30), "S5": date(production_year, 8, 31), "S6": date(production_year, 10, 31), "S7": date(production_year, 11, 30)}
-    code = stage_code.upper()
-    return (starts[code], ends[code]) if code in starts else (fallback_start, fallback_start + timedelta(days=duration_days - 1))
+    del stage_code, production_year
+    return fallback_start, fallback_start + timedelta(days=duration_days - 1)
 
 
 def template_stage_windows(connection: Any, template_version_id: int, production_year: int) -> list[dict[str, Any]]:
     stages = connection.execute(text("SELECT stage_code,stage_name,sort_order,duration_days,moisture_min,moisture_max,management_focus FROM growth_stage_template WHERE template_version_id=:version ORDER BY sort_order"), {"version": template_version_id}).mappings().all()
-    fallback_start, _ = production_year_bounds(production_year)
+    fallback_start, production_year_end = production_year_bounds(production_year)
     result: list[dict[str, Any]] = []
-    for stage in stages:
+    for index, stage in enumerate(stages):
         starts_on, ends_on = annual_stage_window(stage["stage_code"], production_year, fallback_start, stage["duration_days"])
-        fallback_start = starts_on + timedelta(days=stage["duration_days"])
+        if index == len(stages) - 1 and ends_on < production_year_end:
+            ends_on = production_year_end
+        if ends_on > production_year_end:
+            raise HTTPException(status_code=409, detail="ANNUAL_STAGE_WINDOW_OUT_OF_RANGE")
+        fallback_start = ends_on + timedelta(days=1)
         result.append({**dict(stage), "planned_start_date": starts_on, "planned_end_date": ends_on})
     return result
 
@@ -1508,6 +1518,28 @@ def template_stage_windows(connection: Any, template_version_id: int, production
 def ensure_annual_stage_states(connection: Any, farm_id: int, production_year: int, template_version_id: int) -> None:
     for stage in template_stage_windows(connection, template_version_id, production_year):
         connection.execute(text("INSERT IGNORE INTO farm_annual_stage_state (farm_id,production_year,stage_code,sort_order,planned_start_date,planned_end_date) VALUES (:farm,:year,:code,:order,:starts,:ends)"), {"farm": farm_id, "year": production_year, "code": stage["stage_code"], "order": stage["sort_order"], "starts": stage["planned_start_date"], "ends": stage["planned_end_date"]})
+
+
+def refresh_unlocked_stage_windows(connection: Any, farm_id: int, production_year: int, template_version_id: int) -> None:
+    """Apply edited durations to future stages while preserving locked history."""
+    windows = template_stage_windows(connection, template_version_id, production_year)
+    states = {state["stage_code"]: state for state in connection.execute(text("SELECT * FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year FOR UPDATE"), {"farm": farm_id, "year": production_year}).mappings().all()}
+    cursor, production_end = production_year_bounds(production_year)
+    for index, stage in enumerate(windows):
+        state = states.get(stage["stage_code"])
+        if state is None:
+            continue
+        if state["stage_status"] in {"active", "completed", "not_dispatched"}:
+            cursor = state["planned_end_date"] + timedelta(days=1)
+            continue
+        starts_on = cursor
+        ends_on = starts_on + timedelta(days=stage["duration_days"] - 1)
+        if index == len(windows) - 1 and ends_on < production_end:
+            ends_on = production_end
+        if ends_on > production_end:
+            raise HTTPException(status_code=409, detail="ANNUAL_STAGE_WINDOW_OUT_OF_RANGE")
+        connection.execute(text("UPDATE farm_annual_stage_state SET planned_start_date=:starts,planned_end_date=:ends WHERE farm_id=:farm AND production_year=:year AND stage_code=:stage"), {"starts": starts_on, "ends": ends_on, "farm": farm_id, "year": production_year, "stage": stage["stage_code"]})
+        cursor = ends_on + timedelta(days=1)
 
 
 def locked_stage_codes(connection: Any, farm_id: int, production_year: int) -> set[str]:
@@ -1550,21 +1582,13 @@ def recurring_task_dates(first_date: date, stage_end: date, repeat_days: int | N
 def farm_plan_task_rules(connection: Any, template_version_id: int, production_year: int, track: str, window_overrides: dict[str, tuple[date, date]] | None = None) -> list[dict[str, Any]]:
     rows = connection.execute(text("SELECT s.stage_code,s.sort_order,s.duration_days,t.task_type,t.title,t.offset_days,t.note,t.track,t.repeat_days,t.repeat_until_stage_end FROM growth_stage_template s LEFT JOIN management_task_template t ON t.stage_template_id=s.stage_template_id WHERE s.template_version_id=:version ORDER BY s.sort_order,t.offset_days,t.task_template_id"), {"version": template_version_id}).mappings().all()
     rules: list[dict[str, Any]] = []
-    stage_windows: dict[int, tuple[date, date]] = {}
-    fallback_start, _ = production_year_bounds(production_year)
+    stage_windows = {stage["stage_code"]: (stage["planned_start_date"], stage["planned_end_date"]) for stage in template_stage_windows(connection, template_version_id, production_year)}
     for row in rows:
-        stage_order = row["sort_order"]
-        if stage_order not in stage_windows:
-            stage_start, stage_end = window_overrides.get(row["stage_code"], (None, None)) if window_overrides else (None, None)
-            if stage_start is None or stage_end is None:
-                stage_start, stage_end = annual_stage_window(row["stage_code"], production_year, fallback_start, row["duration_days"])
-            stage_windows[stage_order] = (stage_start, stage_end)
-            fallback_start = stage_start + timedelta(days=row["duration_days"])
         if row["task_type"] is None:
             continue
         if row["track"] not in {None, track}:
             continue
-        stage_start, stage_end = stage_windows[stage_order]
+        stage_start, stage_end = window_overrides.get(row["stage_code"], stage_windows[row["stage_code"]]) if window_overrides else stage_windows[row["stage_code"]]
         first_date = stage_start + timedelta(days=row["offset_days"])
         for scheduled_date in recurring_task_dates(first_date, stage_end, row["repeat_days"], bool(row["repeat_until_stage_end"])):
             rules.append({"stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "scheduledDate": scheduled_date, "note": row["note"]})
@@ -1599,28 +1623,42 @@ def annual_production_context(connection: Any, farm_id: int, *, production_year:
     track = annual["orchard_track"] if annual else automatic_track
     stages = connection.execute(text("SELECT stage_code,stage_name,sort_order,duration_days,moisture_min,moisture_max,management_focus FROM growth_stage_template WHERE template_version_id=:version ORDER BY sort_order"), {"version": version_id}).mappings().all()
     stage_states = {row["stage_code"]: row for row in connection.execute(text("SELECT * FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year"), {"farm": farm_id, "year": production_year}).mappings().all()}
+    default_stage_windows = {stage["stage_code"]: stage for stage in template_stage_windows(connection, version_id, production_year)}
     current_stage = None
     timeline: list[dict[str, Any]] = []
-    fallback_start, _ = production_year_bounds(production_year)
     for stage in stages:
         state = stage_states.get(stage["stage_code"])
-        default_starts_on, default_ends_on = annual_stage_window(stage["stage_code"], production_year, fallback_start, stage["duration_days"])
+        default_starts_on = default_stage_windows[stage["stage_code"]]["planned_start_date"]
+        default_ends_on = default_stage_windows[stage["stage_code"]]["planned_end_date"]
         starts_on = state["planned_start_date"] if state else default_starts_on
         ends_on = state["planned_end_date"] if state else default_ends_on
-        fallback_start = starts_on + timedelta(days=stage["duration_days"])
         stage_status = state["stage_status"] if state else "planned"
-        item = {"code": stage["stage_code"], "name": stage["stage_name"], "sortOrder": stage["sort_order"], "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat(), "actualStartedAt": iso(state["actual_started_at"]) if state else None, "status": stage_status, "locked": stage_status in {"active", "completed"}, "dispatched": bool(state and state["dispatched_at"]), "overdueConfirmation": stage_status == "planned" and starts_on < today, "managementFocus": stage["management_focus"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None}
+        unresolved_previous = any(
+            previous["stage_status"] == "planned" and previous["planned_end_date"] >= today
+            for previous in stage_states.values()
+            if previous["sort_order"] < stage["sort_order"]
+        )
+        item = {"code": stage["stage_code"], "name": stage["stage_name"], "sortOrder": stage["sort_order"], "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat(), "actualStartedAt": iso(state["actual_started_at"]) if state else None, "status": stage_status, "locked": stage_status in {"active", "completed"}, "dispatched": bool(state and state["dispatched_at"]), "canStart": stage_status == "planned" and not unresolved_previous, "overdueConfirmation": stage_status == "planned" and starts_on < today, "managementFocus": stage["management_focus"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None}
         timeline.append(item)
         if stage_status == "active" or (current_stage is None and starts_on <= today <= ends_on):
             current_stage = item
+    plot_offset_days = 0
+    if plot_id is not None:
+        plot_offset_days = connection.execute(
+            text("SELECT production_date_offset_days FROM plot WHERE plot_id=:plot AND farm_id=:farm"),
+            {"plot": plot_id, "farm": farm_id},
+        ).scalar_one_or_none()
+        if plot_offset_days is None:
+            raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
     selected_rules = farm_plan_task_rules(connection, version_id, production_year, track)
-    plan_items = [{**rule, "scheduledDate": rule["scheduledDate"].isoformat()} for rule in selected_rules]
+    plan_items = [{**rule, "scheduledDate": (rule["scheduledDate"] + timedelta(days=int(plot_offset_days or 0))).isoformat()} for rule in selected_rules]
     suggestions = [item for item in plan_items if current_stage and item["stageCode"] == current_stage["code"]]
     active_plan_versions = connection.execute(text("SELECT DISTINCT mp.template_version_id FROM management_plan mp JOIN plot p ON p.plot_id=mp.plot_id WHERE p.farm_id=:farm AND mp.plan_status='active'"), {"farm": farm_id}).scalars().all()
     active_plan_count = connection.execute(text("SELECT COUNT(*) FROM management_plan mp JOIN plot p ON p.plot_id=mp.plot_id WHERE p.farm_id=:farm AND mp.plan_status='active'"), {"farm": farm_id}).scalar()
     active_state = next((state for state in stage_states.values() if state["stage_status"] == "active"), None)
     has_undispatched_changes = annual is not None and active_state is not None and active_state["dispatched_template_version_id"] is None
-    return {"plotId": business_id("P", plot_id) if plot_id is not None else None, "farmId": business_id("F", farm_id), "farmName": farm["farm_name"], "productionYear": production_year, "productionYearStartsOn": production_year_bounds(production_year)[0].isoformat(), "productionYearEndsOn": production_year_bounds(production_year)[1].isoformat(), "templateId": business_id("CT", template["template_id"]), "templateVersionId": business_id("CTV", version_id), "templateName": template["template_name"], "templateScope": "farm" if template["farm_id"] is not None else "standard", "crop": template["crop_name"], "versionNo": template["version_no"], "versionDefinition": template_definition(connection, version_id), "annualConfigured": annual is not None, "annualStatus": annual["annual_status"] if annual else None, "activePlanCount": active_plan_count, "hasUndispatchedChanges": has_undispatched_changes, "canCustomizeInitialTemplate": annual is None and not active_plan_count, "plantingDate": farm["planting_date"].isoformat(), "treeAgeYears": tree_age_years, "track": track, "trackSource": annual["track_source"] if annual else "auto", "trackOverrideReason": annual["track_override_reason"] if annual else None, "stage": current_stage, "stages": timeline, "planItems": plan_items, "suggestions": suggestions}
+    overdue_stages = [item for item in timeline if item["overdueConfirmation"]]
+    return {"plotId": business_id("P", plot_id) if plot_id is not None else None, "farmId": business_id("F", farm_id), "farmName": farm["farm_name"], "productionYear": production_year, "productionYearStartsOn": production_year_bounds(production_year)[0].isoformat(), "productionYearEndsOn": production_year_bounds(production_year)[1].isoformat(), "templateId": business_id("CT", template["template_id"]), "templateVersionId": business_id("CTV", version_id), "templateName": template["template_name"], "templateScope": "farm" if template["farm_id"] is not None else "standard", "crop": template["crop_name"], "versionNo": template["version_no"], "versionDefinition": template_definition(connection, version_id), "annualConfigured": annual is not None, "annualStatus": annual["annual_status"] if annual else None, "activePlanCount": active_plan_count, "hasUndispatchedChanges": has_undispatched_changes, "canCustomizeInitialTemplate": annual is None and not active_plan_count, "plantingDate": farm["planting_date"].isoformat(), "treeAgeYears": tree_age_years, "track": track, "trackSource": annual["track_source"] if annual else "auto", "trackOverrideReason": annual["track_override_reason"] if annual else None, "stage": current_stage, "stages": timeline, "overdueStages": overdue_stages, "planItems": plan_items, "suggestions": suggestions}
 
 
 def ensure_farmer_task_access(plot_id: int, user: dict[str, Any]) -> dict[str, Any]:
@@ -1630,7 +1668,7 @@ def ensure_farmer_task_access(plot_id: int, user: dict[str, Any]) -> dict[str, A
 
 
 def task_row(connection: Any, task_id: int, *, lock: bool = False) -> Any:
-    statement = """SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_id=t.task_id WHERE t.task_id=:task"""
+    statement = """SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id,c.record_type,c.corrects_completion_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_completion_id=(SELECT c2.task_completion_id FROM management_task_completion c2 WHERE c2.task_id=t.task_id ORDER BY c2.task_completion_id DESC LIMIT 1) WHERE t.task_id=:task"""
     if lock:
         statement += " FOR UPDATE"
     row = connection.execute(text(statement), {"task": task_id}).mappings().first()
@@ -1648,7 +1686,7 @@ def task_status_value(row: Any) -> str:
 def task_payload(row: Any, *, include_completion: bool = True) -> dict[str, Any]:
     payload = {"id": business_id("MT", row["task_id"]), "planId": business_id("MP", row["plan_id"]) if row["plan_id"] is not None else None, "plotId": business_id("P", row["plot_id"]), "plotName": row["plot_name"], "stageCode": row["stage_code"], "taskType": row["task_type"], "title": row["title"], "source": row["source"], "scheduledDate": row["scheduled_date"].isoformat(), "status": task_status_value(row), "note": row["note"], "updatedAt": iso(row["updated_at"])}
     if include_completion:
-        payload["completion"] = None if row["task_completion_id"] is None else {"id": business_id("TC", row["task_completion_id"]), "result": row["result"], "executedAt": iso(row["executed_at"]), "executorUserId": business_id("U", row["executor_user_id"]), "executorName": row["executor_name"], "note": row["completion_note"], "irrigationRecordId": business_id("IR", row["irrigation_record_id"]) if row["irrigation_record_id"] is not None else None}
+        payload["completion"] = None if row["task_completion_id"] is None else {"id": business_id("TC", row["task_completion_id"]), "result": row["result"], "executedAt": iso(row["executed_at"]), "executorUserId": business_id("U", row["executor_user_id"]), "executorName": row["executor_name"], "note": row["completion_note"], "irrigationRecordId": business_id("IR", row["irrigation_record_id"]) if row["irrigation_record_id"] is not None else None, "recordType": row["record_type"], "correctsCompletionId": business_id("TC", row["corrects_completion_id"]) if row["corrects_completion_id"] is not None else None}
     return payload
 
 
@@ -2103,7 +2141,13 @@ def start_farm_annual_stage(farm_id: str, request: FarmStageStartRequest, user: 
             raise HTTPException(status_code=409, detail="STAGE_ALREADY_COMPLETED")
         if stage["stage_status"] == "active":
             return annual_production_context(connection, numeric_farm_id, production_year=production_year)
-        connection.execute(text("UPDATE farm_annual_stage_state SET stage_status='not_dispatched',non_dispatch_reason='阶段开始确认时已过期' WHERE farm_id=:farm AND production_year=:year AND sort_order<:order AND stage_status='planned'"), {"farm": numeric_farm_id, "year": production_year, "order": stage["sort_order"]})
+        unresolved_previous = connection.execute(
+            text("SELECT stage_code FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND sort_order<:order AND stage_status='planned' AND planned_end_date>=:started FOR UPDATE"),
+            {"farm": numeric_farm_id, "year": production_year, "order": stage["sort_order"], "started": actual_started_at.date()},
+        ).scalars().all()
+        if unresolved_previous:
+            raise HTTPException(status_code=409, detail={"code": "PREVIOUS_STAGE_NOT_RESOLVED", "stageCodes": unresolved_previous})
+        connection.execute(text("UPDATE farm_annual_stage_state SET stage_status='not_dispatched',non_dispatch_reason='阶段开始确认时已过期' WHERE farm_id=:farm AND production_year=:year AND sort_order<:order AND stage_status='planned' AND planned_end_date<:started"), {"farm": numeric_farm_id, "year": production_year, "order": stage["sort_order"], "started": actual_started_at.date()})
         connection.execute(text("UPDATE farm_annual_stage_state SET stage_status='completed',completed_at=:completed WHERE farm_id=:farm AND production_year=:year AND sort_order<:order AND stage_status='active'"), {"farm": numeric_farm_id, "year": production_year, "order": stage["sort_order"], "completed": actual_started_at})
         delta_days = (actual_started_at.date() - stage["planned_start_date"]).days
         if request.shiftFollowingStages and delta_days:
@@ -2211,7 +2255,7 @@ def list_management_tasks(scope: str = Query(default="today"), plot_id: str | No
         elif status_value in {"pending", "in_progress", "completed", "cancelled"}: clauses.append("t.task_status=:task_status"); params["task_status"] = status_value
         else: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
     clauses.append("(mp.plan_status IS NULL OR mp.plan_status='active' OR t.task_status IN ('completed','in_progress'))")
-    statement = text("SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_id=t.task_id WHERE " + " AND ".join(clauses) + " ORDER BY t.scheduled_date,t.task_id")
+    statement = text("SELECT t.*,p.plot_name,p.farm_id,mp.plan_status,c.task_completion_id,c.result,c.executed_at,c.executor_user_id,c.executor_name,c.note AS completion_note,c.irrigation_record_id,c.record_type,c.corrects_completion_id FROM management_task t JOIN plot p ON p.plot_id=t.plot_id LEFT JOIN management_plan mp ON mp.plan_id=t.plan_id LEFT JOIN management_task_completion c ON c.task_completion_id=(SELECT c2.task_completion_id FROM management_task_completion c2 WHERE c2.task_id=t.task_id ORDER BY c2.task_completion_id DESC LIMIT 1) WHERE " + " AND ".join(clauses) + " ORDER BY t.scheduled_date,t.task_id")
     if "farm_ids" in params:
         statement = statement.bindparams(bindparam("farm_ids", expanding=True))
     with engine.connect() as connection:
@@ -2226,8 +2270,10 @@ def get_management_task(task_id: str, user: dict[str, Any] = Depends(current_use
         row = task_row(connection, numeric_task_id)
         plot_scope(row["plot_id"], user)
         adjustments = connection.execute(text("SELECT task_adjustment_id,changed_by,adjustment_type,before_value,after_value,created_at FROM management_task_adjustment WHERE task_id=:task ORDER BY task_adjustment_id"), {"task": numeric_task_id}).mappings().all()
+        completions = connection.execute(text("SELECT task_completion_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id,record_type,corrects_completion_id,created_at FROM management_task_completion WHERE task_id=:task ORDER BY task_completion_id"), {"task": numeric_task_id}).mappings().all()
     payload = task_payload(row)
     payload["adjustments"] = [{"id": business_id("TA", item["task_adjustment_id"]), "changedBy": business_id("U", item["changed_by"]), "type": item["adjustment_type"], "before": json.loads(item["before_value"]) if isinstance(item["before_value"], str) else item["before_value"], "after": json.loads(item["after_value"]) if isinstance(item["after_value"], str) else item["after_value"], "createdAt": iso(item["created_at"])} for item in adjustments]
+    payload["completionHistory"] = [{"id": business_id("TC", item["task_completion_id"]), "result": item["result"], "executedAt": iso(item["executed_at"]), "executorUserId": business_id("U", item["executor_user_id"]), "executorName": item["executor_name"], "note": item["note"], "irrigationRecordId": business_id("IR", item["irrigation_record_id"]) if item["irrigation_record_id"] is not None else None, "recordType": item["record_type"], "correctsCompletionId": business_id("TC", item["corrects_completion_id"]) if item["corrects_completion_id"] is not None else None, "createdAt": iso(item["created_at"])} for item in completions]
     return payload
 
 
@@ -2331,6 +2377,35 @@ def complete_management_task(task_id: str, request: TaskCompletionRequest, user:
         finalize_farm_planting_if_ready(connection, row, executed_at.date(), user)
         record_task_adjustment(connection, numeric_task_id, user["user_id"], "completion", {"status": task_status_value(row)}, {"status": "completed", "completionId": business_id("TC", completion_id)})
         record_audit_log(connection, user, "task_execution", "complete_task", target_type="task", target_id=business_id("MT", numeric_task_id), detail=f"Recorded completion {business_id('TC', completion_id)}")
+        return task_payload(task_row(connection, numeric_task_id))
+
+
+@app.post("/api/tasks/{task_id}/completion-corrections", status_code=status.HTTP_201_CREATED)
+def correct_management_task_completion(task_id: str, request: TaskCompletionCorrectionRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Append a correction without overwriting the original execution record."""
+    numeric_task_id = parse_resource_id(task_id, "MT")
+    try:
+        executed_at = utc_naive(request.executedAt)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    with engine.begin() as connection:
+        row = task_row(connection, numeric_task_id, lock=True)
+        ensure_farmer_task_access(row["plot_id"], user)
+        if row["task_status"] != "completed":
+            raise HTTPException(status_code=409, detail="TASK_COMPLETION_CORRECTION_NOT_ALLOWED")
+        previous = connection.execute(
+            text("SELECT task_completion_id FROM management_task_completion WHERE task_id=:task ORDER BY task_completion_id DESC LIMIT 1 FOR UPDATE"),
+            {"task": numeric_task_id},
+        ).mappings().first()
+        if previous is None:
+            raise HTTPException(status_code=409, detail="TASK_COMPLETION_NOT_FOUND")
+        irrigation_record_id = task_irrigation_record_id(connection, request.irrigationRecordId, row["plot_id"])
+        correction_id = connection.execute(
+            text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id,record_type,corrects_completion_id) VALUES (:task,:result,:executed,:user,:name,:note,:irrigation,'correction',:previous)"),
+            {"task": numeric_task_id, "result": request.result.strip(), "executed": executed_at, "user": user["user_id"], "name": request.executorName.strip(), "note": request.note, "irrigation": irrigation_record_id, "previous": previous["task_completion_id"]},
+        ).lastrowid
+        record_task_adjustment(connection, numeric_task_id, user["user_id"], "completion_correction", {"completionId": business_id("TC", previous["task_completion_id"])}, {"completionId": business_id("TC", correction_id), "reason": request.reason.strip()})
+        record_audit_log(connection, user, "task_execution", "correct_task_completion", target_type="task", target_id=business_id("MT", numeric_task_id), detail=f"Appended correction {business_id('TC', correction_id)}: {request.reason.strip()}")
         return task_payload(task_row(connection, numeric_task_id))
 
 
@@ -2478,6 +2553,7 @@ def save_farm_annual_production(farm_id: str, request: FarmAnnualProductionReque
         annual_status = "saved" if request.versionDefinition is not None else "published"
         connection.execute(text("INSERT INTO farm_annual_production (farm_id,production_year,template_version_id,orchard_track,track_source,track_override_reason,annual_status,created_by,updated_by) VALUES (:farm,:year,:version,:track,:source,:reason,:status,:user,:user) ON DUPLICATE KEY UPDATE template_version_id=VALUES(template_version_id),orchard_track=VALUES(orchard_track),track_source=VALUES(track_source),track_override_reason=VALUES(track_override_reason),annual_status=VALUES(annual_status),updated_by=VALUES(updated_by)"), {"farm": numeric_farm_id, "year": production_year, "version": version_id, "track": track, "source": source, "reason": reason, "status": annual_status, "user": user["user_id"]})
         ensure_annual_stage_states(connection, numeric_farm_id, production_year, version_id)
+        refresh_unlocked_stage_windows(connection, numeric_farm_id, production_year, version_id)
         if request.versionDefinition is not None:
             connection.execute(text("UPDATE farm_production_profile SET template_version_id=:version,updated_by=:user WHERE farm_id=:farm"), {"version": version_id, "user": user["user_id"], "farm": numeric_farm_id})
         record_audit_log(connection, user, "production_plan", "save_annual_production", target_type="farm", target_id=business_id("F", numeric_farm_id), detail=f"Saved the independent {production_year} farm management plan using track {track}")

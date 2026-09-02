@@ -24,7 +24,7 @@ const autoTrack = computed(() => targetContext.value?.treeAgeYears <= 3 ? 'young
 const canExtendYoung = computed(() => targetContext.value?.treeAgeYears === 4 && autoTrack.value === 'fruiting')
 const published = computed(() => !initialSetup.value && Boolean(next.value?.annualConfigured))
 const stages = computed(() => draft.value?.versionDefinition?.stages || [])
-const standardTemplateOptions = computed(() => templates.value.filter((item) => item.id === current.value?.templateId))
+const standardTemplateOptions = computed(() => templates.value)
 const trackLabel = (track) => track === 'young' ? '幼树轨道' : '结果树轨道'
 
 function resetExtension(value) {
@@ -111,7 +111,11 @@ async function createDraft() {
   saving.value = true
   try {
     const sourceVersionId = form.sourceType === 'current' ? current.value.templateVersionId : form.sourceVersionId
-    draft.value = await createFarmCycleDraft(current.value.templateId, selectedFarmId.value, { sourceVersionId, changeNote: form.changeNote.trim() || null })
+    const sourceTemplateId = form.sourceType === 'current'
+      ? current.value.templateId
+      : standardTemplateOptions.value.find((item) => item.versionId === sourceVersionId)?.id
+    if (!sourceTemplateId) return ElMessage.warning('请选择有效的已发布标准模板')
+    draft.value = await createFarmCycleDraft(sourceTemplateId, selectedFarmId.value, { sourceVersionId, changeNote: form.changeNote.trim() || null })
     ElMessage.success(initialSetup.value ? '本农场首年管理计划草稿已创建' : '下一年度管理计划草稿已创建')
   } catch (error) { ElMessage.error(error.message || '草稿创建失败') }
   finally { saving.value = false }

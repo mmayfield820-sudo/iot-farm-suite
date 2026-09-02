@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createAdHocTask, completeTask, getTask, listTasks } from '@/api/task'
+import { createAdHocTask, completeTask, correctTaskCompletion, getTask, listTasks } from '@/api/task'
 import { getPlotProductionContext } from '@/api/production'
 import { useFarmerStore } from '@/stores/farmer'
 import { useUserStore } from '@/stores/user'
@@ -27,6 +27,7 @@ const productionContextError = ref('')
 const headerProductionContext = ref(null)
 const drawerOpen = ref(false)
 const completionOpen = ref(false)
+const correctionOpen = ref(false)
 const adHocOpen = ref(false)
 const submitting = ref(false)
 const localNow = new Date()
@@ -34,6 +35,7 @@ const localMonth = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).
 const filters = reactive({ plotId: farmerStore.selectedPlotId || '', status: '', month: localMonth })
 const calendarDate = ref(new Date(`${filters.month}-01T00:00:00`))
 const completionForm = reactive({ result: '已完成', executedAt: '', executorName: '', note: '' })
+const correctionForm = reactive({ result: '', executedAt: '', executorName: '', note: '', reason: '' })
 const adHocForm = reactive({ plotId: '', taskType: '巡园', title: '', executedAt: '', executorName: '', note: '' })
 
 const visibleTasks = computed(() => tasks.value)
@@ -191,6 +193,17 @@ function openCompletion() {
   completionForm.note = ''
   completionOpen.value = true
 }
+function openCorrection() {
+  if (!detail.value?.completion) return
+  Object.assign(correctionForm, {
+    result: detail.value.completion.result,
+    executedAt: detail.value.completion.executedAt?.slice(0, 16) || asInputDateTime(),
+    executorName: detail.value.completion.executorName,
+    note: detail.value.completion.note || '',
+    reason: '',
+  })
+  correctionOpen.value = true
+}
 function openAdHoc() {
   adHocForm.plotId = filters.plotId || plotOptions.value[0]?.plotId || ''
   adHocForm.taskType = '巡园'
@@ -214,6 +227,18 @@ async function submitCompletion() {
   } finally {
     submitting.value = false
   }
+}
+async function submitCorrection() {
+  if (!detail.value || !correctionForm.reason.trim()) return ElMessage.warning('请填写更正原因')
+  submitting.value = true
+  try {
+    await correctTaskCompletion(detail.value.id, { ...correctionForm, executedAt: asUtc(correctionForm.executedAt), note: correctionForm.note || null, reason: correctionForm.reason.trim() })
+    correctionOpen.value = false
+    ElMessage.success('已追加完成记录更正')
+    await openTask(detail.value)
+  } catch (error) {
+    ElMessage.error(error.message || '完成记录更正失败')
+  } finally { submitting.value = false }
 }
 async function submitAdHoc() {
   if (!adHocForm.plotId) return ElMessage.warning('请选择地块')
@@ -332,7 +357,7 @@ onMounted(loadTasks)
         <dl class="task-facts"><div><dt>任务类型</dt><dd>{{ detail.taskType }}</dd></div><div><dt>计划来源</dt><dd>{{ sourceLabel(detail.source) }}</dd></div><div class="fact-wide"><dt>任务备注</dt><dd>{{ detail.note || '无' }}</dd></div></dl>
         <section class="record-section plan-context"><div class="record-title"><el-icon><Clock /></el-icon><strong>计划依据</strong></div><template v-if="detail.source === 'ad_hoc'"><p class="context-empty">这是农户对已完成计划外农事的现场补录，不对应模板任务。</p></template><template v-else-if="detail.source === 'temporary'"><p class="context-empty">这是农场管理员针对当前阶段新增的临时任务，不改变年度管理计划基线。</p></template><template v-else-if="detail.source === 'planting'"><p class="context-summary">这是全园定植任务。完成后会计入果园定植进度；全部有效地块完成后，系统自动写入果园实际定植日期并启用后续年度建议。</p></template><template v-else-if="productionContext"><p class="context-summary">依据 {{ productionContext.templateName }}（{{ productionContext.crop }}，V{{ productionContext.versionNo }}）的 {{ productionContext.productionYear }} 生产年度和全园{{ productionContext.track === 'young' ? '幼树' : '结果树' }}轨道生成，由农场管理员统一下发。</p><dl v-if="productionContext.stage"><div><dt>当前阶段</dt><dd>{{ productionContext.stage.name }}</dd></div><div><dt>阶段周期</dt><dd>{{ productionContext.stage.startsOn }} 至 {{ productionContext.stage.endsOn }}</dd></div><div class="context-wide"><dt>管理重点</dt><dd>{{ productionContext.stage.managementFocus || '暂无' }}</dd></div><div v-if="productionContext.stage.moistureMin !== null || productionContext.stage.moistureMax !== null" class="context-wide"><dt>土壤湿度建议</dt><dd>{{ productionContext.stage.moistureMin ?? '-' }}% 至 {{ productionContext.stage.moistureMax ?? '-' }}%</dd></div></dl><p v-else class="context-empty">当前日期不在模板定义的物候阶段内。</p></template><p v-else class="context-empty">{{ productionContextError || '正在读取年度生产资料' }}</p></section>
         <div v-if="canExecute" class="drawer-commands"><el-button type="success" @click="openCompletion"><el-icon><CircleCheck /></el-icon>完成农事</el-button></div>
-        <section v-if="detail.completion" class="record-section completion-record"><div class="record-title"><el-icon><CircleCheckFilled /></el-icon><strong>完成记录</strong></div><dl><div><dt>执行时间</dt><dd>{{ formatDateTime(detail.completion.executedAt) }}</dd></div><div><dt>执行人</dt><dd>{{ detail.completion.executorName }}</dd></div><div><dt>执行结果</dt><dd>{{ detail.completion.result }}</dd></div><div class="record-wide"><dt>现场备注</dt><dd>{{ detail.completion.note || '无' }}</dd></div></dl></section>
+        <section v-if="detail.completion" class="record-section completion-record"><div class="record-title"><el-icon><CircleCheckFilled /></el-icon><strong>完成记录</strong><el-button link type="primary" @click="openCorrection">追加更正</el-button></div><dl><div><dt>执行时间</dt><dd>{{ formatDateTime(detail.completion.executedAt) }}</dd></div><div><dt>执行人</dt><dd>{{ detail.completion.executorName }}</dd></div><div><dt>执行结果</dt><dd>{{ detail.completion.result }}</dd></div><div class="record-wide"><dt>现场备注</dt><dd>{{ detail.completion.note || '无' }}</dd></div></dl><div v-if="detail.completionHistory?.length > 1" class="completion-history"><small>原始记录及后续更正</small><div v-for="item in detail.completionHistory" :key="item.id"><strong>{{ item.recordType === 'correction' ? '更正记录' : '原始记录' }}</strong><span>{{ formatDateTime(item.createdAt) }}</span></div></div></section>
         <section class="record-section"><div class="record-title"><el-icon><Clock /></el-icon><strong>任务记录</strong></div><div v-if="detail.adjustments?.length" class="history-list"><div v-for="item in detail.adjustments" :key="item.id" class="history-item"><span class="history-dot"></span><div><strong>{{ item.type === 'completion' ? '登记完成' : '历史调整' }}</strong><p>{{ formatDateTime(item.createdAt) }}</p></div></div></div><el-empty v-else :image-size="46" description="暂无任务记录" /></section>
       </template>
     </el-drawer>
@@ -340,6 +365,10 @@ onMounted(loadTasks)
     <el-dialog v-model="completionOpen" title="完成农事" width="min(520px, 92vw)" destroy-on-close>
       <el-form label-position="top"><el-form-item label="执行结果"><el-input v-model="completionForm.result" maxlength="255" /></el-form-item><el-form-item label="执行时间"><el-date-picker v-model="completionForm.executedAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item><el-form-item label="执行人"><el-input v-model="completionForm.executorName" maxlength="50" /></el-form-item><el-form-item label="现场备注"><el-input v-model="completionForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit /></el-form-item></el-form>
       <template #footer><el-button @click="completionOpen = false">取消</el-button><el-button type="success" :loading="submitting" @click="submitCompletion">确认完成</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="correctionOpen" title="追加完成记录更正" width="min(520px, 92vw)" destroy-on-close>
+      <el-form label-position="top"><el-form-item label="更正后执行结果"><el-input v-model="correctionForm.result" maxlength="255" /></el-form-item><el-form-item label="更正后执行时间"><el-date-picker v-model="correctionForm.executedAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" /></el-form-item><el-form-item label="执行人"><el-input v-model="correctionForm.executorName" maxlength="50" /></el-form-item><el-form-item label="现场备注"><el-input v-model="correctionForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit /></el-form-item><el-form-item label="更正原因" required><el-input v-model="correctionForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item></el-form>
+      <template #footer><el-button @click="correctionOpen = false">取消</el-button><el-button type="primary" :loading="submitting" @click="submitCorrection">确认追加</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="adHocOpen" title="登记计划外农事" width="min(560px, 92vw)" destroy-on-close>
