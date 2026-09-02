@@ -220,6 +220,21 @@ class TaskUpdateRequest(BaseModel):
     status: str | None = None
 
 
+class TaskChangeOrderRequest(BaseModel):
+    scheduledDate: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class TemporaryTaskCreateRequest(BaseModel):
+    plotId: str
+    taskType: str = Field(min_length=1, max_length=50)
+    title: str = Field(min_length=1, max_length=150)
+    scheduledDate: str
+    note: str | None = Field(default=None, max_length=1000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class TaskCompletionRequest(BaseModel):
     result: str = Field(min_length=1, max_length=255)
     executedAt: datetime
@@ -2162,7 +2177,7 @@ def generate_farm_plans(farm_id: str, request: FarmPlanGenerateRequest, user: di
 
 @app.get("/api/tasks")
 def list_management_tasks(scope: str = Query(default="today"), plot_id: str | None = Query(default=None, alias="plotId"), farm_id: str | None = Query(default=None, alias="farmId"), status_value: str | None = Query(default=None, alias="status"), month: str | None = None, user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
-    if scope not in {"today", "overdue", "next7days", "month"}:
+    if scope not in {"today", "overdue", "next7days", "month", "all"}:
         raise HTTPException(status_code=400, detail="INVALID_REQUEST")
     today = date.today()
     clauses, params = [], {"today": today}
@@ -2172,7 +2187,7 @@ def list_management_tasks(scope: str = Query(default="today"), plot_id: str | No
         clauses.append("t.scheduled_date<:today AND t.task_status IN ('pending','in_progress')")
     elif scope == "next7days":
         clauses.append("t.scheduled_date>=:today AND t.scheduled_date<=:end_date"); params["end_date"] = today + timedelta(days=7)
-    else:
+    elif scope == "month":
         try:
             month_start = date.fromisoformat(f"{month}-01") if month else None
             if month_start is None or month_start.day != 1: raise ValueError
@@ -2222,6 +2237,8 @@ def update_management_task(task_id: str, request: TaskUpdateRequest, user: dict[
     fields = request.model_fields_set
     if not fields:
         raise HTTPException(status_code=400, detail="INVALID_REQUEST")
+    if fields.intersection({"scheduledDate", "note"}):
+        raise HTTPException(status_code=409, detail="TASK_CHANGE_ORDER_REQUIRED")
     with engine.begin() as connection:
         row = task_row(connection, numeric_task_id, lock=True)
         ensure_farm_admin_access(user, row["farm_id"])
@@ -2242,6 +2259,61 @@ def update_management_task(task_id: str, request: TaskUpdateRequest, user: dict[
         record_task_adjustment(connection, numeric_task_id, user["user_id"], "task_update", before, after)
         record_audit_log(connection, user, "production_plan", "adjust_task", target_type="task", target_id=business_id("MT", numeric_task_id), detail="Adjusted an uncompleted task")
         return task_payload(task_row(connection, numeric_task_id))
+
+
+@app.post("/api/tasks/{task_id}/change-orders", status_code=status.HTTP_201_CREATED)
+def create_task_change_order(task_id: str, request: TaskChangeOrderRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_task_id = parse_resource_id(task_id, "MT")
+    with engine.begin() as connection:
+        row = task_row(connection, numeric_task_id, lock=True)
+        ensure_farm_admin_access(user, row["farm_id"])
+        if row["task_status"] != "pending" or row["plan_status"] == "superseded":
+            raise HTTPException(status_code=409, detail="TASK_CHANGE_ORDER_NOT_ALLOWED")
+        production_year = production_year_for(date.today())
+        stage = connection.execute(text("SELECT stage_status,planned_start_date,planned_end_date FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_code=:stage FOR UPDATE"), {"farm": row["farm_id"], "year": production_year, "stage": row["stage_code"]}).mappings().first()
+        if stage is None or stage["stage_status"] != "active":
+            raise HTTPException(status_code=409, detail="ACTIVE_STAGE_REQUIRED")
+        try:
+            scheduled_date = date.fromisoformat(request.scheduledDate) if request.scheduledDate else row["scheduled_date"]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+        if scheduled_date < date.today() or scheduled_date > stage["planned_end_date"]:
+            raise HTTPException(status_code=400, detail="INVALID_CHANGE_ORDER_DATE")
+        replacement_note = request.note if "note" in request.model_fields_set else row["note"]
+        if scheduled_date == row["scheduled_date"] and replacement_note == row["note"]:
+            raise HTTPException(status_code=400, detail="CHANGE_ORDER_HAS_NO_CHANGES")
+        replacement_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (:plan,:plot,:stage,:type,:title,:source,:scheduled,'pending',:note)"), {"plan": row["plan_id"], "plot": row["plot_id"], "stage": row["stage_code"], "type": row["task_type"], "title": row["title"], "source": row["source"], "scheduled": scheduled_date, "note": replacement_note}).lastrowid
+        connection.execute(text("UPDATE management_task SET task_status='cancelled' WHERE task_id=:task"), {"task": numeric_task_id})
+        before = {"scheduledDate": row["scheduled_date"].isoformat(), "note": row["note"], "status": "pending"}
+        after = {"replacementTaskId": business_id("MT", replacement_id), "scheduledDate": scheduled_date.isoformat(), "note": replacement_note, "reason": request.reason.strip()}
+        record_task_adjustment(connection, numeric_task_id, user["user_id"], "change_order", before, after)
+        record_audit_log(connection, user, "production_plan", "create_change_order", target_type="task", target_id=business_id("MT", numeric_task_id), detail=f"Replaced by {business_id('MT', replacement_id)}: {request.reason.strip()}")
+        return {"originalTaskId": business_id("MT", numeric_task_id), "replacementTask": task_payload(task_row(connection, replacement_id)), "reason": request.reason.strip()}
+
+
+@app.post("/api/farms/{farm_id}/temporary-tasks", status_code=status.HTTP_201_CREATED)
+def create_temporary_management_task(farm_id: str, request: TemporaryTaskCreateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    numeric_plot_id = parse_resource_id(request.plotId, "P")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    try:
+        scheduled_date = date.fromisoformat(request.scheduledDate)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    with engine.begin() as connection:
+        plot = connection.execute(text("SELECT plot_id FROM plot WHERE plot_id=:plot AND farm_id=:farm AND plot_status='active' FOR UPDATE"), {"plot": numeric_plot_id, "farm": numeric_farm_id}).mappings().first()
+        if plot is None:
+            raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
+        production_year = production_year_for(date.today())
+        stage = connection.execute(text("SELECT stage_code,planned_end_date FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_status='active' FOR UPDATE"), {"farm": numeric_farm_id, "year": production_year}).mappings().first()
+        if stage is None:
+            raise HTTPException(status_code=409, detail="ACTIVE_STAGE_REQUIRED")
+        if scheduled_date < date.today() or scheduled_date > stage["planned_end_date"]:
+            raise HTTPException(status_code=400, detail="INVALID_TEMPORARY_TASK_DATE")
+        task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:stage,:type,:title,'temporary',:scheduled,'pending',:note)"), {"plot": numeric_plot_id, "stage": stage["stage_code"], "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": scheduled_date, "note": request.note}).lastrowid
+        record_task_adjustment(connection, task_id, user["user_id"], "temporary_task", {}, {"reason": request.reason.strip()})
+        record_audit_log(connection, user, "production_plan", "create_temporary_task", target_type="task", target_id=business_id("MT", task_id), detail=request.reason.strip())
+        return task_payload(task_row(connection, task_id))
 
 
 @app.post("/api/tasks/{task_id}/completions", status_code=status.HTTP_201_CREATED)

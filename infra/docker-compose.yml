@@ -41,6 +41,7 @@ services:
       - ../database/schema/025_user_avatar.sql:/docker-entrypoint-initdb.d/025_user_avatar.sql:ro
       - ../database/schema/026_standardize_soil_moisture_wording.sql:/docker-entrypoint-initdb.d/026_standardize_soil_moisture_wording.sql:ro
       - ../database/schema/027_annual_stage_workflow.sql:/docker-entrypoint-initdb.d/027_annual_stage_workflow.sql:ro
+      - ../database/schema/028_task_change_orders_and_temporary_tasks.sql:/docker-entrypoint-initdb.d/028_task_change_orders_and_temporary_tasks.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_demo_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]

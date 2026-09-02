@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmFarmCleanupCompletion, confirmFarmHarvestCompletion, generateFarmPlans, getCropTemplateVersion, getFarmAnnualProduction, getFarmPlantingSchedule, getFarmProductionProfile, listCropTemplates, listFarmPlots, listFarms, saveFarmAnnualProduction, saveFarmPlantingSchedule, saveFarmProductionProfile, startFarmStage, updatePlotProductionOffset } from '@/api/production'
+import { createTaskChangeOrder, createTemporaryTask, listTasks } from '@/api/task'
 
 const farms = ref([])
 const templates = ref([])
@@ -10,6 +11,7 @@ const context = ref(null)
 const plantingSchedule = ref(null)
 const profile = ref(null)
 const plots = ref([])
+const currentStageTasks = ref([])
 const loading = ref(false)
 const generating = ref(false)
 const saving = ref(false)
@@ -18,6 +20,8 @@ const profileOpen = ref(false)
 const milestoneOpen = ref(false)
 const milestoneType = ref('harvest')
 const dispatchOpen = ref(false)
+const changeOrderOpen = ref(false)
+const temporaryTaskOpen = ref(false)
 const savingPlan = ref(false)
 const planDirty = ref(false)
 const planTemplateKey = ref('')
@@ -29,6 +33,8 @@ const form = reactive({ templateVersionId: '', plannedPlantingDate: '' })
 const profileForm = reactive({ plantingDate: '', note: '' })
 const milestoneForm = reactive({ completedAt: '' })
 const dispatchForm = reactive({ stageCode: '', actualStartedAt: '', shiftFollowingStages: true })
+const changeOrderForm = reactive({ taskId: '', scheduledDate: '', note: '', reason: '' })
+const temporaryTaskForm = reactive({ plotId: '', taskType: 'other', title: '', scheduledDate: '', note: '', reason: '' })
 const savingPlotId = ref('')
 
 const trackLabel = computed(() => context.value?.track === 'young' ? '幼树轨道' : '结果树轨道')
@@ -37,6 +43,8 @@ const lockedStageCodes = computed(() => new Set((context.value?.stages || []).fi
 const hasLockedStages = computed(() => lockedStageCodes.value.size > 0)
 const dispatchableStages = computed(() => (context.value?.stages || []).filter((stage) => ['planned', 'active'].includes(stage.status)))
 const selectedDispatchStage = computed(() => dispatchableStages.value.find((stage) => stage.code === dispatchForm.stageCode))
+const activeStage = computed(() => (context.value?.stages || []).find((stage) => stage.status === 'active'))
+const adjustableTasks = computed(() => currentStageTasks.value.filter((task) => task.status === 'pending'))
 const milestoneLabel = computed(() => milestoneType.value === 'harvest' ? '采收完成' : '清园完成')
 const planTemplateOptions = computed(() => {
   const options = []
@@ -68,6 +76,7 @@ async function loadContext() {
   plantingSchedule.value = null
   profile.value = null
   plots.value = []
+  currentStageTasks.value = []
   form.templateVersionId = ''
   form.plannedPlantingDate = ''
   if (!selectedFarmId.value) return
@@ -84,6 +93,10 @@ async function loadContext() {
     else if (profileResult.reason.response?.status !== 404) throw profileResult.reason
     if (plotResult.status === 'fulfilled') plots.value = plotResult.value.items || []
     else throw plotResult.reason
+    if (activeStage.value) {
+      const taskRows = await listTasks({ scope: 'all', farmId: selectedFarmId.value })
+      currentStageTasks.value = taskRows.filter((task) => task.stageCode === activeStage.value.code && ['pending', 'in_progress'].includes(task.status))
+    }
   } catch (error) {
     if (![404, 409].includes(error.response?.status)) ElMessage.error(error.message || '年度生产资料加载失败')
     try {
@@ -179,6 +192,44 @@ async function savePlotOffset(plot) {
     ElMessage.success(`${plot.name}的日期偏移已保存`)
   } catch (error) { ElMessage.error(error.message || '地块日期偏移保存失败') }
   finally { savingPlotId.value = '' }
+}
+function openChangeOrder() {
+  if (!activeStage.value) return ElMessage.warning('请先确认当前阶段并下发任务')
+  if (!adjustableTasks.value.length) return ElMessage.warning('当前阶段没有可变更的待执行任务')
+  const task = adjustableTasks.value[0]
+  Object.assign(changeOrderForm, { taskId: task.id, scheduledDate: task.scheduledDate, note: task.note || '', reason: '' })
+  changeOrderOpen.value = true
+}
+function selectChangeOrderTask(taskId) {
+  const task = adjustableTasks.value.find((item) => item.id === taskId)
+  if (task) Object.assign(changeOrderForm, { scheduledDate: task.scheduledDate, note: task.note || '' })
+}
+async function saveChangeOrder() {
+  if (!changeOrderForm.taskId || !changeOrderForm.scheduledDate || !changeOrderForm.reason.trim()) return ElMessage.warning('请选择任务并填写变更原因')
+  saving.value = true
+  try {
+    await createTaskChangeOrder(changeOrderForm.taskId, { scheduledDate: changeOrderForm.scheduledDate, note: changeOrderForm.note || null, reason: changeOrderForm.reason.trim() })
+    changeOrderOpen.value = false
+    await loadContext()
+    ElMessage.success('变更单已生效，原任务和替代关系已保留')
+  } catch (error) { ElMessage.error(error.message || '变更单保存失败') }
+  finally { saving.value = false }
+}
+function openTemporaryTask() {
+  if (!activeStage.value) return ElMessage.warning('请先确认当前阶段')
+  Object.assign(temporaryTaskForm, { plotId: plots.value[0]?.id || '', taskType: 'other', title: '', scheduledDate: new Date().toISOString().slice(0, 10), note: '', reason: '' })
+  temporaryTaskOpen.value = true
+}
+async function saveTemporaryTask() {
+  if (!temporaryTaskForm.plotId || !temporaryTaskForm.title.trim() || !temporaryTaskForm.scheduledDate || !temporaryTaskForm.reason.trim()) return ElMessage.warning('请完整填写地块、任务、日期和新增原因')
+  saving.value = true
+  try {
+    await createTemporaryTask(selectedFarmId.value, { ...temporaryTaskForm, title: temporaryTaskForm.title.trim(), taskType: temporaryTaskForm.taskType.trim(), note: temporaryTaskForm.note || null, reason: temporaryTaskForm.reason.trim() })
+    temporaryTaskOpen.value = false
+    await loadContext()
+    ElMessage.success('临时任务已下发')
+  } catch (error) { ElMessage.error(error.message || '临时任务下发失败') }
+  finally { saving.value = false }
 }
 async function loadResources() {
   loading.value = true
@@ -296,6 +347,10 @@ onMounted(loadResources)
             <el-table-column label="操作" width="100" align="right"><template #default="{ row }"><el-button link type="primary" :loading="savingPlotId === row.id" @click="savePlotOffset(row)">保存</el-button></template></el-table-column>
           </el-table>
         </section>
+        <section class="content-panel stage-adjustments">
+          <div><span>当前阶段现场调整</span><strong>{{ activeStage?.name || '尚未确认阶段开始' }}</strong><small>变更单用于替换已有待执行任务；临时任务用于新增计划外工作。进行中和已完成任务不可覆盖。</small></div>
+          <div><el-button :disabled="!activeStage || !adjustableTasks.length" @click="openChangeOrder"><el-icon><EditPen/></el-icon>新建变更单</el-button><el-button type="primary" plain :disabled="!activeStage" @click="openTemporaryTask"><el-icon><Plus/></el-icon>新增临时任务</el-button></div>
+        </section>
         <section class="annual-layout">
           <article class="content-panel suggestions"><div class="section-head"><div><h3>当前阶段建议</h3><p>任务由农场管理员按年度计划统一下发。</p></div></div><el-empty v-if="!context.suggestions.length" :image-size="52" description="当前阶段暂无建议"/><ul v-else><li v-for="item in context.suggestions" :key="`${item.title}-${item.scheduledDate}`"><span>{{ item.scheduledDate }}</span><div><strong>{{ item.title }}</strong><p>{{ item.note || '请结合现场树势、土壤湿度和天气安排。' }}</p></div></li></ul></article>
           <article class="content-panel timeline"><div class="section-head"><div><h3>全年物候节奏</h3><p>默认上年 12 月至当年 11 月，阶段开始由农场管理员确认。</p></div></div><ol><li v-for="stage in context.stages" :key="stage.code" :class="{ active: stage.code === currentStageCode }"><span>{{ stage.code }}</span><div><strong>{{ stage.name }}</strong><small>{{ dateRange(stage) }}</small><el-tag size="small" :type="stageStatusType(stage.status)" effect="plain">{{ stageStatusLabel(stage.status) }}</el-tag></div></li></ol></article>
@@ -312,11 +367,31 @@ onMounted(loadResources)
       </el-form>
       <template #footer><el-button @click="dispatchOpen=false">取消</el-button><el-button type="primary" :loading="generating" @click="generatePlans">确认下发</el-button></template>
     </el-dialog>
+    <el-dialog v-model="changeOrderOpen" title="新建任务变更单" width="min(580px, 92vw)">
+      <el-form label-position="top">
+        <el-form-item label="原待执行任务" required><el-select v-model="changeOrderForm.taskId" filterable @change="selectChangeOrderTask"><el-option v-for="task in adjustableTasks" :key="task.id" :label="`${task.plotName} · ${task.title} · ${task.scheduledDate}`" :value="task.id"/></el-select></el-form-item>
+        <el-form-item label="调整后日期" required><el-date-picker v-model="changeOrderForm.scheduledDate" type="date" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" :disabled-date="(day) => day < new Date(new Date().setHours(0,0,0,0)) || (activeStage && day > new Date(`${activeStage.endsOn}T23:59:59`))"/></el-form-item>
+        <el-form-item label="调整后执行说明"><el-input v-model="changeOrderForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit/></el-form-item>
+        <el-form-item label="变更原因" required><el-input v-model="changeOrderForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="例如：降雨导致喷药日期调整"/></el-form-item>
+        <el-alert title="保存后原任务标记为已取消，新任务替代原任务；两条记录及变更原因均保留。" type="info" :closable="false" show-icon/>
+      </el-form>
+      <template #footer><el-button @click="changeOrderOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveChangeOrder">确认变更</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="temporaryTaskOpen" title="新增当前阶段临时任务" width="min(580px, 92vw)">
+      <el-form label-position="top">
+        <el-form-item label="执行地块" required><el-select v-model="temporaryTaskForm.plotId" filterable><el-option v-for="plot in plots" :key="plot.id" :label="`${plot.name} · ${plot.farmerName || '未分配负责人'}`" :value="plot.id" :disabled="!plot.farmerUserId"/></el-select></el-form-item>
+        <div class="temporary-task-fields"><el-form-item label="任务类型" required><el-input v-model="temporaryTaskForm.taskType" maxlength="50"/></el-form-item><el-form-item label="执行日期" required><el-date-picker v-model="temporaryTaskForm.scheduledDate" type="date" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" :disabled-date="(day) => day < new Date(new Date().setHours(0,0,0,0)) || (activeStage && day > new Date(`${activeStage.endsOn}T23:59:59`))"/></el-form-item></div>
+        <el-form-item label="任务名称" required><el-input v-model="temporaryTaskForm.title" maxlength="150"/></el-form-item>
+        <el-form-item label="执行说明"><el-input v-model="temporaryTaskForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit/></el-form-item>
+        <el-form-item label="新增原因" required><el-input v-model="temporaryTaskForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="例如：突发病虫害，需要额外防治"/></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="temporaryTaskOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveTemporaryTask">下发临时任务</el-button></template>
+    </el-dialog>
     <el-dialog v-model="setupOpen" title="安排果园定植" width="min(520px, 92vw)"><el-form label-position="top"><el-form-item label="定植采用的标准模板" required><el-select v-model="form.templateVersionId" placeholder="选择脐橙标准模板"><el-option v-for="item in templates" :key="item.versionId" :label="`${item.name} · V${item.versionNo}`" :value="item.versionId"/></el-select></el-form-item><el-form-item label="计划定植日期" required><el-date-picker v-model="form.plannedPlantingDate" type="date" value-format="YYYY-MM-DD" :disabled-date="(day) => day < new Date(new Date().setHours(0, 0, 0, 0))"/><small class="field-help">保存后将为每个有效地块创建“完成脐橙定植”任务。农户全部完成后，系统以任务完成日期写入果园实际定植日期。</small></el-form-item></el-form><template #footer><el-button @click="setupOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProfile">下发定植任务</el-button></template></el-dialog>
   </div>
 </template>
 
 <style scoped>
-.farm-switcher{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:13px 16px;border:1px solid #cee6d8;border-radius:8px;background:#f8fcf9;color:#557164}.farm-switcher>span,.eyebrow{color:#1f7a5b;font-size:12px;font-weight:700}.farm-switcher .el-select{width:300px}.profile-fields{display:grid;grid-template-columns:1fr;gap:12px}.profile-fields :deep(.el-date-editor){width:100%}.planting-wait,.cycle-closeout{display:flex;align-items:center;justify-content:space-between;gap:18px}.planting-wait{margin-bottom:18px}.milestone-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}.planting-wait span,.planting-wait p,.cycle-closeout span,.cycle-closeout small{display:block;margin:0;color:#84938d;font-size:12px}.planting-wait strong,.cycle-closeout strong{display:block;margin:6px 0;color:#315447;font-size:18px}.plot-offsets{margin-bottom:18px}.offset-help{margin-left:8px;color:#84938d;font-size:11px}.dispatch-alert{margin-top:18px}.production-hero{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:18px;padding:24px 26px;border-left:5px solid #e58226;background:#f6faf5}.production-hero h2{margin:8px 0;color:#254337;font-size:26px}.production-hero p{max-width:620px;margin:0;color:#60776d;line-height:1.7}.hero-facts{display:flex;gap:26px;white-space:nowrap}.hero-facts span{display:grid;gap:5px}.hero-facts b{color:#315447;font-size:19px}.hero-facts small,.orchard-facts span,.orchard-facts small,.field-help{color:#84938d;font-size:11px}.orchard-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:18px;padding:0;overflow:hidden}.orchard-facts>div{display:grid;gap:6px;padding:15px 18px;background:#fbfdfc}.orchard-facts strong{color:#315447;font-size:14px}.annual-layout{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.suggestions ul{display:grid;gap:2px;margin:0;padding:0;list-style:none}.suggestions li{display:grid;grid-template-columns:94px 1fr;gap:12px;padding:13px 0;border-bottom:1px solid #edf2ef}.suggestions li:last-child{border-bottom:0}.suggestions li>span{color:#b96d21;font-size:12px;font-weight:700}.suggestions li strong{color:#315447;font-size:14px}.suggestions li p{margin:5px 0 0;color:#70827b;font-size:12px;line-height:1.6}.timeline ol{display:grid;gap:4px;margin:0;padding:0;list-style:none}.timeline li{display:flex;gap:10px;padding:8px;color:#6f817a}.timeline li>span{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dce9e3;border-radius:50%;font-size:10px}.timeline li div{display:grid;gap:2px}.timeline li strong{font-size:13px}.timeline li small{font-size:11px}.timeline li .el-tag{width:max-content;margin-top:3px}.timeline li.active{padding:10px;border-left:3px solid #e58226;color:#28533f;background:#fff8ef}.timeline li.active>span{border-color:#e58226;color:#bd6921}@media(max-width:760px){.production-hero{align-items:flex-start;flex-direction:column}.hero-facts{gap:22px}.orchard-facts,.annual-layout,.profile-fields,.milestone-grid{grid-template-columns:1fr}.farm-switcher{align-items:stretch;flex-direction:column}.farm-switcher .el-select{width:100%}.planting-wait,.cycle-closeout{align-items:flex-start;flex-direction:column}}@media(max-width:440px){.hero-facts{width:100%;justify-content:space-between}.production-hero{padding:20px}.suggestions li{grid-template-columns:1fr}}
+.farm-switcher{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:13px 16px;border:1px solid #cee6d8;border-radius:8px;background:#f8fcf9;color:#557164}.farm-switcher>span,.eyebrow{color:#1f7a5b;font-size:12px;font-weight:700}.farm-switcher .el-select{width:300px}.profile-fields{display:grid;grid-template-columns:1fr;gap:12px}.profile-fields :deep(.el-date-editor){width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{display:flex;align-items:center;justify-content:space-between;gap:18px}.planting-wait{margin-bottom:18px}.milestone-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}.planting-wait span,.planting-wait p,.cycle-closeout span,.cycle-closeout small,.stage-adjustments span,.stage-adjustments small{display:block;margin:0;color:#84938d;font-size:12px}.planting-wait strong,.cycle-closeout strong,.stage-adjustments strong{display:block;margin:6px 0;color:#315447;font-size:18px}.stage-adjustments{margin-bottom:18px}.stage-adjustments>div:last-child{display:flex;gap:10px}.plot-offsets{margin-bottom:18px}.offset-help{margin-left:8px;color:#84938d;font-size:11px}.dispatch-alert{margin-top:18px}.temporary-task-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.production-hero{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:18px;padding:24px 26px;border-left:5px solid #e58226;background:#f6faf5}.production-hero h2{margin:8px 0;color:#254337;font-size:26px}.production-hero p{max-width:620px;margin:0;color:#60776d;line-height:1.7}.hero-facts{display:flex;gap:26px;white-space:nowrap}.hero-facts span{display:grid;gap:5px}.hero-facts b{color:#315447;font-size:19px}.hero-facts small,.orchard-facts span,.orchard-facts small,.field-help{color:#84938d;font-size:11px}.orchard-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:18px;padding:0;overflow:hidden}.orchard-facts>div{display:grid;gap:6px;padding:15px 18px;background:#fbfdfc}.orchard-facts strong{color:#315447;font-size:14px}.annual-layout{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.suggestions ul{display:grid;gap:2px;margin:0;padding:0;list-style:none}.suggestions li{display:grid;grid-template-columns:94px 1fr;gap:12px;padding:13px 0;border-bottom:1px solid #edf2ef}.suggestions li:last-child{border-bottom:0}.suggestions li>span{color:#b96d21;font-size:12px;font-weight:700}.suggestions li strong{color:#315447;font-size:14px}.suggestions li p{margin:5px 0 0;color:#70827b;font-size:12px;line-height:1.6}.timeline ol{display:grid;gap:4px;margin:0;padding:0;list-style:none}.timeline li{display:flex;gap:10px;padding:8px;color:#6f817a}.timeline li>span{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dce9e3;border-radius:50%;font-size:10px}.timeline li div{display:grid;gap:2px}.timeline li strong{font-size:13px}.timeline li small{font-size:11px}.timeline li .el-tag{width:max-content;margin-top:3px}.timeline li.active{padding:10px;border-left:3px solid #e58226;color:#28533f;background:#fff8ef}.timeline li.active>span{border-color:#e58226;color:#bd6921}@media(max-width:760px){.production-hero{align-items:flex-start;flex-direction:column}.hero-facts{gap:22px}.orchard-facts,.annual-layout,.profile-fields,.milestone-grid,.temporary-task-fields{grid-template-columns:1fr}.farm-switcher{align-items:stretch;flex-direction:column}.farm-switcher .el-select{width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{align-items:flex-start;flex-direction:column}.stage-adjustments>div:last-child{width:100%;flex-wrap:wrap}}@media(max-width:440px){.hero-facts{width:100%;justify-content:space-between}.production-hero{padding:20px}.suggestions li{grid-template-columns:1fr}}
 .management-editor{margin-bottom:18px;border-top:1px solid #dbe8e1;border-bottom:1px solid #dbe8e1;background:#fff}.management-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 0}.management-toolbar h3,.management-toolbar p{margin:0}.management-toolbar h3{color:#315447;font-size:18px}.management-toolbar p{margin-top:5px;color:#7b8c85;font-size:12px}.plan-state{display:flex;align-items:center;gap:10px}.plan-baseline{display:grid;grid-template-columns:minmax(280px,1.2fr) auto minmax(260px,1fr);gap:12px;padding:14px 0;border-top:1px solid #edf2ef}.plan-baseline :deep(.el-form-item){margin-bottom:0}.plan-baseline :deep(.el-select){width:100%}.plan-stage-list{display:grid;border-top:1px solid #edf2ef}.plan-stage{padding:17px 0;border-bottom:1px solid #edf2ef}.plan-stage.is-locked{background:#fafcfb}.plan-stage>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.plan-stage>header strong{color:#315447}.plan-stage>header>div{display:flex;gap:6px}.stage-heading{align-items:center}.plan-stage-fields{display:grid;grid-template-columns:90px minmax(150px,1fr) 110px 150px 150px minmax(190px,1.2fr);gap:8px}.plan-stage-fields :deep(.el-form-item){margin-bottom:10px}.plan-stage-fields :deep(.el-input-number){width:100%}.plan-task-columns,.plan-task-row{display:grid;grid-template-columns:110px minmax(150px,1fr) 110px 120px minmax(180px,1.3fr) 32px;gap:8px}.plan-task-columns{padding:0 2px;color:#829089;font-size:11px}.plan-task-row{margin-top:8px}.add-plan-stage{width:100%;margin:14px 0 18px}@media(max-width:1050px){.plan-baseline{grid-template-columns:1fr 1fr}.plan-baseline .el-form-item:last-child{grid-column:1/-1}.plan-stage-fields{grid-template-columns:repeat(3,1fr)}.plan-task-columns{display:none}.plan-task-row{grid-template-columns:1fr 1fr}}@media(max-width:760px){.management-toolbar{align-items:flex-start;flex-direction:column}.plan-state{width:100%;justify-content:space-between}.plan-baseline,.plan-stage-fields,.plan-task-row{grid-template-columns:1fr}.plan-baseline .el-form-item:last-child{grid-column:auto}.plan-stage>header{align-items:flex-start;flex-direction:column}}
 </style>
