@@ -46,7 +46,7 @@ SOURCE_EXCLUDES=(
   "--exclude=dist"
   "--exclude=*.log"
   "--exclude=*.pyc"
-  "--exclude=device-simulator"
+  # 注意：device-simulator 不再排除 —— 模拟器（jar + sensors.dat + 使用文档）要随包交付给老师
   "--exclude=农户界面当前演示.mp4"
 )
 
