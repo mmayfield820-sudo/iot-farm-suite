@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmFarmCleanupCompletion, confirmFarmHarvestCompletion, generateFarmPlans, getCropTemplateVersion, getFarmAnnualProduction, getFarmPlantingSchedule, getFarmProductionProfile, listCropTemplates, listFarmPlots, listFarms, saveFarmAnnualProduction, saveFarmPlantingSchedule, saveFarmProductionProfile, startFarmStage, updatePlotProductionOffset } from '@/api/production'
-import { createTaskChangeOrder, createTemporaryTask, listTasks } from '@/api/task'
+import { createHistoricalStageSupplement, createTaskChangeOrder, createTemporaryTask, listTasks } from '@/api/task'
 
 const farms = ref([])
 const templates = ref([])
@@ -22,6 +22,7 @@ const milestoneType = ref('harvest')
 const dispatchOpen = ref(false)
 const changeOrderOpen = ref(false)
 const temporaryTaskOpen = ref(false)
+const historicalSupplementOpen = ref(false)
 const savingPlan = ref(false)
 const planDirty = ref(false)
 const planTemplateKey = ref('')
@@ -35,6 +36,7 @@ const milestoneForm = reactive({ completedAt: '' })
 const dispatchForm = reactive({ stageCode: '', actualStartedAt: '', shiftFollowingStages: true })
 const changeOrderForm = reactive({ taskId: '', scheduledDate: '', note: '', reason: '' })
 const temporaryTaskForm = reactive({ plotId: '', taskType: 'other', title: '', scheduledDate: '', note: '', reason: '' })
+const historicalSupplementForm = reactive({ stageCode: '', plotId: '', taskType: 'other', title: '', executedAt: '', executorName: '', result: '', note: '', reason: '' })
 const savingPlotId = ref('')
 
 const trackLabel = computed(() => context.value?.track === 'young' ? '幼树轨道' : '结果树轨道')
@@ -44,6 +46,7 @@ const hasLockedStages = computed(() => lockedStageCodes.value.size > 0)
 const dispatchableStages = computed(() => (context.value?.stages || []).filter((stage) => stage.status === 'active' || (stage.status === 'planned' && stage.canStart)))
 const selectedDispatchStage = computed(() => dispatchableStages.value.find((stage) => stage.code === dispatchForm.stageCode))
 const activeStage = computed(() => (context.value?.stages || []).find((stage) => stage.status === 'active'))
+const historicalSupplementStage = computed(() => (context.value?.stages || []).find((stage) => stage.code === historicalSupplementForm.stageCode))
 const adjustableTasks = computed(() => currentStageTasks.value.filter((task) => task.status === 'pending'))
 const milestoneLabel = computed(() => milestoneType.value === 'harvest' ? '采收完成' : '清园完成')
 const planTemplateOptions = computed(() => {
@@ -60,6 +63,13 @@ function dateRange(stage) { return `${stage.startsOn.slice(5).replace('-', '月'
 function cloneDefinition(definition) { return JSON.parse(JSON.stringify(definition || { stages: [] })) }
 function stageState(stage) { return (context.value?.stages || []).find((item) => item.code === stage.code) }
 function stageLocked(stage) { return Boolean(stageState(stage)?.locked) }
+function stageLockReason(stage) {
+  const status = stageState(stage)?.status
+  if (status === 'not_dispatched') return '该阶段已经过去且未下发，计划已归档锁定；如现场实际执行过工作，请使用补录。'
+  if (status === 'active') return '该阶段已确认开始，计划已锁定；任务调整请使用变更单或临时任务。'
+  if (status === 'completed') return '该阶段已经完成，计划作为生产档案锁定。'
+  return ''
+}
 function stageStatusLabel(status) { return ({ planned: '待开始', active: '进行中', completed: '已完成', not_dispatched: '未下发' })[status] || status }
 function stageStatusType(status) { return ({ planned: 'info', active: 'warning', completed: 'success', not_dispatched: 'info' })[status] || 'info' }
 function hydratePlan() {
@@ -231,6 +241,45 @@ async function saveTemporaryTask() {
   } catch (error) { ElMessage.error(error.message || '临时任务下发失败') }
   finally { saving.value = false }
 }
+function openHistoricalSupplement(stage) {
+  const state = stageState(stage)
+  if (state?.status !== 'not_dispatched') return ElMessage.warning('只有已过去且未下发的阶段允许补录')
+  Object.assign(historicalSupplementForm, {
+    stageCode: stage.code,
+    plotId: plots.value[0]?.id || '',
+    taskType: 'other',
+    title: '',
+    executedAt: `${state.endsOn}T12:00:00`,
+    executorName: '',
+    result: '已完成',
+    note: '',
+    reason: '',
+  })
+  historicalSupplementOpen.value = true
+}
+async function saveHistoricalSupplement() {
+  const formValue = historicalSupplementForm
+  if (!formValue.plotId || !formValue.title.trim() || !formValue.executedAt || !formValue.executorName.trim() || !formValue.result.trim() || !formValue.reason.trim()) {
+    return ElMessage.warning('请完整填写地块、工作内容、执行信息和补录原因')
+  }
+  saving.value = true
+  try {
+    await createHistoricalStageSupplement(selectedFarmId.value, formValue.stageCode, {
+      productionYear: context.value.productionYear,
+      plotId: formValue.plotId,
+      taskType: formValue.taskType.trim(),
+      title: formValue.title.trim(),
+      executedAt: new Date(formValue.executedAt).toISOString(),
+      executorName: formValue.executorName.trim(),
+      result: formValue.result.trim(),
+      note: formValue.note.trim() || null,
+      reason: formValue.reason.trim(),
+    })
+    historicalSupplementOpen.value = false
+    ElMessage.success('历史执行记录已补录，原阶段仍保持未下发和锁定状态')
+  } catch (error) { ElMessage.error(error.message || '历史执行记录补录失败') }
+  finally { saving.value = false }
+}
 async function loadResources() {
   loading.value = true
   try {
@@ -295,7 +344,7 @@ onMounted(loadResources)
   <div class="farmer-page annual-production-page">
     <div class="page-head">
       <div><h1 class="page-title">年度生产管理计划</h1><p class="page-subtitle">维护全年计划框架，并在物候阶段开始时滚动下发任务。</p></div>
-      <el-button type="primary" :loading="generating" :disabled="!context" @click="openDispatch"><el-icon><Promotion /></el-icon>下发任务</el-button>
+      <div class="page-actions"><el-button @click="$router.push('/farm/cycle-draft')"><el-icon><DocumentAdd/></el-icon>创建下一年度管理计划</el-button><el-button type="primary" :loading="generating" :disabled="!context" @click="openDispatch"><el-icon><Promotion /></el-icon>下发任务</el-button></div>
     </div>
 
     <el-skeleton v-if="loading" :rows="8" animated />
@@ -316,7 +365,7 @@ onMounted(loadResources)
         </section>
         <section class="management-editor" @input="planDirty=true" @change="planDirty=true">
           <header class="management-toolbar">
-            <div><h3>本农场年度管理计划</h3><p>选择标准模板作为起点；进行中和已完成阶段保留为不可修改的生产档案。</p></div>
+            <div><h3>本农场年度管理计划</h3><p>进行中、已完成和过去未下发的阶段均锁定；未下发阶段只允许补录实际执行记录。</p></div>
             <div class="plan-state"><el-tag :type="planDirty ? 'warning' : context.hasUndispatchedChanges ? 'info' : 'success'" effect="plain">{{ planDirty ? '有未保存修改' : context.hasUndispatchedChanges ? '已保存，待下发' : context.activePlanCount ? '已下发' : '尚未保存' }}</el-tag><el-button type="primary" :loading="savingPlan" @click.stop="saveAnnualPlan"><el-icon><DocumentChecked /></el-icon>保存管理计划</el-button></div>
           </header>
           <div class="plan-baseline">
@@ -326,7 +375,8 @@ onMounted(loadResources)
           </div>
           <div class="plan-stage-list">
             <article v-for="(stage, stageIndex) in planStages" :key="stage.code || stageIndex" class="plan-stage" :class="{ 'is-locked': stageLocked(stage) }">
-              <header><div class="stage-heading"><strong>第 {{ stageIndex + 1 }} 阶段</strong><el-tag v-if="stageState(stage)" size="small" :type="stageStatusType(stageState(stage).status)" effect="plain">{{ stageStatusLabel(stageState(stage).status) }}</el-tag></div><div><el-button link type="primary" :disabled="stageLocked(stage)" @click="addPlanTask(stage)"><el-icon><Plus/></el-icon>添加任务</el-button><el-button link type="danger" :disabled="planStages.length === 1 || stageLocked(stage)" @click="removePlanStage(stageIndex)"><el-icon><Delete/></el-icon>删除阶段</el-button></div></header>
+              <header><div class="stage-heading"><strong>第 {{ stageIndex + 1 }} 阶段</strong><el-tag v-if="stageState(stage)" size="small" :type="stageStatusType(stageState(stage).status)" effect="plain">{{ stageStatusLabel(stageState(stage).status) }}</el-tag><el-icon v-if="stageLocked(stage)" class="stage-lock-icon" title="阶段已锁定"><Lock/></el-icon></div><div><el-button v-if="stageState(stage)?.status === 'not_dispatched'" link type="primary" @click="openHistoricalSupplement(stage)"><el-icon><DocumentAdd/></el-icon>补录实际执行</el-button><el-button link type="primary" :disabled="stageLocked(stage)" @click="addPlanTask(stage)"><el-icon><Plus/></el-icon>添加任务</el-button><el-button link type="danger" :disabled="planStages.length === 1 || stageLocked(stage)" @click="removePlanStage(stageIndex)"><el-icon><Delete/></el-icon>删除阶段</el-button></div></header>
+              <p v-if="stageLockReason(stage)" class="stage-lock-note">{{ stageLockReason(stage) }}</p>
               <el-form class="plan-stage-fields" label-position="top"><el-form-item label="阶段编号"><el-input v-model="stage.code" :disabled="stageLocked(stage)"/></el-form-item><el-form-item label="阶段名称"><el-input v-model="stage.name" :disabled="stageLocked(stage)"/></el-form-item><el-form-item label="阶段天数"><el-input-number v-model="stage.durationDays" :min="1" :max="366" :disabled="stageLocked(stage)" controls-position="right"/></el-form-item><el-form-item label="土壤湿度下限（%）"><el-input-number v-model="stage.moistureMin" :min="0" :max="100" :disabled="stageLocked(stage)" controls-position="right"/></el-form-item><el-form-item label="土壤湿度上限（%）"><el-input-number v-model="stage.moistureMax" :min="0" :max="100" :disabled="stageLocked(stage)" controls-position="right"/></el-form-item><el-form-item label="管理重点"><el-input v-model="stage.managementFocus" :disabled="stageLocked(stage)"/></el-form-item></el-form>
               <div v-if="stage.tasks?.length" class="plan-task-columns"><span>适用版本</span><span>任务名称</span><span>阶段第几天</span><span>执行频次</span><span>执行说明</span><span></span></div>
               <div v-for="(task, taskIndex) in stage.tasks" :key="taskIndex" class="plan-task-row">
@@ -395,11 +445,27 @@ onMounted(loadResources)
       </el-form>
       <template #footer><el-button @click="temporaryTaskOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveTemporaryTask">下发临时任务</el-button></template>
     </el-dialog>
+    <el-dialog v-model="historicalSupplementOpen" title="补录历史阶段实际执行" width="min(640px, 94vw)">
+      <el-form label-position="top">
+        <el-alert :title="`${historicalSupplementStage?.name || historicalSupplementForm.stageCode}为未下发历史阶段，补录不会重新下发任务或修改年度计划。`" type="warning" :closable="false" show-icon/>
+        <div class="historical-fields">
+          <el-form-item label="执行地块" required><el-select v-model="historicalSupplementForm.plotId" filterable><el-option v-for="plot in plots" :key="plot.id" :label="plot.name" :value="plot.id"/></el-select></el-form-item>
+          <el-form-item label="任务类型" required><el-input v-model="historicalSupplementForm.taskType" maxlength="50"/></el-form-item>
+          <el-form-item label="实际执行时间" required><el-date-picker v-model="historicalSupplementForm.executedAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" format="YYYY年MM月DD日 HH:mm" :disabled-date="(day) => historicalSupplementStage && (day < new Date(`${historicalSupplementStage.startsOn}T00:00:00`) || day > new Date(`${historicalSupplementStage.endsOn}T23:59:59`))"/></el-form-item>
+          <el-form-item label="实际执行人" required><el-input v-model="historicalSupplementForm.executorName" maxlength="50"/></el-form-item>
+        </div>
+        <el-form-item label="实际工作内容" required><el-input v-model="historicalSupplementForm.title" maxlength="150"/></el-form-item>
+        <el-form-item label="执行结果" required><el-input v-model="historicalSupplementForm.result" maxlength="255"/></el-form-item>
+        <el-form-item label="执行备注"><el-input v-model="historicalSupplementForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit/></el-form-item>
+        <el-form-item label="补录原因" required><el-input v-model="historicalSupplementForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="说明为何未在阶段内下发或及时记录"/></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="historicalSupplementOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveHistoricalSupplement">确认补录</el-button></template>
+    </el-dialog>
     <el-dialog v-model="setupOpen" title="安排果园定植" width="min(520px, 92vw)"><el-form label-position="top"><el-form-item label="定植采用的标准模板" required><el-select v-model="form.templateVersionId" placeholder="选择脐橙标准模板"><el-option v-for="item in templates" :key="item.versionId" :label="`${item.name} · V${item.versionNo}`" :value="item.versionId"/></el-select></el-form-item><el-form-item label="计划定植日期" required><el-date-picker v-model="form.plannedPlantingDate" type="date" value-format="YYYY-MM-DD" :disabled-date="(day) => day < new Date(new Date().setHours(0, 0, 0, 0))"/><small class="field-help">保存后将为每个有效地块创建“完成脐橙定植”任务。农户全部完成后，系统以任务完成日期写入果园实际定植日期。</small></el-form-item></el-form><template #footer><el-button @click="setupOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProfile">下发定植任务</el-button></template></el-dialog>
   </div>
 </template>
 
 <style scoped>
-.farm-switcher{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:13px 16px;border:1px solid #cee6d8;border-radius:8px;background:#f8fcf9;color:#557164}.farm-switcher>span,.eyebrow{color:#1f7a5b;font-size:12px;font-weight:700}.farm-switcher .el-select{width:300px}.profile-fields{display:grid;grid-template-columns:1fr;gap:12px}.profile-fields :deep(.el-date-editor){width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{display:flex;align-items:center;justify-content:space-between;gap:18px}.planting-wait{margin-bottom:18px}.milestone-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}.planting-wait span,.planting-wait p,.cycle-closeout span,.cycle-closeout small,.stage-adjustments span,.stage-adjustments small{display:block;margin:0;color:#84938d;font-size:12px}.planting-wait strong,.cycle-closeout strong,.stage-adjustments strong{display:block;margin:6px 0;color:#315447;font-size:18px}.stage-adjustments{margin-bottom:18px}.stage-adjustments>div:last-child{display:flex;gap:10px}.plot-offsets{margin-bottom:18px}.offset-help{margin-left:8px;color:#84938d;font-size:11px}.dispatch-alert,.stage-overdue-alert{margin-bottom:18px}.dispatch-alert{margin-top:18px}.temporary-task-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.production-hero{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:18px;padding:24px 26px;border-left:5px solid #e58226;background:#f6faf5}.production-hero h2{margin:8px 0;color:#254337;font-size:26px}.production-hero p{max-width:620px;margin:0;color:#60776d;line-height:1.7}.hero-facts{display:flex;gap:26px;white-space:nowrap}.hero-facts span{display:grid;gap:5px}.hero-facts b{color:#315447;font-size:19px}.hero-facts small,.orchard-facts span,.orchard-facts small,.field-help{color:#84938d;font-size:11px}.orchard-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:18px;padding:0;overflow:hidden}.orchard-facts>div{display:grid;gap:6px;padding:15px 18px;background:#fbfdfc}.orchard-facts strong{color:#315447;font-size:14px}.annual-layout{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.suggestions ul{display:grid;gap:2px;margin:0;padding:0;list-style:none}.suggestions li{display:grid;grid-template-columns:94px 1fr;gap:12px;padding:13px 0;border-bottom:1px solid #edf2ef}.suggestions li:last-child{border-bottom:0}.suggestions li>span{color:#b96d21;font-size:12px;font-weight:700}.suggestions li strong{color:#315447;font-size:14px}.suggestions li p{margin:5px 0 0;color:#70827b;font-size:12px;line-height:1.6}.timeline ol{display:grid;gap:4px;margin:0;padding:0;list-style:none}.timeline li{display:flex;gap:10px;padding:8px;color:#6f817a}.timeline li>span{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dce9e3;border-radius:50%;font-size:10px}.timeline li div{display:grid;gap:2px}.timeline li strong{font-size:13px}.timeline li small{font-size:11px}.timeline li .el-tag{width:max-content;margin-top:3px}.timeline li.active{padding:10px;border-left:3px solid #e58226;color:#28533f;background:#fff8ef}.timeline li.active>span{border-color:#e58226;color:#bd6921}@media(max-width:760px){.production-hero{align-items:flex-start;flex-direction:column}.hero-facts{gap:22px}.orchard-facts,.annual-layout,.profile-fields,.milestone-grid,.temporary-task-fields{grid-template-columns:1fr}.farm-switcher{align-items:stretch;flex-direction:column}.farm-switcher .el-select{width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{align-items:flex-start;flex-direction:column}.stage-adjustments>div:last-child{width:100%;flex-wrap:wrap}}@media(max-width:440px){.hero-facts{width:100%;justify-content:space-between}.production-hero{padding:20px}.suggestions li{grid-template-columns:1fr}}
-.management-editor{margin-bottom:18px;border-top:1px solid #dbe8e1;border-bottom:1px solid #dbe8e1;background:#fff}.management-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 0}.management-toolbar h3,.management-toolbar p{margin:0}.management-toolbar h3{color:#315447;font-size:18px}.management-toolbar p{margin-top:5px;color:#7b8c85;font-size:12px}.plan-state{display:flex;align-items:center;gap:10px}.plan-baseline{display:grid;grid-template-columns:minmax(280px,1.2fr) auto minmax(260px,1fr);gap:12px;padding:14px 0;border-top:1px solid #edf2ef}.plan-baseline :deep(.el-form-item){margin-bottom:0}.plan-baseline :deep(.el-select){width:100%}.plan-stage-list{display:grid;border-top:1px solid #edf2ef}.plan-stage{padding:17px 0;border-bottom:1px solid #edf2ef}.plan-stage.is-locked{background:#fafcfb}.plan-stage>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.plan-stage>header strong{color:#315447}.plan-stage>header>div{display:flex;gap:6px}.stage-heading{align-items:center}.plan-stage-fields{display:grid;grid-template-columns:minmax(84px,.45fr) minmax(180px,1.1fr) minmax(110px,.55fr) minmax(130px,.7fr) minmax(130px,.7fr) minmax(210px,1.3fr);gap:10px}.plan-stage-fields :deep(.el-form-item){min-width:0;margin-bottom:10px}.plan-stage-fields :deep(.el-form-item__label){height:auto;min-height:20px;padding:0 0 5px;line-height:1.35}.plan-stage-fields :deep(.el-input-number),.plan-task-field :deep(.el-input-number),.plan-task-field :deep(.el-select){width:100%}.plan-task-columns,.plan-task-row{display:grid;grid-template-columns:110px minmax(150px,1fr) 110px 120px minmax(180px,1.3fr) 32px;gap:10px}.plan-task-columns{padding:0 2px;color:#829089;font-size:11px}.plan-task-row{align-items:end;margin-top:8px}.plan-task-field{display:grid;min-width:0}.plan-task-field>span{display:none;color:#71827b;font-size:11px;line-height:1.35}.add-plan-stage{width:100%;margin:14px 0 18px}@media(max-width:1400px){.plan-baseline{grid-template-columns:1fr 1fr}.plan-baseline .el-form-item:last-child{grid-column:1/-1}.plan-stage-fields{grid-template-columns:repeat(3,minmax(0,1fr))}.plan-task-columns{display:none}.plan-task-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:12px;border:1px solid #edf2ef;border-radius:8px;background:#fcfefd}.plan-task-field{gap:5px}.plan-task-field>span{display:block}.plan-task-row>.el-button{justify-self:end}}@media(max-width:760px){.management-toolbar{align-items:flex-start;flex-direction:column}.plan-state{width:100%;justify-content:space-between}.plan-baseline,.plan-stage-fields,.plan-task-row{grid-template-columns:1fr}.plan-baseline .el-form-item:last-child{grid-column:auto}.plan-stage>header{align-items:flex-start;flex-direction:column}.plan-task-row>.el-button{margin-top:2px}}
+.farm-switcher{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:13px 16px;border:1px solid #cee6d8;border-radius:8px;background:#f8fcf9;color:#557164}.farm-switcher>span,.eyebrow{color:#1f7a5b;font-size:12px;font-weight:700}.farm-switcher .el-select{width:300px}.profile-fields{display:grid;grid-template-columns:1fr;gap:12px}.profile-fields :deep(.el-date-editor){width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{display:flex;align-items:center;justify-content:space-between;gap:18px}.planting-wait{margin-bottom:18px}.milestone-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}.planting-wait span,.planting-wait p,.cycle-closeout span,.cycle-closeout small,.stage-adjustments span,.stage-adjustments small{display:block;margin:0;color:#84938d;font-size:12px}.planting-wait strong,.cycle-closeout strong,.stage-adjustments strong{display:block;margin:6px 0;color:#315447;font-size:18px}.stage-adjustments{margin-bottom:18px}.stage-adjustments>div:last-child{display:flex;gap:10px}.plot-offsets{margin-bottom:18px}.offset-help{margin-left:8px;color:#84938d;font-size:11px}.dispatch-alert,.stage-overdue-alert{margin-bottom:18px}.dispatch-alert{margin-top:18px}.temporary-task-fields,.historical-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.historical-fields{margin-top:16px}.production-hero{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:18px;padding:24px 26px;border-left:5px solid #e58226;background:#f6faf5}.production-hero h2{margin:8px 0;color:#254337;font-size:26px}.production-hero p{max-width:620px;margin:0;color:#60776d;line-height:1.7}.hero-facts{display:flex;gap:26px;white-space:nowrap}.hero-facts span{display:grid;gap:5px}.hero-facts b{color:#315447;font-size:19px}.hero-facts small,.orchard-facts span,.orchard-facts small,.field-help{color:#84938d;font-size:11px}.orchard-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:18px;padding:0;overflow:hidden}.orchard-facts>div{display:grid;gap:6px;padding:15px 18px;background:#fbfdfc}.orchard-facts strong{color:#315447;font-size:14px}.annual-layout{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.suggestions ul{display:grid;gap:2px;margin:0;padding:0;list-style:none}.suggestions li{display:grid;grid-template-columns:94px 1fr;gap:12px;padding:13px 0;border-bottom:1px solid #edf2ef}.suggestions li:last-child{border-bottom:0}.suggestions li>span{color:#b96d21;font-size:12px;font-weight:700}.suggestions li strong{color:#315447;font-size:14px}.suggestions li p{margin:5px 0 0;color:#70827b;font-size:12px;line-height:1.6}.timeline ol{display:grid;gap:4px;margin:0;padding:0;list-style:none}.timeline li{display:flex;gap:10px;padding:8px;color:#6f817a}.timeline li>span{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dce9e3;border-radius:50%;font-size:10px}.timeline li div{display:grid;gap:2px}.timeline li strong{font-size:13px}.timeline li small{font-size:11px}.timeline li .el-tag{width:max-content;margin-top:3px}.timeline li.active{padding:10px;border-left:3px solid #e58226;color:#28533f;background:#fff8ef}.timeline li.active>span{border-color:#e58226;color:#bd6921}@media(max-width:760px){.production-hero{align-items:flex-start;flex-direction:column}.hero-facts{gap:22px}.orchard-facts,.annual-layout,.profile-fields,.milestone-grid,.temporary-task-fields,.historical-fields{grid-template-columns:1fr}.farm-switcher{align-items:stretch;flex-direction:column}.farm-switcher .el-select{width:100%}.planting-wait,.cycle-closeout,.stage-adjustments{align-items:flex-start;flex-direction:column}.stage-adjustments>div:last-child{width:100%;flex-wrap:wrap}}@media(max-width:440px){.hero-facts{width:100%;justify-content:space-between}.production-hero{padding:20px}.suggestions li{grid-template-columns:1fr}}
+.management-editor{margin-bottom:18px;border-top:1px solid #dbe8e1;border-bottom:1px solid #dbe8e1;background:#fff}.management-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 0}.management-toolbar h3,.management-toolbar p{margin:0}.management-toolbar h3{color:#315447;font-size:18px}.management-toolbar p{margin-top:5px;color:#7b8c85;font-size:12px}.plan-state{display:flex;align-items:center;gap:10px}.plan-baseline{display:grid;grid-template-columns:minmax(280px,1.2fr) auto minmax(260px,1fr);gap:12px;padding:14px 0;border-top:1px solid #edf2ef}.plan-baseline :deep(.el-form-item){margin-bottom:0}.plan-baseline :deep(.el-select){width:100%}.plan-stage-list{display:grid;border-top:1px solid #edf2ef}.plan-stage{padding:17px 0;border-bottom:1px solid #edf2ef}.plan-stage.is-locked{background:#fafcfb}.plan-stage>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.plan-stage>header strong{color:#315447}.plan-stage>header>div{display:flex;gap:6px}.stage-heading{align-items:center}.stage-lock-icon{color:#84938d}.stage-lock-note{margin:-3px 0 12px;padding:8px 10px;border-left:3px solid #c8d8d0;color:#687b73;background:#f4f8f6;font-size:12px;line-height:1.55}.plan-stage-fields{display:grid;grid-template-columns:minmax(84px,.45fr) minmax(180px,1.1fr) minmax(110px,.55fr) minmax(130px,.7fr) minmax(130px,.7fr) minmax(210px,1.3fr);gap:10px}.plan-stage-fields :deep(.el-form-item){min-width:0;margin-bottom:10px}.plan-stage-fields :deep(.el-form-item__label){height:auto;min-height:20px;padding:0 0 5px;line-height:1.35}.plan-stage-fields :deep(.el-input-number),.plan-task-field :deep(.el-input-number),.plan-task-field :deep(.el-select){width:100%}.plan-task-columns,.plan-task-row{display:grid;grid-template-columns:110px minmax(150px,1fr) 110px 120px minmax(180px,1.3fr) 32px;gap:10px}.plan-task-columns{padding:0 2px;color:#829089;font-size:11px}.plan-task-row{align-items:end;margin-top:8px}.plan-task-field{display:grid;min-width:0}.plan-task-field>span{display:none;color:#71827b;font-size:11px;line-height:1.35}.add-plan-stage{width:100%;margin:14px 0 18px}@media(max-width:1400px){.plan-baseline{grid-template-columns:1fr 1fr}.plan-baseline .el-form-item:last-child{grid-column:1/-1}.plan-stage-fields{grid-template-columns:repeat(3,minmax(0,1fr))}.plan-task-columns{display:none}.plan-task-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:12px;border:1px solid #edf2ef;border-radius:8px;background:#fcfefd}.plan-task-field{gap:5px}.plan-task-field>span{display:block}.plan-task-row>.el-button{justify-self:end}}@media(max-width:760px){.management-toolbar{align-items:flex-start;flex-direction:column}.plan-state{width:100%;justify-content:space-between}.plan-baseline,.plan-stage-fields,.plan-task-row{grid-template-columns:1fr}.plan-baseline .el-form-item:last-child{grid-column:auto}.plan-stage>header{align-items:flex-start;flex-direction:column}.plan-task-row>.el-button{margin-top:2px}}
 </style>

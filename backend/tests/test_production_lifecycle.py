@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from backend.app.main import annual_stage_window, production_year_bounds
+from backend.app.main import annual_stage_window, production_year_bounds, stage_status_is_locked
 
 
 class ProductionLifecycleTests(unittest.TestCase):
@@ -24,6 +24,12 @@ class ProductionLifecycleTests(unittest.TestCase):
             annual_stage_window("flower_extension", 2026, date(2026, 4, 1), 45),
             (date(2026, 4, 1), date(2026, 5, 15)),
         )
+
+    def test_historical_undispatched_stage_is_locked(self) -> None:
+        self.assertTrue(stage_status_is_locked("not_dispatched"))
+        self.assertTrue(stage_status_is_locked("active"))
+        self.assertTrue(stage_status_is_locked("completed"))
+        self.assertFalse(stage_status_is_locked("planned"))
 
 
 if __name__ == "__main__":

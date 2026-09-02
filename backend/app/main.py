@@ -193,6 +193,11 @@ class TemplateDraftUpdateRequest(BaseModel):
     changeNote: str | None = Field(default=None, max_length=500)
 
 
+class TemplateDraftRebaseRequest(BaseModel):
+    sourceVersionId: str
+    changeNote: str | None = Field(default=None, max_length=500)
+
+
 class TemplateDraftPublishRequest(BaseModel):
     productionYear: int = Field(ge=2000, le=2100)
     extendYoungTrack: bool = False
@@ -231,6 +236,18 @@ class TemporaryTaskCreateRequest(BaseModel):
     taskType: str = Field(min_length=1, max_length=50)
     title: str = Field(min_length=1, max_length=150)
     scheduledDate: str
+    note: str | None = Field(default=None, max_length=1000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class HistoricalStageSupplementRequest(BaseModel):
+    productionYear: int = Field(ge=2000, le=2100)
+    plotId: str
+    taskType: str = Field(min_length=1, max_length=50)
+    title: str = Field(min_length=1, max_length=150)
+    executedAt: datetime
+    executorName: str = Field(min_length=1, max_length=50)
+    result: str = Field(min_length=1, max_length=255)
     note: str | None = Field(default=None, max_length=1000)
     reason: str = Field(min_length=1, max_length=500)
 
@@ -1542,8 +1559,12 @@ def refresh_unlocked_stage_windows(connection: Any, farm_id: int, production_yea
         cursor = ends_on + timedelta(days=1)
 
 
+def stage_status_is_locked(stage_status: str) -> bool:
+    return stage_status in {"active", "completed", "not_dispatched"}
+
+
 def locked_stage_codes(connection: Any, farm_id: int, production_year: int) -> set[str]:
-    return set(connection.execute(text("SELECT stage_code FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_status IN ('active','completed')"), {"farm": farm_id, "year": production_year}).scalars().all())
+    return set(connection.execute(text("SELECT stage_code FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_status IN ('active','completed','not_dispatched')"), {"farm": farm_id, "year": production_year}).scalars().all())
 
 
 def ensure_locked_stages_unchanged(connection: Any, farm_id: int, production_year: int, current_version_id: int, new_definition: dict[str, Any]) -> None:
@@ -1638,7 +1659,7 @@ def annual_production_context(connection: Any, farm_id: int, *, production_year:
             for previous in stage_states.values()
             if previous["sort_order"] < stage["sort_order"]
         )
-        item = {"code": stage["stage_code"], "name": stage["stage_name"], "sortOrder": stage["sort_order"], "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat(), "actualStartedAt": iso(state["actual_started_at"]) if state else None, "status": stage_status, "locked": stage_status in {"active", "completed"}, "dispatched": bool(state and state["dispatched_at"]), "canStart": stage_status == "planned" and not unresolved_previous, "overdueConfirmation": stage_status == "planned" and starts_on < today, "managementFocus": stage["management_focus"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None}
+        item = {"code": stage["stage_code"], "name": stage["stage_name"], "sortOrder": stage["sort_order"], "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat(), "actualStartedAt": iso(state["actual_started_at"]) if state else None, "status": stage_status, "locked": stage_status_is_locked(stage_status), "dispatched": bool(state and state["dispatched_at"]), "canStart": stage_status == "planned" and not unresolved_previous, "overdueConfirmation": stage_status == "planned" and starts_on < today, "managementFocus": stage["management_focus"], "moistureMin": float(stage["moisture_min"]) if stage["moisture_min"] is not None else None, "moistureMax": float(stage["moisture_max"]) if stage["moisture_max"] is not None else None}
         timeline.append(item)
         if stage_status == "active" or (current_stage is None and starts_on <= today <= ends_on):
             current_stage = item
@@ -2079,6 +2100,31 @@ def update_crop_template_draft(draft_id: str, request: TemplateDraftUpdateReques
         return template_draft_payload(connection, version)
 
 
+@app.post("/api/crop-template-drafts/{draft_id}/rebase")
+def rebase_crop_template_draft(draft_id: str, request: TemplateDraftRebaseRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    numeric_draft_id = parse_resource_id(draft_id, "CTV")
+    source_version_id = parse_resource_id(request.sourceVersionId, "CTV")
+    with engine.begin() as connection:
+        draft = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id AND version_status='draft' FOR UPDATE"), {"id": numeric_draft_id}).mappings().first()
+        if draft is None or draft["farm_id"] is None:
+            raise HTTPException(status_code=404, detail="TEMPLATE_NOT_FOUND")
+        ensure_farm_admin_access(user, draft["farm_id"])
+        source = connection.execute(text("SELECT template_version_id,template_id FROM crop_template_version WHERE template_version_id=:version AND version_status='published' AND (farm_id IS NULL OR farm_id=:farm) FOR UPDATE"), {"version": source_version_id, "farm": draft["farm_id"]}).mappings().first()
+        if source is None:
+            raise HTTPException(status_code=409, detail="PRODUCTION_TEMPLATE_REQUIRED")
+        connection.execute(text("DELETE mt FROM management_task_template mt JOIN growth_stage_template st ON st.stage_template_id=mt.stage_template_id WHERE st.template_version_id=:version"), {"version": numeric_draft_id})
+        connection.execute(text("DELETE FROM growth_stage_template WHERE template_version_id=:version"), {"version": numeric_draft_id})
+        if source["template_id"] != draft["template_id"]:
+            version_no = connection.execute(text("SELECT COALESCE(MAX(version_no),0)+1 FROM crop_template_version WHERE template_id=:template"), {"template": source["template_id"]}).scalar_one()
+            connection.execute(text("UPDATE crop_template_version SET template_id=:template,version_no=:version,change_note=:note WHERE template_version_id=:id"), {"template": source["template_id"], "version": version_no, "note": request.changeNote, "id": numeric_draft_id})
+        else:
+            connection.execute(text("UPDATE crop_template_version SET change_note=:note WHERE template_version_id=:id"), {"note": request.changeNote, "id": numeric_draft_id})
+        store_template_definition(connection, numeric_draft_id, template_definition(connection, source_version_id))
+        version = connection.execute(text("SELECT * FROM crop_template_version WHERE template_version_id=:id"), {"id": numeric_draft_id}).mappings().one()
+        record_audit_log(connection, user, "production_plan", "rebase_cycle_draft", target_type="cycle_draft", target_id=business_id("CTV", numeric_draft_id), detail=f"Recreated draft from {business_id('CTV', source_version_id)}")
+        return template_draft_payload(connection, version)
+
+
 @app.post("/api/crop-template-drafts/{draft_id}/publish")
 def publish_crop_template_draft(draft_id: str, request: TemplateDraftPublishRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     numeric_draft_id = parse_resource_id(draft_id, "CTV")
@@ -2359,6 +2405,61 @@ def create_temporary_management_task(farm_id: str, request: TemporaryTaskCreateR
         task_id = connection.execute(text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:stage,:type,:title,'temporary',:scheduled,'pending',:note)"), {"plot": numeric_plot_id, "stage": stage["stage_code"], "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": scheduled_date, "note": request.note}).lastrowid
         record_task_adjustment(connection, task_id, user["user_id"], "temporary_task", {}, {"reason": request.reason.strip()})
         record_audit_log(connection, user, "production_plan", "create_temporary_task", target_type="task", target_id=business_id("MT", task_id), detail=request.reason.strip())
+        return task_payload(task_row(connection, task_id))
+
+
+@app.post("/api/farms/{farm_id}/stages/{stage_code}/historical-supplements", status_code=status.HTTP_201_CREATED)
+def create_historical_stage_supplement(farm_id: str, stage_code: str, request: HistoricalStageSupplementRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """Append completed work to a past, undispatched stage without reopening its plan."""
+    numeric_farm_id = parse_resource_id(farm_id, "F")
+    numeric_plot_id = parse_resource_id(request.plotId, "P")
+    ensure_farm_admin_access(user, numeric_farm_id)
+    try:
+        executed_at = utc_naive(request.executedAt)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="INVALID_REQUEST") from error
+    if executed_at > datetime.now(UTC).replace(tzinfo=None):
+        raise HTTPException(status_code=400, detail="HISTORICAL_SUPPLEMENT_FUTURE_DATE")
+    with engine.begin() as connection:
+        plot = connection.execute(
+            text("SELECT plot_id,production_date_offset_days FROM plot WHERE plot_id=:plot AND farm_id=:farm FOR UPDATE"),
+            {"plot": numeric_plot_id, "farm": numeric_farm_id},
+        ).mappings().first()
+        if plot is None:
+            raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
+        stage = connection.execute(
+            text("SELECT planned_start_date,planned_end_date,stage_status FROM farm_annual_stage_state WHERE farm_id=:farm AND production_year=:year AND stage_code=:stage FOR UPDATE"),
+            {"farm": numeric_farm_id, "year": request.productionYear, "stage": stage_code},
+        ).mappings().first()
+        if stage is None:
+            raise HTTPException(status_code=404, detail="ANNUAL_STAGE_NOT_FOUND")
+        if stage["stage_status"] != "not_dispatched":
+            raise HTTPException(status_code=409, detail="HISTORICAL_SUPPLEMENT_STAGE_REQUIRED")
+        offset = timedelta(days=int(plot["production_date_offset_days"] or 0))
+        starts_on = stage["planned_start_date"] + offset
+        ends_on = stage["planned_end_date"] + offset
+        if not starts_on <= executed_at.date() <= ends_on:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "HISTORICAL_SUPPLEMENT_DATE_OUTSIDE_STAGE", "startsOn": starts_on.isoformat(), "endsOn": ends_on.isoformat()},
+            )
+        task_id = connection.execute(
+            text("INSERT INTO management_task (plan_id,plot_id,stage_code,task_type,title,source,scheduled_date,task_status,note) VALUES (NULL,:plot,:stage,:type,:title,'historical_supplement',:scheduled,'completed',:note)"),
+            {"plot": numeric_plot_id, "stage": stage_code, "type": request.taskType.strip(), "title": request.title.strip(), "scheduled": executed_at.date(), "note": request.note},
+        ).lastrowid
+        completion_id = connection.execute(
+            text("INSERT INTO management_task_completion (task_id,result,executed_at,executor_user_id,executor_name,note,irrigation_record_id) VALUES (:task,:result,:executed,:user,:name,:note,NULL)"),
+            {"task": task_id, "result": request.result.strip(), "executed": executed_at, "user": user["user_id"], "name": request.executorName.strip(), "note": request.note},
+        ).lastrowid
+        record_task_adjustment(
+            connection,
+            task_id,
+            user["user_id"],
+            "historical_stage_supplement",
+            {},
+            {"productionYear": request.productionYear, "stageCode": stage_code, "completionId": business_id("TC", completion_id), "reason": request.reason.strip()},
+        )
+        record_audit_log(connection, user, "task_execution", "create_historical_stage_supplement", target_type="task", target_id=business_id("MT", task_id), detail=request.reason.strip())
         return task_payload(task_row(connection, task_id))
 
 

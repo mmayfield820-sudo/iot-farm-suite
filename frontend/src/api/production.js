@@ -8,6 +8,7 @@ export const createCropTemplateVersion = (templateId, data) => request.post(`/cr
 export const getFarmCycleDraft = (farmId) => request.get(`/farms/${farmId}/cycle-draft`)
 export const createFarmCycleDraft = (templateId, farmId, data) => request.post(`/crop-templates/${templateId}/drafts?farmId=${farmId}`, data)
 export const updateFarmCycleDraft = (draftId, data) => request.put(`/crop-template-drafts/${draftId}`, data)
+export const rebaseFarmCycleDraft = (draftId, data) => request.post(`/crop-template-drafts/${draftId}/rebase`, data)
 export const publishFarmCycleDraft = (draftId, data) => request.post(`/crop-template-drafts/${draftId}/publish`, data)
 export const getFarmProductionProfile = (farmId) => request.get(`/farms/${farmId}/production-profile`)
 export const getFarmAnnualProduction = (farmId, params) => request.get(`/farms/${farmId}/annual-production`, { params })
