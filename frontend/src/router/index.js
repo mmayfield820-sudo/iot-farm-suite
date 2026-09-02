@@ -26,9 +26,10 @@ const routes = [
     redirect: '/farm/dashboard',
     children: [
       { path: 'dashboard', name: 'farm-dashboard', component: () => import('@/views/farmAdmin/Dashboard.vue'), meta: { title: '地块总览' } },
-      { path: 'status', name: 'farm-status', component: () => import('@/views/farmAdmin/DeviceControl.vue'), meta: { title: '地块设备监测' } },
-      { path: 'control', redirect: '/farm/status' },
-      { path: 'devices', name: 'farm-devices', component: () => import('@/views/farmAdmin/Devices.vue'), meta: { title: '设备管理' } },
+      { path: 'device-monitoring-management', name: 'farm-device-monitoring-management', component: () => import('@/views/farmAdmin/DeviceMonitoringManagement.vue'), meta: { title: '设备监测与管理' } },
+      { path: 'status', redirect: '/farm/device-monitoring-management' },
+      { path: 'control', redirect: '/farm/device-monitoring-management' },
+      { path: 'devices', redirect: '/farm/device-monitoring-management' },
       { path: 'alerts', name: 'farm-alerts', component: () => import('@/views/farmAdmin/Alerts.vue'), meta: { title: '告警日志' } },
       { path: 'records', name: 'farm-records', component: () => import('@/views/farmAdmin/ManagementRecords.vue'), meta: { title: '生产档案' } },
       { path: 'production', name: 'farm-production', component: () => import('@/views/farmAdmin/Production.vue'), meta: { title: '年度生产管理计划' } },

@@ -363,7 +363,7 @@ function goToTasks() { router.push('/farm/production') }
 function goToRecords() { router.push('/farm/records') }
 function goToStatus(plot) {
   if (!plot.deviceOnline) ElMessage.warning(`${plot.plotName} 设备离线，请先检查设备状态`)
-  router.push({ path: '/farm/status', query: { plotId: plot.plotId } })
+  router.push({ path: '/farm/device-monitoring-management', query: { plotId: plot.plotId } })
 }
 </script>
 
