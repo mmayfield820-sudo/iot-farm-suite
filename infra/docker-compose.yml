@@ -34,7 +34,8 @@ services:
     expose:
       - "3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      # 最终版使用独立数据卷；旧版 mysql_data 保留在服务器上，仅用于回退。
+      - mysql_data_final:/var/lib/mysql
       - ../database/schema/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
       - ../database/schema/002_reference_data.sql:/docker-entrypoint-initdb.d/002_reference_data.sql:ro
       - ../database/seed/001_demo_data.sql:/docker-entrypoint-initdb.d/003_current_data.sql:ro
@@ -165,5 +166,5 @@ services:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
 
 volumes:
-  mysql_data:
+  mysql_data_final:
   emqx_data:
