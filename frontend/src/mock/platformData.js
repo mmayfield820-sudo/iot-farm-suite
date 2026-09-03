@@ -1,13 +1,13 @@
 export const platformFarms = [
-  { farmId: 'F001', name: '奉节脐橙示范园', province: '重庆市', city: '奉节县', address: '朱衣镇脐橙产业园', areaMu: 126.5, managerEmployeeNo: 'E000001', managerName: '张三', note: '公司标准化种植示范园', status: 'active', updatedAt: '2026-08-22 10:25:20' },
-  { farmId: 'F002', name: '长江北岸脐橙园', province: '重庆市', city: '奉节县', address: '永乐镇大坝村', areaMu: 88, managerEmployeeNo: 'E000003', managerName: '王五', note: '', status: 'active', updatedAt: '2026-08-20 16:30:00' },
+  { farmId: 'F001', name: '奉节朱衣脐橙示范园', province: '重庆市', city: '奉节县', address: '重庆市奉节县朱衣镇双碾村脐橙产业园', areaMu: 126.5, managerEmployeeNo: 'E000001', managerName: '林致远', note: '奉节脐橙标准化种植与智慧农业示范基地', status: 'active', updatedAt: '2026-08-22 10:25:20' },
+  { farmId: 'F002', name: '长江北岸脐橙园', province: '重庆市', city: '奉节县', address: '永乐镇大坝村', areaMu: 88, managerEmployeeNo: '', managerName: '', note: '', status: 'active', updatedAt: '2026-08-20 16:30:00' },
 ]
 
 export const platformPlots = [
-  { internalId: 1, farmId: 'F001', plotNo: 'P001', code: 'FJ-001', name: '东坡一号地块', areaMu: 28.5, location: '橙园东坡上段', irrigationMethod: 'drip', status: 'active', crop: '脐橙', note: '果实膨大期' },
+  { internalId: 1, farmId: 'F001', plotNo: 'P001', code: 'FJ-001', name: '东坡一号果园', areaMu: 42.5, location: '示范园东区缓坡梯田', irrigationMethod: 'drip', status: 'active', crop: '脐橙', note: '东坡标准化脐橙种植区' },
   { internalId: 2, farmId: 'F001', plotNo: 'P002', code: 'FJ-002', name: '东坡二号地块', areaMu: 24, location: '橙园东坡下段', irrigationMethod: 'drip', status: 'active', crop: '脐橙', note: '开花坐果期' },
-  { internalId: 3, farmId: 'F001', plotNo: 'P003', code: 'FJ-003', name: '西坡一号地块', areaMu: 31.2, location: '橙园西坡', irrigationMethod: 'sprinkler', status: 'active', crop: '脐橙', note: '春梢生长期' },
-  { internalId: 4, farmId: 'F001', plotNo: 'P004', code: 'FJ-004', name: '南坡一号地块', areaMu: 22.8, location: '橙园南坡', irrigationMethod: 'manual', status: 'active', crop: '脐橙', note: '转色采收期' },
+  { internalId: 3, farmId: 'F001', plotNo: 'P003', code: 'FJ-003', name: '河谷二号果园', areaMu: 38, location: '示范园西区临河台地', irrigationMethod: 'sprinkler', status: 'active', crop: '脐橙', note: '河谷水肥一体化脐橙种植区' },
+  { internalId: 4, farmId: 'F001', plotNo: 'P004', code: 'FJ-004', name: '高坡试验果园', areaMu: 46, location: '示范园北区高坡水肥试验区', irrigationMethod: 'manual', status: 'active', crop: '脐橙', note: '高坡智慧水肥试验区' },
   { internalId: 5, farmId: 'F001', plotNo: 'P005', code: 'FJ-005', name: '北坡试验地块', areaMu: 20, location: '橙园北坡', irrigationMethod: 'other', status: 'active', crop: '脐橙', note: '冬季管护期' },
 ]
 
@@ -24,10 +24,10 @@ export const platformDevices = [
 ]
 
 export const platformUsers = [
-  { id: 'U001', employeeNo: 'E000001', name: '张三', email: 'zhangsan@example.com', roles: ['农户', '农场管理员', '系统管理员'], status: '正常', farmScope: 'F001', plotScope: 'P001', lastLogin: '2026-08-22 09:48:12' },
-  { id: 'U002', employeeNo: 'E000002', name: '李四', email: 'lisi@example.com', roles: ['农户'], status: '正常', farmScope: 'F001', plotScope: 'P003', lastLogin: '2026-08-21 19:22:05' },
-  { id: 'U003', employeeNo: 'E000003', name: '王五', email: '', roles: ['农场管理员'], status: '正常', farmScope: 'F002', plotScope: '-', lastLogin: '2026-08-20 08:15:44' },
-  { id: 'U004', employeeNo: 'E000004', name: '赵六', email: 'zhaoliu@example.com', roles: ['农户'], status: '禁用', farmScope: 'F001', plotScope: 'P004', lastLogin: '2026-08-18 15:30:12' },
+  { id: 'U001', employeeNo: 'E000001', name: '林致远', email: 'linzhiyuan@example.com', roles: ['农场管理员'], status: '正常', farmScope: 'F001', plotScope: '-', lastLogin: '2026-08-22 09:48:12' },
+  { id: 'U002', employeeNo: 'E000002', name: '陈明远', email: 'chenmingyuan@example.com', roles: ['农户'], status: '正常', farmScope: 'F001', plotScope: 'P001, P003', lastLogin: '2026-08-21 19:22:05' },
+  { id: 'U003', employeeNo: 'E000003', name: '许文澜', email: 'xuwenlan@example.com', roles: ['系统管理员'], status: '正常', farmScope: '-', plotScope: '-', lastLogin: '2026-08-20 08:15:44' },
+  { id: 'U004', employeeNo: 'E000004', name: '周晓梅', email: 'zhouxiaomei@example.com', roles: ['农户'], status: '正常', farmScope: 'F001', plotScope: 'P004', lastLogin: '2026-08-18 15:30:12' },
 ]
 
 export const platformAlerts = [

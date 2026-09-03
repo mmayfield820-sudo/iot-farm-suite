@@ -1,0 +1,19 @@
+# 机密：真实 API Key（本地文件，别提交）
+local_secrets.py
+.env
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 运行期自动生成：用户档案 / 长期记忆（每用户一份，含隐私，别提交）
+user_profile_*.json
+user_memories_*.json
+
+# 向量库（生成物，可删掉重跑 build_vector_db.py 重建）
+vector_db/
+.kb_cache/
+
+# 临时文件
+~$*
+*.log

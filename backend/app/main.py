@@ -4444,7 +4444,7 @@ def send_chat_message(
     try:
         with urlopen(
             Request(target, data=payload, headers={"Content-Type": "application/json"}),
-            timeout=float(os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "10")),
+            timeout=float(os.getenv("AI_SERVICE_TIMEOUT_SECONDS", "120")),
         ) as response:
             result = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
@@ -4455,3 +4455,21 @@ def send_chat_message(
     if not isinstance(sources, list) or not all(isinstance(source, str) for source in sources):
         raise HTTPException(status_code=502, detail="AI_SERVICE_INVALID_RESPONSE")
     return {"sessionId": session_id, "answer": result["answer"], "sources": sources}
+
+
+@app.get("/api/chat/health")
+def chat_health(_user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    service_url = os.getenv("AI_SERVICE_URL", "").rstrip("/")
+    if not service_url:
+        return {"available": False, "modelEnabled": False}
+    try:
+        with urlopen(
+            Request(f"{service_url}/health"),
+            timeout=float(os.getenv("AI_SERVICE_HEALTH_TIMEOUT_SECONDS", "3")),
+        ) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return {"available": False, "modelEnabled": False}
+    if not isinstance(result, dict):
+        return {"available": False, "modelEnabled": False}
+    return {"available": result.get("status") == "ok", **result}
