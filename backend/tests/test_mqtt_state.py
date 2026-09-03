@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from backend.app.mqtt import MqttService
@@ -56,6 +57,45 @@ class MqttStateTests(unittest.TestCase):
 
         self.service._update_switch_state.assert_called_once()
         self.connection.execute.assert_not_called()
+
+    def test_state_uptime_uses_device_timestamp_fallback(self):
+        expected = datetime(2026, 9, 3, 12, 0, 0)
+        self.service._parse_device_timestamp = MagicMock(return_value=expected)
+        payload = self.state_payload("heartbeat")
+        payload["ts"] = 664750
+        transaction = MagicMock()
+        transaction.__enter__.return_value = self.connection
+
+        with patch("backend.app.mqtt.engine.begin", return_value=transaction):
+            self.service._handle_state(payload)
+
+        self.service._parse_device_timestamp.assert_called_once()
+        self.assertEqual(self.service._touch_device.call_args.args[2], expected)
+
+    def test_heartbeat_uptime_uses_device_timestamp_fallback(self):
+        expected = datetime(2026, 9, 3, 12, 0, 0)
+        self.service._parse_device_timestamp = MagicMock(return_value=expected)
+        transaction = MagicMock()
+        transaction.__enter__.return_value = self.connection
+        payload = {
+            "seq": 502,
+            "ts": 664750,
+            "type": "snapshot",
+            "sensors": [
+                {
+                    "deviceId": IRRIGATION_UUID,
+                    "switch": "off",
+                    "name": "P001-IRRIG",
+                    "values": {},
+                }
+            ],
+        }
+
+        with patch("backend.app.mqtt.engine.begin", return_value=transaction):
+            self.service._handle_heartbeat(payload)
+
+        self.service._parse_device_timestamp.assert_called_once()
+        self.assertEqual(self.service._touch_device.call_args.args[2], expected)
 
 
 if __name__ == "__main__":

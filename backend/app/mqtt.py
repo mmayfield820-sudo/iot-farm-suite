@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import socket
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 _TELEMETRY_TYPES = {"temperature", "humidity"}
 _CONTROL_ACK_RESULTS = {"ok", "failed"}
 _SWITCH_VALUES = {"on", "off"}
+_MIN_PLAUSIBLE_UNIX_MILLISECONDS = 946684800000  # 2000-01-01 UTC
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,9 @@ class MqttService:
         self.command_ack_timeout_seconds = int(
             os.getenv("COMMAND_ACK_TIMEOUT_SECONDS", "30")
         )
+        self.client_id = os.getenv("MQTT_CLIENT_ID") or (
+            f"smart-farm-backend-{socket.gethostname()}-{os.getpid()}"
+        )
         self._readings: dict[int, dict[str, Reading]] = {}
         self._reading_lock = threading.Lock()
         self._command_lock = threading.Lock()
@@ -49,7 +54,7 @@ class MqttService:
         self._sweeper: threading.Thread | None = None
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
-            client_id="smart-farm-backend",
+            client_id=self.client_id,
         )
         username = os.getenv("MQTT_USERNAME", "")
         if username:
@@ -137,7 +142,8 @@ class MqttService:
     def _handle_state(self, payload: dict[str, Any]) -> None:
         device_uuid = self._parse_device_uuid(payload["deviceId"])
         sequence = self._parse_sequence(payload["seq"], "seq")
-        timestamp = self._parse_timestamp(payload["ts"])
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["ts"], received_at)
         switch = self._parse_switch(payload["switch"])
         reason = payload.get("reason")
         if reason not in {"local", "remote", "auto", "heartbeat"}:
@@ -181,7 +187,8 @@ class MqttService:
 
     def _handle_heartbeat(self, payload: dict[str, Any]) -> None:
         self._parse_sequence(payload["seq"], "seq")
-        timestamp = self._parse_timestamp(payload["ts"])
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["ts"], received_at)
         if payload.get("type") != "snapshot":
             raise ValueError("heartbeat type must be snapshot")
         sensors = payload["sensors"]
@@ -217,7 +224,8 @@ class MqttService:
         if not math.isfinite(value):
             raise ValueError("telemetry metric must be finite")
         message_id = self._parse_message_id(payload["msgId"])
-        timestamp = self._parse_timestamp(payload["timestamp"])
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["timestamp"], received_at)
 
         with engine.begin() as connection:
             device = self._find_device(
@@ -247,7 +255,7 @@ class MqttService:
             device_id=device["device_id"],
             value=value,
             timestamp=timestamp,
-            received_at=datetime.now(UTC).replace(tzinfo=None),
+            received_at=received_at,
         )
         self._store_reading(device["plot_id"], metric_type, reading)
 
@@ -857,6 +865,16 @@ class MqttService:
         if value <= 0:
             raise ValueError("ts/timestamp must be positive")
         return datetime.fromtimestamp(value / 1000, UTC).replace(tzinfo=None)
+
+    @staticmethod
+    def _parse_device_timestamp(value: Any, received_at: datetime) -> datetime:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("timestamp must be milliseconds")
+        if value <= 0:
+            raise ValueError("timestamp must be positive")
+        if value < _MIN_PLAUSIBLE_UNIX_MILLISECONDS:
+            return received_at
+        return MqttService._parse_timestamp(value)
 
     @staticmethod
     def _parse_device_uuid(value: Any) -> str:
