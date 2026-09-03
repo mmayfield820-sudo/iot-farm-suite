@@ -1,14 +1,14 @@
 export const platformFarms = [
-  { farmId: 'F001', name: '奉节脐橙示范园', location: '重庆市奉节县', status: '正常', plotCount: 5 },
-  { farmId: 'F002', name: '长江北岸脐橙园', location: '重庆市奉节县', status: '正常', plotCount: 3 },
+  { farmId: 'F001', name: '奉节脐橙示范园', province: '重庆市', city: '奉节县', address: '朱衣镇脐橙产业园', areaMu: 126.5, managerName: '张三', note: '公司标准化种植示范园', status: 'active', updatedAt: '2026-08-22 10:25:20' },
+  { farmId: 'F002', name: '长江北岸脐橙园', province: '重庆市', city: '奉节县', address: '永乐镇大坝村', areaMu: 88, managerName: '王五', note: '', status: 'active', updatedAt: '2026-08-20 16:30:00' },
 ]
 
 export const platformPlots = [
-  { internalId: 1, farmId: 'F001', plotNo: 'P001', name: '东坡一号地块', crop: '脐橙', note: '果实膨大期' },
-  { internalId: 2, farmId: 'F001', plotNo: 'P002', name: '东坡二号地块', crop: '脐橙', note: '开花坐果期' },
-  { internalId: 3, farmId: 'F001', plotNo: 'P003', name: '西坡一号地块', crop: '脐橙', note: '春梢生长期' },
-  { internalId: 4, farmId: 'F001', plotNo: 'P004', name: '南坡一号地块', crop: '脐橙', note: '转色采收期' },
-  { internalId: 5, farmId: 'F001', plotNo: 'P005', name: '北坡试验地块', crop: '脐橙', note: '冬季管护期' },
+  { internalId: 1, farmId: 'F001', plotNo: 'P001', code: 'FJ-001', name: '东坡一号地块', areaMu: 28.5, location: '橙园东坡上段', irrigationMethod: 'drip', status: 'active', crop: '脐橙', note: '果实膨大期' },
+  { internalId: 2, farmId: 'F001', plotNo: 'P002', code: 'FJ-002', name: '东坡二号地块', areaMu: 24, location: '橙园东坡下段', irrigationMethod: 'drip', status: 'active', crop: '脐橙', note: '开花坐果期' },
+  { internalId: 3, farmId: 'F001', plotNo: 'P003', code: 'FJ-003', name: '西坡一号地块', areaMu: 31.2, location: '橙园西坡', irrigationMethod: 'sprinkler', status: 'active', crop: '脐橙', note: '春梢生长期' },
+  { internalId: 4, farmId: 'F001', plotNo: 'P004', code: 'FJ-004', name: '南坡一号地块', areaMu: 22.8, location: '橙园南坡', irrigationMethod: 'manual', status: 'active', crop: '脐橙', note: '转色采收期' },
+  { internalId: 5, farmId: 'F001', plotNo: 'P005', code: 'FJ-005', name: '北坡试验地块', areaMu: 20, location: '橙园北坡', irrigationMethod: 'other', status: 'active', crop: '脐橙', note: '冬季管护期' },
 ]
 
 export const platformDevices = [
@@ -24,10 +24,10 @@ export const platformDevices = [
 ]
 
 export const platformUsers = [
-  { id: 'U001', username: 'zhangsan', name: '张三', email: 'zhangsan@example.com', roles: ['农户', '农场管理员', '系统管理员'], status: '正常', farmScope: 'F001', plotScope: 'P001', lastLogin: '2026-08-22 09:48:12' },
-  { id: 'U002', username: 'lisi', name: '李四', email: 'lisi@example.com', roles: ['农户'], status: '正常', farmScope: 'F001', plotScope: 'P003', lastLogin: '2026-08-21 19:22:05' },
-  { id: 'U003', username: 'wangwu', name: '王五', email: '', roles: ['农场管理员'], status: '正常', farmScope: 'F002', plotScope: '-', lastLogin: '2026-08-20 08:15:44' },
-  { id: 'U004', username: 'disabled_user', name: '赵六', email: 'zhaoliu@example.com', roles: ['农户'], status: '禁用', farmScope: 'F001', plotScope: 'P004', lastLogin: '2026-08-18 15:30:12' },
+  { id: 'U001', employeeNo: 'E000001', name: '张三', email: 'zhangsan@example.com', roles: ['农户', '农场管理员', '系统管理员'], status: '正常', farmScope: 'F001', plotScope: 'P001', lastLogin: '2026-08-22 09:48:12' },
+  { id: 'U002', employeeNo: 'E000002', name: '李四', email: 'lisi@example.com', roles: ['农户'], status: '正常', farmScope: 'F001', plotScope: 'P003', lastLogin: '2026-08-21 19:22:05' },
+  { id: 'U003', employeeNo: 'E000003', name: '王五', email: '', roles: ['农场管理员'], status: '正常', farmScope: 'F002', plotScope: '-', lastLogin: '2026-08-20 08:15:44' },
+  { id: 'U004', employeeNo: 'E000004', name: '赵六', email: 'zhaoliu@example.com', roles: ['农户'], status: '禁用', farmScope: 'F001', plotScope: 'P004', lastLogin: '2026-08-18 15:30:12' },
 ]
 
 export const platformAlerts = [
@@ -44,8 +44,3 @@ export const platformAuditLogs = [
   { id: 'LOG004', time: '2026-08-21 16:42:35', user: 'admin(U001)', module: '用户管理', action: '禁用账号 U004', result: '成功', ip: '192.168.1.10' },
   { id: 'LOG005', time: '2026-08-21 15:20:10', user: '王五(U003)', module: '设备绑定', action: 'D009 从 P003 解绑', result: '成功', ip: '192.168.1.33' },
 ]
-
-export const initialSystemParams = {
-  humidityMin: 20, humidityMax: 70, defaultHumidity: 35, offlineMinutes: 30,
-  staleDataMinutes: 15, alertCooldown: 30, irrigationMaxMinutes: 60, commandTimeoutSeconds: 10, commandRetryCount: 2,
-}

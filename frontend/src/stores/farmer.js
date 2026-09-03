@@ -275,7 +275,7 @@ export const useFarmerStore = defineStore('farmer', () => {
     }
     irrigationRecords.value.unshift(normalizeIrrigationRecord({
       recordId: `IR${Date.now()}`, plotId, plotName: plot.plotName, deviceId: plot.devices?.irrigation?.deviceId || plot.valveId,
-      operatorId: userStore.user?.id, operator: userStore.user?.displayName || userStore.user?.username,
+      operatorId: userStore.user?.id, operator: userStore.user?.displayName || userStore.user?.employeeNo,
       operationType: opening ? '开启' : '关闭', activationType: source,
       startTime: nowText(), endTime: opening && status === '成功' ? '' : nowText(), duration: opening && status === '成功' ? '-' : 0,
       status: opening && status === '成功' ? '进行中' : status,

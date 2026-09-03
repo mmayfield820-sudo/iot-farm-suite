@@ -7,7 +7,6 @@ import hmac
 import logging
 import os
 import re
-import secrets
 import threading
 from io import BytesIO
 from contextlib import asynccontextmanager
@@ -80,19 +79,8 @@ app = FastAPI(
 
 
 class LoginRequest(BaseModel):
-    username: str
+    employeeNo: str = Field(min_length=1, max_length=50)
     password: str
-
-
-class RegistrationRequest(BaseModel):
-    username: str = Field(min_length=4, max_length=50, pattern=r"^[A-Za-z0-9_]+$")
-    password: str = Field(min_length=6, max_length=72)
-    real_name: str = Field(min_length=1, max_length=50)
-    email: str | None = Field(default=None, max_length=100)
-    phone: str | None = Field(default=None, max_length=20)
-    role_codes: list[str] = Field(min_length=1)
-    farm_ids: list[str] = Field(default_factory=list)
-    plot_ids: list[str] = Field(default_factory=list)
 
 
 class FirstLoginCompleteRequest(BaseModel):
@@ -298,25 +286,6 @@ class FarmAnnualProductionRequest(BaseModel):
 class FarmPlantingScheduleRequest(BaseModel):
     templateVersionId: str
     plannedPlantingDate: str
-
-
-class UserSaveRequest(BaseModel):
-    username: str = Field(min_length=4, max_length=50, pattern=r"^[A-Za-z0-9_]+$")
-    name: str | None = Field(default=None, max_length=50)
-    email: str | None = Field(default=None, max_length=100)
-    phone: str | None = Field(default=None, max_length=20)
-    active: bool = True
-    role_codes: list[str] = Field(min_length=1)
-    farm_ids: list[str] = Field(default_factory=list)
-    plot_ids: list[str] = Field(default_factory=list)
-
-
-class UserActiveRequest(BaseModel):
-    active: bool
-
-
-class RejectRegistrationRequest(BaseModel):
-    reason: str = Field(min_length=1, max_length=255)
 
 
 class CommandCreateRequest(BaseModel):
@@ -852,7 +821,7 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
     user = connection.execute(
         text(
             """
-            SELECT user_id, employee_no, id_card_masked, username, real_name, email, phone, avatar_data,
+            SELECT user_id, employee_no, id_card_masked, real_name, email, phone, avatar_data,
                    user_status, activated_at, created_at, updated_at
             FROM users WHERE user_id = :user_id
             """
@@ -899,7 +868,6 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
         "id": business_id("U", user["user_id"]),
         "employeeNo": user["employee_no"],
         "idCardMasked": user["id_card_masked"],
-        "username": user["username"],
         "name": user["real_name"] or user["employee_no"],
         "displayName": user["real_name"] or user["employee_no"],
         "email": user["email"],
@@ -927,26 +895,6 @@ def user_payload(connection: Any, user_id: int) -> dict[str, Any]:
         "activatedAt": iso(user["activated_at"]),
         "createdAt": iso(user["created_at"]),
         "updatedAt": iso(user["updated_at"]),
-    }
-
-
-def registration_payload(row: Any) -> dict[str, Any]:
-    roles = json_values(value_of(row, "role_codes"))
-    return {
-        "id": business_id("REG", value_of(row, "application_id")),
-        "applicationId": business_id("REG", value_of(row, "application_id")),
-        "username": value_of(row, "username"),
-        "realName": value_of(row, "real_name"),
-        "email": value_of(row, "email"),
-        "phone": value_of(row, "phone"),
-        "roles": [FRONTEND_ROLE_CODES[role] for role in roles],
-        "roleCodes": roles,
-        "farmIds": [business_id("F", int(value)) for value in json_values(value_of(row, "farm_ids"))],
-        "plotIds": [business_id("P", int(value)) for value in json_values(value_of(row, "plot_ids"))],
-        "status": value_of(row, "application_status"),
-        "createdAt": iso(value_of(row, "created_at")),
-        "reviewedAt": iso(value_of(row, "reviewed_at")),
-        "rejectReason": value_of(row, "reject_reason"),
     }
 
 
@@ -1043,9 +991,10 @@ def health() -> dict[str, str]:
 
 @app.post("/api/auth/login")
 def login(request: LoginRequest) -> dict[str, Any]:
-    user = authenticate(request.username, request.password)
+    employee_no = request.employeeNo.strip()
+    user = authenticate(employee_no, request.password)
     if user is None:
-        pending_user = authenticate_initial_password(request.username.strip(), request.password)
+        pending_user = authenticate_initial_password(employee_no, request.password)
         if pending_user is None:
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
         with engine.connect() as connection:
@@ -1097,11 +1046,6 @@ def get_my_profile(user: dict[str, Any] = Depends(current_user)) -> dict[str, An
         return user_payload(connection, user["user_id"])
 
 
-@app.get("/api/registration-resources", include_in_schema=False)
-def registration_resources() -> None:
-    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
-
-
 @app.post("/api/auth/first-login/complete")
 def complete_first_login(request: FirstLoginCompleteRequest) -> dict[str, Any]:
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -1141,240 +1085,8 @@ def complete_first_login(request: FirstLoginCompleteRequest) -> dict[str, Any]:
                 },
             )
         except IntegrityError as error:
-            raise HTTPException(status_code=409, detail="USERNAME_OR_EMAIL_ALREADY_EXISTS") from error
+            raise HTTPException(status_code=409, detail="EMAIL_ALREADY_EXISTS") from error
         return user_payload(connection, employee["user_id"])
-
-
-@app.get("/api/registration-applications")
-def list_registration_applications(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
-    ensure_system_admin(user)
-    with engine.connect() as connection:
-        rows = connection.execute(
-            text("SELECT * FROM registration_application ORDER BY created_at DESC, application_id DESC")
-        ).mappings().all()
-    return [registration_payload(row) for row in rows]
-
-
-@app.put("/api/registration-applications/{application_id}/approve")
-def approve_registration(application_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    ensure_system_admin(user)
-    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
-    numeric_id = parse_resource_id(application_id, "REG")
-    with engine.begin() as connection:
-        application = connection.execute(
-            text("SELECT * FROM registration_application WHERE application_id = :application_id FOR UPDATE"),
-            {"application_id": numeric_id},
-        ).mappings().first()
-        if application is None:
-            raise HTTPException(status_code=404, detail="REGISTRATION_NOT_FOUND")
-        if application["application_status"] != "pending":
-            raise HTTPException(status_code=409, detail="REGISTRATION_NOT_PENDING")
-        if connection.execute(
-            text("SELECT 1 FROM users WHERE username = :username"),
-            {"username": application["username"]},
-        ).scalar():
-            raise HTTPException(status_code=409, detail="USERNAME_ALREADY_EXISTS")
-        result = connection.execute(
-            text(
-                """
-                INSERT INTO users (username, password_hash, real_name, email, phone)
-                VALUES (:username, :password_hash, :real_name, :email, :phone)
-                """
-            ),
-            dict(application),
-        )
-        role_codes = json_values(application["role_codes"])
-        plot_ids = [int(value) for value in json_values(application["plot_ids"])]
-        if "farmer" in role_codes:
-            ensure_plots_available_for_farmer(connection, plot_ids)
-        replace_user_assignments(
-            connection,
-            result.lastrowid,
-            role_codes,
-            [int(value) for value in json_values(application["farm_ids"])],
-            plot_ids,
-        )
-        connection.execute(
-            text(
-                """
-                UPDATE registration_application
-                SET application_status = 'approved', reviewed_at = :reviewed_at,
-                    reviewed_by = :reviewed_by
-                WHERE application_id = :application_id
-                """
-            ),
-            {"application_id": numeric_id, "reviewed_at": datetime.now(UTC).replace(tzinfo=None), "reviewed_by": user["user_id"]},
-        )
-        row = connection.execute(
-            text("SELECT * FROM registration_application WHERE application_id = :application_id"),
-            {"application_id": numeric_id},
-        ).mappings().one()
-    return registration_payload(row)
-
-
-@app.put("/api/registration-applications/{application_id}/reject")
-def reject_registration(
-    application_id: str,
-    request: RejectRegistrationRequest,
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
-    ensure_system_admin(user)
-    raise HTTPException(status_code=410, detail="REGISTRATION_DISABLED")
-    numeric_id = parse_resource_id(application_id, "REG")
-    with engine.begin() as connection:
-        result = connection.execute(
-            text(
-                """
-                UPDATE registration_application
-                SET application_status = 'rejected', reject_reason = :reason,
-                    reviewed_at = :reviewed_at, reviewed_by = :reviewed_by
-                WHERE application_id = :application_id AND application_status = 'pending'
-                """
-            ),
-            {"application_id": numeric_id, "reason": request.reason.strip(), "reviewed_at": datetime.now(UTC).replace(tzinfo=None), "reviewed_by": user["user_id"]},
-        )
-        if result.rowcount == 0:
-            raise HTTPException(status_code=409, detail="REGISTRATION_NOT_PENDING")
-        row = connection.execute(
-            text("SELECT * FROM registration_application WHERE application_id = :application_id"),
-            {"application_id": numeric_id},
-        ).mappings().one()
-    return registration_payload(row)
-
-
-@app.get("/api/_legacy/users", include_in_schema=False)
-def list_users(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
-    ensure_system_admin(user)
-    with engine.connect() as connection:
-        user_ids = connection.execute(text("SELECT user_id FROM users ORDER BY user_id")).scalars().all()
-        return [user_payload(connection, user_id) for user_id in user_ids]
-
-
-def save_user_record(
-    request: UserSaveRequest,
-    user_id: int | None,
-) -> tuple[dict[str, Any], str | None]:
-    role_codes = canonical_role_codes(request.role_codes)
-    farm_ids = resource_ids(request.farm_ids, "F")
-    plot_ids = resource_ids(request.plot_ids, "P")
-    if "farm_admin" in role_codes and not farm_ids:
-        raise HTTPException(status_code=400, detail="FARM_SCOPE_REQUIRED")
-    if "farmer" in role_codes and not plot_ids:
-        raise HTTPException(status_code=400, detail="PLOT_SCOPE_REQUIRED")
-    temporary_password: str | None = None
-    with engine.begin() as connection:
-        ensure_existing_resources(connection, farm_ids, plot_ids)
-        if user_id is None:
-            temporary_password = f"Tmp-{secrets.token_urlsafe(9)}"
-            try:
-                result = connection.execute(
-                    text(
-                        """
-                        INSERT INTO users (username, password_hash, real_name, email, phone, user_status)
-                        VALUES (:username, :password_hash, :real_name, :email, :phone, :user_status)
-                        """
-                    ),
-                    {
-                        "username": request.username,
-                        "password_hash": password_hash(temporary_password),
-                        "real_name": request.name or request.username,
-                        "email": request.email or None,
-                        "phone": request.phone or None,
-                        "user_status": "active" if request.active else "disabled",
-                    },
-                )
-            except IntegrityError as error:
-                raise HTTPException(status_code=409, detail="USERNAME_OR_EMAIL_ALREADY_EXISTS") from error
-            numeric_user_id = result.lastrowid
-        else:
-            existing = connection.execute(
-                text("SELECT 1 FROM users WHERE user_id = :user_id"), {"user_id": user_id}
-            ).scalar()
-            if not existing:
-                raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
-            try:
-                connection.execute(
-                    text(
-                        """
-                        UPDATE users
-                        SET real_name = :real_name, email = :email, phone = :phone,
-                            user_status = :user_status
-                        WHERE user_id = :user_id
-                        """
-                    ),
-                    {
-                        "user_id": user_id,
-                        "real_name": request.name or request.username,
-                        "email": request.email or None,
-                        "phone": request.phone or None,
-                        "user_status": "active" if request.active else "disabled",
-                    },
-                )
-            except IntegrityError as error:
-                raise HTTPException(status_code=409, detail="EMAIL_ALREADY_EXISTS") from error
-            numeric_user_id = user_id
-        replace_user_assignments(connection, numeric_user_id, role_codes, farm_ids, plot_ids)
-        return user_payload(connection, numeric_user_id), temporary_password
-
-
-@app.post("/api/_legacy/users", status_code=status.HTTP_201_CREATED, include_in_schema=False)
-def create_user(
-    request: UserSaveRequest,
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
-    ensure_system_admin(user)
-    saved, temporary_password = save_user_record(request, None)
-    return {**saved, "temporaryPassword": temporary_password}
-
-
-@app.put("/api/_legacy/users/{user_id}", include_in_schema=False)
-def update_user(
-    user_id: str,
-    request: UserSaveRequest,
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
-    ensure_system_admin(user)
-    numeric_user_id = parse_resource_id(user_id, "U")
-    saved, _ = save_user_record(request, numeric_user_id)
-    return saved
-
-
-@app.put("/api/_legacy/users/{user_id}/active", include_in_schema=False)
-def update_user_active(
-    user_id: str,
-    request: UserActiveRequest,
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
-    ensure_system_admin(user)
-    numeric_user_id = parse_resource_id(user_id, "U")
-    if numeric_user_id == user["user_id"] and not request.active:
-        raise HTTPException(status_code=400, detail="CANNOT_DISABLE_CURRENT_USER")
-    with engine.begin() as connection:
-        result = connection.execute(
-            text("UPDATE users SET user_status = :status WHERE user_id = :user_id"),
-            {"user_id": numeric_user_id, "status": "active" if request.active else "disabled"},
-        )
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
-        return user_payload(connection, numeric_user_id)
-
-
-@app.post("/api/_legacy/users/{user_id}/reset-password", include_in_schema=False)
-def reset_user_password(
-    user_id: str,
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, str]:
-    ensure_system_admin(user)
-    numeric_user_id = parse_resource_id(user_id, "U")
-    temporary_password = f"Tmp-{secrets.token_urlsafe(9)}"
-    with engine.begin() as connection:
-        result = connection.execute(
-            text("UPDATE users SET password_hash = :password_hash WHERE user_id = :user_id"),
-            {"user_id": numeric_user_id, "password_hash": password_hash(temporary_password)},
-        )
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
-    return {"temporaryPassword": temporary_password}
 
 
 def validated_assignments(
@@ -1792,7 +1504,7 @@ def create_phase2_user(request: UserCreateRequest, user: dict[str, Any] = Depend
         roles, farms, plots = validated_assignments(connection, request.roleCodes, request.farmIds, request.plotIds)
         try:
             initial_password_hash = password_hash(initial_password)
-            result = connection.execute(text("INSERT INTO users (employee_no, username, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employee_no, :username, :password_hash, :initial_password_hash, :id_card_hash, :id_card_masked, :name, :email, :phone, 'pending_activation')"), {"employee_no": employee_no, "username": employee_no, "password_hash": initial_password_hash, "initial_password_hash": initial_password_hash, "id_card_hash": id_card_hash(id_card_no), "id_card_masked": id_card_masked(id_card_no), "name": request.name.strip(), "email": request.email or None, "phone": request.phone or None})
+            result = connection.execute(text("INSERT INTO users (employee_no, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employee_no, :password_hash, :initial_password_hash, :id_card_hash, :id_card_masked, :name, :email, :phone, 'pending_activation')"), {"employee_no": employee_no, "password_hash": initial_password_hash, "initial_password_hash": initial_password_hash, "id_card_hash": id_card_hash(id_card_no), "id_card_masked": id_card_masked(id_card_no), "name": request.name.strip(), "email": request.email or None, "phone": request.phone or None})
         except IntegrityError as error:
             raise HTTPException(status_code=409, detail="EMPLOYEE_NO_OR_ID_CARD_EXISTS") from error
         replace_user_assignments(connection, result.lastrowid, roles, farms, plots)
@@ -1919,7 +1631,7 @@ def commit_user_import_job(job_id: str, user: dict[str, Any] = Depends(current_u
         rows = connection.execute(text("SELECT import_row_id, source_data FROM user_import_row WHERE import_job_id=:id AND row_status='valid' ORDER BY source_row_number FOR UPDATE"), {"id": numeric_id}).mappings().all()
         for row in rows:
             data = json.loads(row["source_data"])
-            result = connection.execute(text("INSERT INTO users (employee_no, username, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employeeNo,:employeeNo,:initialPasswordHash,:initialPasswordHash,:idCardHash,:idCardMasked,:name,:email,:phone,'pending_activation')"), data)
+            result = connection.execute(text("INSERT INTO users (employee_no, password_hash, initial_password_hash, id_card_hash, id_card_masked, real_name, email, phone, user_status) VALUES (:employeeNo,:initialPasswordHash,:initialPasswordHash,:idCardHash,:idCardMasked,:name,:email,:phone,'pending_activation')"), data)
             replace_user_assignments(connection, result.lastrowid, data["roleCodes"], data["farmIds"], data["plotIds"])
             connection.execute(text("UPDATE user_import_row SET row_status='imported', imported_user_id=:user_id WHERE import_row_id=:id"), {"id": row["import_row_id"], "user_id": result.lastrowid})
         connection.execute(text("UPDATE user_import_job SET job_status='committed', committed_by=:user, committed_at=:now WHERE import_job_id=:id"), {"id": numeric_id, "user": user["user_id"], "now": now})

@@ -919,9 +919,9 @@ components:
         total: { type: integer, minimum: 0 }
     LoginRequest:
       type: object
-      required: [username, password]
+      required: [employeeNo, password]
       properties:
-        username: { type: string, description: New accounts use employee number as username. }
+        employeeNo: { type: string, description: Unique employee number used for login. }
         password: { type: string, format: password, description: First login uses the last six ID-card characters. }
     LoginResponse:
       type: object
@@ -945,7 +945,6 @@ components:
         id: { type: string, example: U001 }
         employeeNo: { type: string, example: E2026001 }
         idCardMasked: { type: string, nullable: true, example: '500236********1234' }
-        username: { type: string, nullable: true }
         name: { type: string, example: Zhang San }
         phone: { type: string, nullable: true }
         email: { type: string, format: email, nullable: true }

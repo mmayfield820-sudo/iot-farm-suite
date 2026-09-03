@@ -13,7 +13,7 @@ python -m pip install -r backend/requirements.txt
 python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8080
 ```
 
-Set a non-default `JWT_SECRET` in `.env` before startup. The local demo users `demo_admin`, `demo_farmer`, and `demo_system` use the development password `DemoPass123!`.
+Set a non-default `JWT_SECRET` in `.env` before startup. The local demo employee numbers `E000001`, `E000002`, and `E000003` use the development password `DemoPass123!`.
 
 ## HTTP endpoints
 

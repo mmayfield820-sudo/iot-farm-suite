@@ -1,8 +1,8 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { initialSystemParams, platformAlerts, platformAuditLogs, platformDevices, platformFarms, platformPlots, platformUsers } from '@/mock/platformData'
+import { platformAlerts, platformAuditLogs, platformDevices, platformFarms, platformPlots, platformUsers } from '@/mock/platformData'
 import { acknowledgeAlert, getAlertList } from '@/api/alert'
-import { bindDevice as bindDeviceApi, createDevice, getAllDevices, getFarmList, getFarmOverview, getUserList, resetUserPassword, saveUser as saveUserApi, unbindDevice as unbindDeviceApi, updateUserActive } from '@/api/platform'
+import { bindDevice as bindDeviceApi, createDevice, createFarm, createPlot, getAllDevices, getFarmList, getFarmOverview, getPlotList, getUserList, resetUserPassword, saveUser as saveUserApi, unbindDevice as unbindDeviceApi, updateFarm, updatePlot, updateUserActive } from '@/api/platform'
 import { formatDateTime, normalizeAlert, normalizeDevice, normalizeFarm, normalizeId, normalizePlot, overviewMetricsToReport, unwrapList } from '@/utils/dataAdapters'
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
@@ -18,30 +18,43 @@ const normalizePlatformPlot = (row = {}) => ({
   internalId: normalizeId(row.internalId ?? row.plot_id ?? row.plotId ?? row.id),
   plotNo: normalizeId(row.plotNo ?? row.plot_id ?? row.plotId ?? row.id),
   farmId: normalizeId(row.farmId ?? row.farm_id),
+  code: row.code || row.plotCode || row.plot_code || '',
   name: row.name || row.plotName || row.plot_name || '未命名地块',
   crop: row.crop || row.cropName || row.crop_name || '暂未种植',
   note: row.note || row.description || '',
   location: row.location || '',
-  active: row.active ?? row.Active ?? true,
+  areaMu: row.areaMu ?? row.area_mu ?? null,
+  irrigationMethod: row.irrigationMethod ?? row.irrigation_method ?? null,
+  status: row.status || row.plotStatus || row.plot_status || (row.active === false || row.Active === false ? 'inactive' : 'active'),
+  active: (row.status || row.plotStatus || row.plot_status) ? (row.status || row.plotStatus || row.plot_status) === 'active' : row.active ?? row.Active ?? true,
+  updatedAt: row.updatedAt || row.updated_at || '',
 })
 const normalizePlatformUser = (row = {}) => {
-  const rawRoles = asArray(row.roles || row.roleList || row.role_list)
+  const rawRoles = asArray(row.roles || row.roleCodes || row.role_codes || row.roleList || row.role_list)
   const roles = rawRoles.map((item) => item?.roleName || item?.role_name || roleLabel[item?.roleCode || item?.role_code || item] || item).filter(Boolean)
   const activeAssignment = (item) => item?.active !== false && item?.Active !== false && (!item?.expiresAt && !item?.expires_at || new Date(item.expiresAt || item.expires_at).getTime() > Date.now())
   const farmIds = asArray(row.farmIds || row.farm_ids || row.userFarmRoles || row.user_farm_roles).filter(activeAssignment).map((item) => normalizeId(item?.farmId ?? item?.farm_id ?? item))
   const plotIds = asArray(row.plotIds || row.plot_ids || row.userPlotRoles || row.user_plot_roles).filter(activeAssignment).map((item) => normalizeId(item?.plotId ?? item?.plot_id ?? item))
+  const status = row.status || (row.active === false || row.Active === false ? 'disabled' : 'active')
   return {
     ...row,
     id: normalizeId(row.id ?? row.userId ?? row.user_id),
-    username: row.username || '',
-    name: row.name || row.displayName || row.display_name || row.username || '',
+    employeeNo: row.employeeNo || row.employee_no || '',
+    idCardMasked: row.idCardMasked || row.id_card_masked || '',
+    name: row.name || row.displayName || row.display_name || row.employeeNo || row.employee_no || '',
     email: row.email || '',
     phone: row.phone || '',
     roles,
+    roleCodes: asArray(row.roleCodes || row.role_codes || rawRoles.map((item) => roleCode[item] || item)),
+    farmIds,
+    plotIds,
     farmScope: farmIds.join(', ') || '-',
     plotScope: plotIds.join(', ') || '-',
     lastLogin: row.lastLogin || row.last_login || '-',
-    status: row.active === false || row.Active === false ? '禁用' : row.status || '正常',
+    status,
+    statusLabel: { pending_activation: '待激活', active: '正常', disabled: '已停用' }[status] || status,
+    activatedAt: row.activatedAt || row.activated_at || '',
+    updatedAt: row.updatedAt || row.updated_at || '',
   }
 }
 
@@ -50,14 +63,13 @@ export const usePlatformStore = defineStore('platform', () => {
   const selectedFarmId = ref(normalizeId(farms.value[0]?.farmId))
   const plots = ref(isMock ? clone(platformPlots) : [])
   const devices = ref(isMock ? clone(platformDevices) : [])
-  const users = ref(isMock ? clone(platformUsers) : [])
+  const users = ref(isMock ? clone(platformUsers).map(normalizePlatformUser) : [])
   const alerts = ref(isMock ? clone(platformAlerts) : [])
   const auditLogs = ref(isMock ? clone(platformAuditLogs) : [])
-  const params = ref(clone(initialSystemParams))
   const loading = ref(false)
   const initialized = ref(false)
   const loadError = ref('')
-  const capabilities = { auditLogs: isMock, systemSettings: isMock }
+  const capabilities = { auditLogs: isMock }
   const onlineDevices = computed(() => devices.value.filter((item) => item.status === '在线').length)
   const offlineDevices = computed(() => devices.value.filter((item) => ['离线', '异常'].includes(item.status)).length)
   const unhandledAlerts = computed(() => alerts.value.filter((item) => item.status === '未处理').length)
@@ -98,6 +110,87 @@ export const usePlatformStore = defineStore('platform', () => {
 
   function log(user, module, action, result = '成功') { auditLogs.value.unshift({ id: `LOG${Date.now()}`, time: timeText(), user, module, action, result, ip: '-' }) }
   function selectFarm(farmId) { selectedFarmId.value = normalizeId(farmId) }
+  async function saveFarm(data) {
+    const payload = {
+      name: data.name.trim(),
+      province: data.province.trim(),
+      city: data.city.trim(),
+      address: data.address.trim() || null,
+      areaMu: data.areaMu === '' || data.areaMu === null ? null : Number(data.areaMu),
+      managerName: data.managerName.trim() || null,
+      note: data.note.trim() || null,
+    }
+    if (!isMock) {
+      const response = data.farmId ? await updateFarm(data.farmId, { ...payload, status: data.status }) : await createFarm(payload)
+      const saved = normalizeFarm(response?.data || response)
+      const index = farms.value.findIndex((item) => item.farmId === saved.farmId)
+      if (index >= 0) farms.value[index] = saved
+      else farms.value.unshift(saved)
+      return saved
+    }
+    const current = farms.value.find((item) => item.farmId === data.farmId)
+    if (current) {
+      Object.assign(current, payload, { status: data.status, active: data.status === 'active', updatedAt: timeText() })
+      log('当前用户', '基础档案', `修改橙园 ${current.farmId}`)
+      return current
+    }
+    const next = Math.max(0, ...farms.value.map((item) => Number(String(item.farmId).replace(/\D/g, '')) || 0)) + 1
+    const saved = normalizeFarm({ id: `F${String(next).padStart(3, '0')}`, ...payload, status: 'active', createdAt: timeText(), updatedAt: timeText() })
+    farms.value.unshift(saved)
+    log('当前用户', '基础档案', `新增橙园 ${saved.farmId}`)
+    return saved
+  }
+  async function toggleFarm(farmId) {
+    const farm = farms.value.find((item) => item.farmId === farmId)
+    if (!farm) return
+    return saveFarm({ ...farm, status: farm.status === 'active' ? 'inactive' : 'active' })
+  }
+  async function listFarmPlots({ farmId, page = 1, pageSize = 10, keyword = '', status = '' }) {
+    if (!isMock) {
+      const response = await getPlotList({ farmId, page, pageSize, keyword: keyword || undefined, status: status || undefined })
+      const items = unwrapList(response).map(normalizePlatformPlot)
+      return { items, total: Number(response?.total ?? response?.data?.total ?? items.length) }
+    }
+    const query = keyword.trim().toLowerCase()
+    const matched = plots.value.filter((item) => !farmId || item.farmId === farmId)
+      .filter((item) => !status || item.status === status)
+      .filter((item) => !query || `${item.code} ${item.name} ${item.location}`.toLowerCase().includes(query))
+    const offset = (page - 1) * pageSize
+    return { items: matched.slice(offset, offset + pageSize), total: matched.length }
+  }
+  async function savePlot(data) {
+    const payload = {
+      farmId: data.farmId,
+      code: data.code.trim(),
+      name: data.name.trim(),
+      areaMu: data.areaMu === '' || data.areaMu === null ? null : Number(data.areaMu),
+      location: data.location.trim() || null,
+      irrigationMethod: data.irrigationMethod || null,
+      status: data.status || 'active',
+    }
+    if (!isMock) {
+      const response = data.plotId ? await updatePlot(data.plotId, payload) : await createPlot(payload)
+      const saved = normalizePlatformPlot(response?.data || response)
+      const index = plots.value.findIndex((item) => item.plotNo === saved.plotNo)
+      if (index >= 0) plots.value[index] = { ...plots.value[index], ...saved }
+      else plots.value.unshift(saved)
+      return saved
+    }
+    const current = plots.value.find((item) => item.plotNo === data.plotId)
+    if (current) {
+      Object.assign(current, payload, { updatedAt: timeText(), active: payload.status === 'active' })
+      log('当前用户', '基础档案', `修改地块 ${current.plotNo}`)
+      return current
+    }
+    const next = Math.max(0, ...plots.value.map((item) => Number(String(item.plotNo).replace(/\D/g, '')) || 0)) + 1
+    const saved = normalizePlatformPlot({ id: `P${String(next).padStart(3, '0')}`, ...payload, createdAt: timeText(), updatedAt: timeText() })
+    plots.value.unshift(saved)
+    log('当前用户', '基础档案', `新增地块 ${saved.plotNo}`)
+    return saved
+  }
+  async function togglePlot(plot) {
+    return savePlot({ ...plot, plotId: plot.plotNo, status: plot.status === 'active' ? 'inactive' : 'active' })
+  }
   async function addDevice(data) {
     if (!isMock) {
       const response = await createDevice({ deviceNo: data.deviceNo, deviceUuid: data.deviceUuid, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
@@ -116,33 +209,60 @@ export const usePlatformStore = defineStore('platform', () => {
     if (!isMock) await unbindDeviceApi(deviceId)
     const old = device.plotNo || device.plotId; device.plotNo = ''; device.plotId = ''; log('当前用户', '设备绑定', `${deviceId} 从 ${old} 解绑`)
   }
+  async function listUsers({ page = 1, pageSize = 10, keyword = '', role = '', status = '' } = {}) {
+    if (!isMock) {
+      const response = await getUserList({ page, pageSize, keyword: keyword || undefined, role: role || undefined, status: status || undefined })
+      const items = unwrapList(response).map(normalizePlatformUser)
+      users.value = items
+      return { items, total: Number(response?.total ?? response?.data?.total ?? items.length) }
+    }
+    const query = keyword.trim().toLowerCase()
+    const matched = users.value.filter((item) => !query || `${item.employeeNo} ${item.name} ${item.phone}`.toLowerCase().includes(query))
+      .filter((item) => !role || item.roleCodes?.includes(role))
+      .filter((item) => !status || item.status === status)
+    const offset = (page - 1) * pageSize
+    return { items: matched.slice(offset, offset + pageSize), total: matched.length }
+  }
   async function toggleUser(userId) {
     const user = users.value.find((item) => normalizeId(item.id) === normalizeId(userId)); if (!user) return
-    const active = user.status !== '正常'; if (!isMock) await updateUserActive(userId, active)
-    user.status = active ? '正常' : '禁用'; log('当前用户', '用户管理', `${active ? '恢复' : '禁用'}账号 ${userId}`)
+    const active = user.status === 'disabled'
+    if (!isMock) {
+      const response = await updateUserActive(userId, active)
+      Object.assign(user, normalizePlatformUser(response?.data || response))
+    } else Object.assign(user, { status: active ? 'active' : 'disabled', statusLabel: active ? '正常' : '已停用' })
+    log('当前用户', '用户管理', `${active ? '启用' : '停用'}账号 ${userId}`)
+    return user
   }
   async function resetPassword(userId) {
     const response = !isMock ? await resetUserPassword(userId) : null
+    const target = users.value.find((item) => normalizeId(item.id) === normalizeId(userId))
+    if (target) Object.assign(target, { status: 'pending_activation', statusLabel: '待激活', activatedAt: '' })
     log('当前用户', '用户管理', `重置账号 ${userId} 密码`)
     return response?.data || response
   }
   async function saveUser(data) {
+    const roleCodes = data.roleCodes || data.roles.map((item) => roleCode[item] || item)
+    const farmIds = data.farmIds || asArray(data.farmScope)
+    const plotIds = data.plotIds || asArray(data.plotScope)
     if (!isMock) {
-      const payload = { username: data.username, name: data.name, email: data.email, phone: data.phone, active: data.status !== '禁用', role_codes: data.roles.map((item) => roleCode[item] || item), farm_ids: Array.isArray(data.farmScope) ? data.farmScope : String(data.farmScope || '').split(',').map((item) => item.trim()).filter(Boolean), plot_ids: Array.isArray(data.plotScope) ? data.plotScope : String(data.plotScope || '').split(',').map((item) => item.trim()).filter(Boolean) }
+      const payload = { name: data.name.trim(), email: data.email?.trim() || null, phone: data.phone?.trim() || null, roleCodes, farmIds, plotIds }
+      if (!data.id) Object.assign(payload, { employeeNo: data.employeeNo.trim(), idCardNo: data.idCardNo.trim() })
+      else if (data.idCardNo?.trim()) payload.idCardNo = data.idCardNo.trim()
       const response = await saveUserApi(data.id, payload); const raw = response?.data || response; const saved = normalizePlatformUser(raw)
       const index = users.value.findIndex((item) => item.id === saved.id); if (index >= 0) users.value[index] = saved; else users.value.unshift(saved)
-      return { user: saved, temporaryPassword: raw?.temporaryPassword }
+      return saved
     }
     const current = users.value.find((item) => item.id === data.id)
-    if (current) Object.assign(current, data); else users.value.unshift({ ...data, id: `U${String(users.value.length + 1).padStart(3, '0')}`, lastLogin: '-', status: '正常' })
-    log('当前用户', '用户管理', `${current ? '修改' : '新增'}账号 ${data.username}`)
+    const saved = normalizePlatformUser({ ...data, employeeNo: data.employeeNo, roleCodes, farmIds, plotIds, id: data.id || `U${String(users.value.length + 1).padStart(3, '0')}`, status: current?.status || 'pending_activation' })
+    if (current) Object.assign(current, saved); else users.value.unshift(saved)
+    log('当前用户', '用户管理', `${current ? '修改' : '新增'}账号 ${saved.employeeNo}`)
+    return saved
   }
-  function saveParams(next) { Object.assign(params.value, next); log('当前用户', '系统参数', '更新运行参数') }
   async function handleAlert(alertId) {
     const alert = alerts.value.find((item) => normalizeId(item.id) === normalizeId(alertId)); if (!alert) return
     if (!isMock) await acknowledgeAlert(alertId)
     alert.status = '处理中'; alert.handledAt = timeText(); alert.process ||= []; alert.process.push(`${timeText()} 确认告警`); log('当前用户', '全局告警', `确认告警 ${alertId}`)
   }
 
-  return { farms, selectedFarmId, plots, devices, users, alerts, auditLogs, params, loading, initialized, loadError, capabilities, onlineDevices, offlineDevices, unhandledAlerts, commandSuccessRate, loadData, selectFarm, addDevice, bindDevice, unbindDevice, toggleUser, resetPassword, saveUser, saveParams, handleAlert }
+  return { farms, selectedFarmId, plots, devices, users, alerts, auditLogs, loading, initialized, loadError, capabilities, onlineDevices, offlineDevices, unhandledAlerts, commandSuccessRate, loadData, selectFarm, saveFarm, toggleFarm, listFarmPlots, savePlot, togglePlot, addDevice, bindDevice, unbindDevice, listUsers, toggleUser, resetPassword, saveUser, handleAlert }
 })

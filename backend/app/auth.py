@@ -82,17 +82,17 @@ def resolve_active_role(requested_role: str | None, roles: list[str], fallback_r
     return active_role
 
 
-def authenticate(username: str, password: str) -> dict[str, Any] | None:
+def authenticate(employee_no: str, password: str) -> dict[str, Any] | None:
     with engine.connect() as connection:
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username, password_hash
+                SELECT user_id, employee_no, password_hash
                 FROM users
-                WHERE username = :username AND user_status = 'active'
+                WHERE employee_no = :employee_no AND user_status = 'active'
                 """
             ),
-            {"username": username},
+            {"employee_no": employee_no},
         ).mappings().first()
 
         if user is None or not verify_password(password, user["password_hash"]):
@@ -100,7 +100,7 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
 
         return {
             "user_id": user["user_id"],
-            "username": user["username"],
+            "employee_no": user["employee_no"],
             "role": _role_for(connection, user["user_id"]),
             "roles": _role_codes_for(connection, user["user_id"]),
         }
@@ -112,10 +112,9 @@ def authenticate_initial_password(employee_no: str, password: str) -> dict[str, 
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username, password_hash
+                SELECT user_id, employee_no, password_hash
                 FROM users
                 WHERE employee_no = :employee_no
-                  AND username = :employee_no
                   AND user_status = 'pending_activation'
                 """
             ),
@@ -123,7 +122,7 @@ def authenticate_initial_password(employee_no: str, password: str) -> dict[str, 
         ).mappings().first()
         if user is None or not verify_password(password, user["password_hash"]):
             return None
-        return {"user_id": user["user_id"], "username": user["username"]}
+        return {"user_id": user["user_id"], "employee_no": user["employee_no"]}
 
 
 def create_access_token(user: dict[str, Any]) -> str:
@@ -177,7 +176,7 @@ def current_user(
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username
+                SELECT user_id, employee_no
                 FROM users
                 WHERE user_id = :user_id AND user_status = 'active'
                 """
@@ -192,7 +191,7 @@ def current_user(
         fallback_role = _role_for(connection, user["user_id"])
         return {
             "user_id": user["user_id"],
-            "username": user["username"],
+            "employee_no": user["employee_no"],
             "role": resolve_active_role(active_role, roles, fallback_role),
             "roles": roles,
         }

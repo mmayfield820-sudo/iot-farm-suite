@@ -3,8 +3,7 @@ import { defineStore } from 'pinia'
 import { getMyProfile as getMyProfileApi, login as loginApi, updateMyProfile as updateMyProfileApi } from '@/api/auth'
 
 const STORAGE_KEY = 'smart-agriculture-user'
-const APPROVED_ACCOUNT_KEY = 'smart-agriculture-approved-accounts'
-export const ROLE_HOME = { farmer: '/farmer/dashboard', farmAdmin: '/farm/dashboard', systemAdmin: '/admin/dashboard' }
+export const ROLE_HOME = { farmer: '/farmer/dashboard', farmAdmin: '/farm/dashboard', systemAdmin: '/admin/archives' }
 export const ROLE_LABEL = { farmer: '农户', farmAdmin: '农场管理员', systemAdmin: '系统管理员' }
 const ROLE_CODE_MAP = { farmer: 'farmer', FARMER: 'farmer', 农户: 'farmer', farm_admin: 'farmAdmin', FARM_ADMIN: 'farmAdmin', farmAdmin: 'farmAdmin', 农场管理员: 'farmAdmin', system_admin: 'systemAdmin', SYSTEM_ADMIN: 'systemAdmin', systemAdmin: 'systemAdmin', 系统管理员: 'systemAdmin' }
 const asArray = (value) => Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map((item) => item.trim()).filter(Boolean) : []
@@ -13,7 +12,7 @@ const asArray = (value) => Array.isArray(value) ? value : typeof value === 'stri
 const mockAccounts = [
   {
     id: 'U001',
-    username: 'zhangsan',
+    employeeNo: 'E000001',
     password: '123456',
     displayName: '张三',
     email: 'zhangsan@example.com',
@@ -24,12 +23,12 @@ const mockAccounts = [
     roleScopes: { farmer: { plotIds: ['P001', 'P002', 'P003', 'P004', 'P005', 'P006', 'P007'] }, farmAdmin: { farmIds: ['F001'] }, systemAdmin: { global: true } },
   },
   {
-    id: 'U002',                          
-    username: 'lisi',                   
-    password: '123456',                
-    displayName: '李四',                 
-    email: 'lisi@example.com',           
-    status: 'normal',                    
+    id: 'U002',
+    employeeNo: 'E000002',
+    password: '123456',
+    displayName: '李四',
+    email: 'lisi@example.com',
+    status: 'normal',
     roles: ['farmer'],                   
     permissions: ['*'],
     accessiblePlots: ['P003'],
@@ -63,8 +62,7 @@ function normalizeUser(raw = {}) {
   }).filter(Boolean)
   return {
     id: String(raw.id || raw.userId || raw.user_id || ''),
-    username: raw.username || '',
-    displayName: raw.displayName || raw.name || raw.realName || raw.username || '',
+    displayName: raw.displayName || raw.name || raw.realName || raw.employeeNo || raw.employee_no || '',
     email: raw.email || '',
     phone: raw.phone || raw.Phone || '',
     avatarData: raw.avatarData || raw.avatar_data || '',
@@ -106,15 +104,13 @@ export const useUserStore = defineStore('user', () => {
     let token
 
     if (import.meta.env.VITE_USE_MOCK === 'true') {
-      let approvedAccounts = []
-      try { approvedAccounts = JSON.parse(localStorage.getItem(APPROVED_ACCOUNT_KEY) || '[]') } catch { approvedAccounts = [] }
-      const account = [...mockAccounts, ...approvedAccounts].find((item) => item.username === payload.username.trim() && item.password === payload.password)
-      if (!account) throw new Error('用户名或密码错误')
+      const account = mockAccounts.find((item) => item.employeeNo === payload.employeeNo.trim() && item.password === payload.password)
+      if (!account) throw new Error('工号或密码错误')
       const { password: _password, ...safeAccount } = account
       profile = safeAccount
       token = `mock-token-${account.id}`
     } else {
-      const response = await loginApi({ username: payload.username.trim(), password: payload.password })
+      const response = await loginApi({ employeeNo: payload.employeeNo.trim(), password: payload.password })
       if (response.requiresProfileCompletion) {
         return { requiresProfileCompletion: true, profileSetupToken: response.profileSetupToken, setupProfile: normalizeUser(response.user || {}) }
       }

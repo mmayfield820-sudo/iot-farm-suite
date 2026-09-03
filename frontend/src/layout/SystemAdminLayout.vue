@@ -6,13 +6,12 @@ import { usePlatformStore } from '@/stores/platform'
 const platformStore = usePlatformStore()
 onMounted(() => platformStore.loadData().catch(() => ElMessage.error(platformStore.loadError || '平台数据加载失败')))
 const menu = [
-  { label: '运行概况', path: '/admin/dashboard', icon: 'DataBoard' },
+  { label: '基础档案', path: '/admin/archives', icon: 'FolderOpened' },
   { label: '全局告警', path: '/admin/alerts', icon: 'Warning' },
   { label: '用户管理', path: '/admin/users', icon: 'UserFilled' },
   { label: '品种模板', path: '/admin/templates', icon: 'CollectionTag' },
-  { label: '系统参数', path: '/admin/settings', icon: 'Setting' },
   { label: '操作日志', path: '/admin/logs', icon: 'Document' },
 ]
-const contextStatus = computed(() => platformStore.loadError ? '数据加载异常' : platformStore.offlineDevices || platformStore.unhandledAlerts ? '存在待处理事项' : '运行正常')
+const contextStatus = computed(() => platformStore.loadError ? '数据加载异常' : '档案数据已同步')
 </script>
-<template><AppShell title="橙心如意" subtitle="智慧农业管理平台" context-label="全系统运行中心" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" :menu="menu" accent="#6b5bb5" /></template>
+<template><AppShell title="橙心如意" subtitle="智慧农业管理平台" context-label="平台基础资料" :context-status="contextStatus" :context-status-tone="contextStatus === '档案数据已同步' ? 'success' : 'warning'" :menu="menu" accent="#6b5bb5" /></template>

@@ -189,8 +189,7 @@ async function openOrToggleAssistant() {
           </div>
         </el-form-item>
         <div class="profile-grid">
-          <el-form-item label="登录账号"><el-input :model-value="userStore.user?.username" disabled /></el-form-item>
-          <el-form-item label="员工工号"><el-input :model-value="userStore.user?.employeeNo || userStore.user?.username" disabled /></el-form-item>
+          <el-form-item label="登录工号"><el-input :model-value="userStore.user?.employeeNo" disabled /></el-form-item>
           <el-form-item label="员工姓名"><el-input v-model="profileForm.name" disabled /></el-form-item>
           <el-form-item label="已分配角色"><el-input :model-value="profileRoleText" disabled /></el-form-item>
           <el-form-item class="profile-full" label="授权范围"><el-input :model-value="profileScopeText" type="textarea" :rows="2" resize="none" disabled /></el-form-item>

@@ -5,7 +5,6 @@ const routes = [
   { path: '/', redirect: '/login' },
   { path: '/prototype/farmer-dashboard', name: 'prototype-farmer-dashboard', component: () => import('@/views/prototype/FarmerDashboardPrototype.vue'), meta: { prototype: true, title: '农户首页原型' } },
   { path: '/login', name: 'login', component: () => import('@/views/login/Login.vue'), meta: { public: true } },
-  { path: '/register', name: 'register', component: () => import('@/views/login/Register.vue'), meta: { public: true, title: '用户注册' } },
   {
     path: '/farmer', component: () => import('@/layout/FarmerLayout.vue'), meta: { role: 'farmer' },
     redirect: '/farmer/dashboard',
@@ -38,13 +37,13 @@ const routes = [
   },
   {
     path: '/admin', component: () => import('@/layout/SystemAdminLayout.vue'), meta: { role: 'systemAdmin' },
-    redirect: '/admin/dashboard',
+    redirect: '/admin/archives',
     children: [
-      { path: 'dashboard', name: 'admin-dashboard', component: () => import('@/views/systemAdmin/Dashboard.vue'), meta: { title: '运行概况' } },
+      { path: 'archives', name: 'admin-archives', component: () => import('@/views/systemAdmin/Dashboard.vue'), meta: { title: '基础档案' } },
+      { path: 'dashboard', redirect: '/admin/archives' },
       { path: 'alerts', name: 'admin-alerts', component: () => import('@/views/systemAdmin/Alerts.vue'), meta: { title: '全局告警' } },
       { path: 'users', name: 'admin-users', component: () => import('@/views/systemAdmin/Users.vue'), meta: { title: '用户管理' } },
       { path: 'templates', name: 'admin-templates', component: () => import('@/views/systemAdmin/Templates.vue'), meta: { title: '品种模板' } },
-      { path: 'settings', name: 'admin-settings', component: () => import('@/views/systemAdmin/Settings.vue'), meta: { title: '系统参数' } },
       { path: 'logs', name: 'admin-logs', component: () => import('@/views/systemAdmin/Logs.vue'), meta: { title: '操作日志' } },
     ],
   },

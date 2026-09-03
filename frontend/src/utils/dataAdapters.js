@@ -41,15 +41,22 @@ export function isHeartbeatOnline(lastHeartbeat, offlineMinutes = 30) {
 }
 
 export function normalizeFarm(row = {}) {
+  const status = firstDefined(row.status, row.farmStatus, row.farm_status, row.active === false || row.Active === false ? 'inactive' : 'active')
   return {
     ...row,
     farmId: normalizeId(firstDefined(row.farmId, row.farm_id, row.id)),
     name: firstDefined(row.name, row.farmName, row.farm_name, '未命名农场'),
     farmName: firstDefined(row.farmName, row.farm_name, row.name, '未命名农场'),
+    province: firstDefined(row.province, ''),
     city: firstDefined(row.city, ''),
     address: firstDefined(row.address, row.location, ''),
-    active: Boolean(firstDefined(row.active, row.Active, true)),
+    areaMu: firstDefined(row.areaMu, row.area_mu, null),
+    managerName: firstDefined(row.managerName, row.manager_name, ''),
+    note: firstDefined(row.note, ''),
+    status,
+    active: status === 'active',
     createdAt: firstDefined(row.createdAt, row.created_at, ''),
+    updatedAt: firstDefined(row.updatedAt, row.updated_at, ''),
   }
 }
 
@@ -117,7 +124,7 @@ export function normalizeIrrigationRecord(row = {}) {
     operationType: actionMap[firstDefined(row.operationType, row.action, row.actionType, row.action_type, '')] || firstDefined(row.operationType, row.action, row.actionType, row.action_type, ''),
     activationType: firstDefined(row.activationType, row.activation_type, row.source, '手动'),
     operatorId: normalizeId(firstDefined(row.operatorId, row.operator_id)),
-    operator: firstDefined(row.operator, row.operatorName, row.operator_name, row.operatorUsername, '系统'),
+    operator: firstDefined(row.operator, row.operatorName, row.operator_name, row.operatorEmployeeNo, '系统'),
     startTime,
     endTime,
     duration: firstDefined(row.duration, start && end ? Math.max(0, Math.round((end - start) / 60000)) : '-'),
