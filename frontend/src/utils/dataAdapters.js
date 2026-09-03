@@ -51,6 +51,7 @@ export function normalizeFarm(row = {}) {
     city: firstDefined(row.city, ''),
     address: firstDefined(row.address, row.location, ''),
     areaMu: firstDefined(row.areaMu, row.area_mu, null),
+    managerEmployeeNo: firstDefined(row.managerEmployeeNo, row.manager_employee_no, ''),
     managerName: firstDefined(row.managerName, row.manager_name, ''),
     note: firstDefined(row.note, ''),
     status,

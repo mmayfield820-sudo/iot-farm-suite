@@ -37,9 +37,21 @@ const profileForm = reactive({ plantingDate: '', note: '' })
 const milestoneForm = reactive({ completedAt: '' })
 const dispatchForm = reactive({ stageCode: '', actualStartedAt: '', shiftFollowingStages: true })
 const changeOrderForm = reactive({ taskId: '', scheduledDate: '', note: '', reason: '' })
-const temporaryTaskForm = reactive({ plotId: '', taskType: 'other', title: '', scheduledDate: '', note: '', reason: '' })
+const temporaryTaskForm = reactive({ plotId: '', taskType: '', title: '', scheduledDate: '', note: '', reason: '' })
 const historicalSupplementForm = reactive({ stageCode: '', plotId: '', taskType: 'other', title: '', executedAt: '', executorName: '', result: '', note: '', reason: '' })
 const savingPlotId = ref('')
+const taskTypeOptions = [
+  { value: 'inspection', label: '巡园检查' },
+  { value: 'pruning', label: '修剪管理' },
+  { value: 'fertilization', label: '施肥管理' },
+  { value: 'flower_management', label: '花果管理' },
+  { value: 'fruit_management', label: '果实管理' },
+  { value: 'irrigation', label: '灌溉检查' },
+  { value: 'pest_control', label: '病虫害防治' },
+  { value: 'harvest', label: '采收管理' },
+  { value: 'cleanup', label: '清园管理' },
+  { value: 'other', label: '其他' },
+]
 
 const currentStageCode = computed(() => context.value?.stage?.code)
 const lockedStageCodes = computed(() => new Set((context.value?.stages || []).filter((stage) => stage.locked).map((stage) => stage.code)))
@@ -250,11 +262,11 @@ async function saveChangeOrder() {
 }
 function openTemporaryTask() {
   if (!activeStage.value) return ElMessage.warning('请先确认当前阶段')
-  Object.assign(temporaryTaskForm, { plotId: plots.value[0]?.id || '', taskType: 'other', title: '', scheduledDate: new Date().toISOString().slice(0, 10), note: '', reason: '' })
+  Object.assign(temporaryTaskForm, { plotId: plots.value[0]?.id || '', taskType: '', title: '', scheduledDate: new Date().toISOString().slice(0, 10), note: '', reason: '' })
   temporaryTaskOpen.value = true
 }
 async function saveTemporaryTask() {
-  if (!temporaryTaskForm.plotId || !temporaryTaskForm.title.trim() || !temporaryTaskForm.scheduledDate || !temporaryTaskForm.reason.trim()) return ElMessage.warning('请完整填写地块、任务、日期和新增原因')
+  if (!temporaryTaskForm.plotId || !temporaryTaskForm.taskType || !temporaryTaskForm.title.trim() || !temporaryTaskForm.scheduledDate || !temporaryTaskForm.reason.trim()) return ElMessage.warning('请完整填写地块、任务类型、任务名称、日期和新增原因')
   saving.value = true
   try {
     await createTemporaryTask(selectedFarmId.value, { ...temporaryTaskForm, title: temporaryTaskForm.title.trim(), taskType: temporaryTaskForm.taskType.trim(), note: temporaryTaskForm.note || null, reason: temporaryTaskForm.reason.trim() })
@@ -510,7 +522,7 @@ watch(() => platformStore.selectedFarmId, async (farmId) => {
     <el-dialog v-model="temporaryTaskOpen" title="新增当前阶段临时任务" width="min(580px, 92vw)">
       <el-form label-position="top">
         <el-form-item label="执行地块" required><el-select v-model="temporaryTaskForm.plotId" filterable><el-option v-for="plot in plots" :key="plot.id" :label="`${plot.name} · ${plot.farmerName || '未分配负责人'}`" :value="plot.id" :disabled="!plot.farmerUserId"/></el-select></el-form-item>
-        <div class="temporary-task-fields"><el-form-item label="任务类型" required><el-input v-model="temporaryTaskForm.taskType" maxlength="50"/></el-form-item><el-form-item label="执行日期" required><el-date-picker v-model="temporaryTaskForm.scheduledDate" type="date" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" :disabled-date="(day) => day < new Date(new Date().setHours(0,0,0,0)) || (activeStage && day > new Date(`${activeStage.endsOn}T23:59:59`))"/></el-form-item></div>
+        <div class="temporary-task-fields"><el-form-item label="任务类型" required><el-select v-model="temporaryTaskForm.taskType" placeholder="请选择任务类型"><el-option v-for="item in taskTypeOptions" :key="item.value" :label="item.label" :value="item.value"/></el-select></el-form-item><el-form-item label="执行日期" required><el-date-picker v-model="temporaryTaskForm.scheduledDate" type="date" value-format="YYYY-MM-DD" format="YYYY年MM月DD日" :disabled-date="(day) => day < new Date(new Date().setHours(0,0,0,0)) || (activeStage && day > new Date(`${activeStage.endsOn}T23:59:59`))"/></el-form-item></div>
         <el-form-item label="任务名称" required><el-input v-model="temporaryTaskForm.title" maxlength="150"/></el-form-item>
         <el-form-item label="执行说明"><el-input v-model="temporaryTaskForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit/></el-form-item>
         <el-form-item label="新增原因" required><el-input v-model="temporaryTaskForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="例如：突发病虫害，需要额外防治"/></el-form-item>

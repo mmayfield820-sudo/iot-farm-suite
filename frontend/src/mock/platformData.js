@@ -1,6 +1,6 @@
 export const platformFarms = [
-  { farmId: 'F001', name: '奉节脐橙示范园', province: '重庆市', city: '奉节县', address: '朱衣镇脐橙产业园', areaMu: 126.5, managerName: '张三', note: '公司标准化种植示范园', status: 'active', updatedAt: '2026-08-22 10:25:20' },
-  { farmId: 'F002', name: '长江北岸脐橙园', province: '重庆市', city: '奉节县', address: '永乐镇大坝村', areaMu: 88, managerName: '王五', note: '', status: 'active', updatedAt: '2026-08-20 16:30:00' },
+  { farmId: 'F001', name: '奉节脐橙示范园', province: '重庆市', city: '奉节县', address: '朱衣镇脐橙产业园', areaMu: 126.5, managerEmployeeNo: 'E000001', managerName: '张三', note: '公司标准化种植示范园', status: 'active', updatedAt: '2026-08-22 10:25:20' },
+  { farmId: 'F002', name: '长江北岸脐橙园', province: '重庆市', city: '奉节县', address: '永乐镇大坝村', areaMu: 88, managerEmployeeNo: 'E000003', managerName: '王五', note: '', status: 'active', updatedAt: '2026-08-20 16:30:00' },
 ]
 
 export const platformPlots = [

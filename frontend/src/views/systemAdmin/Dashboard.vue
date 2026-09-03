@@ -12,7 +12,10 @@ const statusFilter = ref('all')
 const dialogVisible = ref(false)
 const saving = ref(false)
 const formRef = ref()
-const form = reactive({ farmId: '', name: '', province: '重庆市', city: '奉节县', address: '', areaMu: null, managerName: '', note: '', status: 'active' })
+const managerOptions = ref([])
+const managerLoading = ref(false)
+let managerRequestId = 0
+const form = reactive({ farmId: '', name: '', province: '重庆市', city: '奉节县', address: '', areaMu: null, managerEmployeeNo: '', note: '', status: 'active' })
 const rules = {
   name: [{ required: true, message: '请输入橙园名称', trigger: 'blur' }],
   province: [{ required: true, message: '请输入所在省级行政区', trigger: 'blur' }],
@@ -30,7 +33,7 @@ const plotLoading = ref(false)
 const plotDialogVisible = ref(false)
 const plotSaving = ref(false)
 const plotFormRef = ref()
-const plotForm = reactive({ plotId: '', farmId: '', code: '', name: '', areaMu: null, location: '', irrigationMethod: null, status: 'active' })
+const plotForm = reactive({ plotId: '', farmId: '', code: '', name: '', areaMu: null, location: '', farmerEmployeeNo: '', status: 'active' })
 const globalPlotDialogVisible = ref(false)
 const globalPlotKeyword = ref('')
 const globalPlotRows = ref([])
@@ -40,7 +43,6 @@ const plotRules = {
   name: [{ required: true, message: '请输入地块名称', trigger: 'blur' }],
   areaMu: [{ validator: (_rule, value, callback) => value === null || value === '' || Number(value) >= 0 ? callback() : callback(new Error('面积不能小于 0')), trigger: 'change' }],
 }
-const irrigationLabels = { drip: '滴灌', sprinkler: '喷灌', flood: '漫灌', manual: '人工灌溉', other: '其他' }
 
 const selectedFarmId = computed(() => String(route.query.farmId || ''))
 const selectedFarm = computed(() => store.farms.find((farm) => farm.farmId === selectedFarmId.value))
@@ -49,20 +51,38 @@ const farms = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return store.farms.filter((farm) => {
     const matchesStatus = statusFilter.value === 'all' || farm.status === statusFilter.value
-    const searchable = `${farm.farmId} ${farm.name} ${farm.province} ${farm.city} ${farm.address} ${farm.managerName}`.toLowerCase()
+    const searchable = `${farm.farmId} ${farm.name} ${farm.province} ${farm.city} ${farm.address} ${farm.managerEmployeeNo} ${farm.managerName}`.toLowerCase()
     return matchesStatus && (!query || searchable.includes(query))
   })
 })
 
 function resetForm() {
-  Object.assign(form, { farmId: '', name: '', province: '重庆市', city: '奉节县', address: '', areaMu: null, managerName: '', note: '', status: 'active' })
+  Object.assign(form, { farmId: '', name: '', province: '重庆市', city: '奉节县', address: '', areaMu: null, managerEmployeeNo: '', note: '', status: 'active' })
   nextTick(() => formRef.value?.clearValidate())
 }
 
-function addFarm() { resetForm(); dialogVisible.value = true }
+async function loadManagerOptions(keyword = '') {
+  const requestId = ++managerRequestId
+  managerLoading.value = true
+  try {
+    const result = await store.listUsers({ page: 1, pageSize: 100, keyword: keyword.trim() })
+    if (requestId === managerRequestId) managerOptions.value = result.items
+  } catch (error) {
+    if (requestId === managerRequestId) {
+      managerOptions.value = []
+      ElMessage.error(error.message || '员工列表加载失败')
+    }
+  } finally {
+    if (requestId === managerRequestId) managerLoading.value = false
+  }
+}
+
+function searchManagerOptions(keyword) { loadManagerOptions(keyword) }
+function addFarm() { resetForm(); dialogVisible.value = true; loadManagerOptions() }
 function editFarm(row) {
-  Object.assign(form, { farmId: row.farmId, name: row.name || '', province: row.province || '', city: row.city || '', address: row.address || '', areaMu: row.areaMu ?? null, managerName: row.managerName || '', note: row.note || '', status: row.status || 'active' })
+  Object.assign(form, { farmId: row.farmId, name: row.name || '', province: row.province || '', city: row.city || '', address: row.address || '', areaMu: row.areaMu ?? null, managerEmployeeNo: row.managerEmployeeNo || '', note: row.note || '', status: row.status || 'active' })
   dialogVisible.value = true
+  loadManagerOptions(row.managerEmployeeNo || '')
   nextTick(() => formRef.value?.clearValidate())
 }
 
@@ -74,7 +94,7 @@ async function saveFarm() {
     await store.saveFarm({ ...form })
     dialogVisible.value = false
     ElMessage.success(form.farmId ? '橙园档案已更新' : '橙园档案已创建')
-  } catch (error) { ElMessage.error(error.message || '橙园档案保存失败') }
+  } catch (error) { ElMessage.error(error.message === 'MANAGER_EMPLOYEE_NOT_FOUND' ? '负责人工号不存在，请从已录入员工中选择' : error.message || '橙园档案保存失败') }
   finally { saving.value = false }
 }
 
@@ -127,12 +147,12 @@ async function loadPlots() {
 function searchPlots() { plotPage.value = 1; loadPlots() }
 function changePlotPage(page) { plotPage.value = page; loadPlots() }
 function resetPlotForm() {
-  Object.assign(plotForm, { plotId: '', farmId: selectedFarmId.value, code: '', name: '', areaMu: null, location: '', irrigationMethod: null, status: 'active' })
+  Object.assign(plotForm, { plotId: '', farmId: selectedFarmId.value, code: '', name: '', areaMu: null, location: '', farmerEmployeeNo: '', status: 'active' })
   nextTick(() => plotFormRef.value?.clearValidate())
 }
 function addPlot() { resetPlotForm(); plotDialogVisible.value = true }
 function editPlot(row) {
-  Object.assign(plotForm, { plotId: row.plotNo, farmId: row.farmId, code: row.code || '', name: row.name || '', areaMu: row.areaMu ?? null, location: row.location || '', irrigationMethod: row.irrigationMethod || null, status: row.status || 'active' })
+  Object.assign(plotForm, { plotId: row.plotNo, farmId: row.farmId, code: row.code || '', name: row.name || '', areaMu: row.areaMu ?? null, location: row.location || '', farmerEmployeeNo: row.farmerEmployeeNo || '', status: row.status || 'active' })
   plotDialogVisible.value = true
   nextTick(() => plotFormRef.value?.clearValidate())
 }
@@ -238,7 +258,7 @@ watch(selectedFarmId, (farmId) => {
         </div>
       </div>
       <el-table v-loading="plotLoading" :data="plotRows" class="compact-table" row-key="plotNo">
-        <el-table-column prop="code" label="地块编号" width="130" /><el-table-column prop="name" label="地块名称" min-width="170"><template #default="scope"><strong class="record-name">{{ scope.row.name }}</strong></template></el-table-column>
+        <el-table-column prop="code" label="地块编号" width="130" /><el-table-column prop="name" label="地块名称" min-width="170"><template #default="scope"><strong class="record-name">{{ scope.row.name }}</strong></template></el-table-column><el-table-column prop="farmerName" label="地块农户" min-width="120"><template #default="scope">{{ scope.row.farmerName || '未分配' }}</template></el-table-column>
         <el-table-column label="面积" width="110" align="right"><template #default="scope">{{ formatArea(scope.row.areaMu) }}</template></el-table-column>
         <el-table-column prop="location" label="位置说明" min-width="220" show-overflow-tooltip><template #default="scope">{{ scope.row.location || '未填写' }}</template></el-table-column>
         <el-table-column label="灌溉状态" width="120"><template #default="scope"><span :class="['status-pill', irrigationStatus(scope.row).tone]">{{ irrigationStatus(scope.row).label }}</span></template></el-table-column>
@@ -251,12 +271,12 @@ watch(selectedFarmId, (farmId) => {
     </section>
 
     <el-dialog v-model="dialogVisible" :title="form.farmId ? '编辑橙园档案' : '新增橙园档案'" width="min(640px, calc(100vw - 32px))" destroy-on-close>
-      <el-form ref="formRef" :model="form" :rules="rules" label-position="top"><div class="form-grid"><el-form-item label="橙园名称" prop="name"><el-input v-model="form.name" maxlength="100" show-word-limit placeholder="请输入橙园名称" /></el-form-item><el-form-item label="负责人" prop="managerName"><el-input v-model="form.managerName" maxlength="50" placeholder="请输入负责人姓名" /></el-form-item><el-form-item label="所在省级行政区" prop="province"><el-input v-model="form.province" maxlength="50" placeholder="例如：重庆市" /></el-form-item><el-form-item label="所在市或区县" prop="city"><el-input v-model="form.city" maxlength="50" placeholder="例如：奉节县" /></el-form-item><el-form-item class="full-row" label="详细地址" prop="address"><el-input v-model="form.address" maxlength="255" placeholder="请输入乡镇、村及具体位置" /></el-form-item><el-form-item label="面积（亩）" prop="areaMu"><el-input-number v-model="form.areaMu" :min="0" :precision="2" :step="1" controls-position="right" /></el-form-item><el-form-item v-if="form.farmId" label="档案状态"><el-switch v-model="form.status" active-value="active" inactive-value="inactive" active-text="启用" inactive-text="停用" /></el-form-item><el-form-item class="full-row" label="备注" prop="note"><el-input v-model="form.note" type="textarea" :rows="3" maxlength="500" show-word-limit resize="none" placeholder="补充橙园档案说明（选填）" /></el-form-item></div></el-form>
+      <el-form ref="formRef" :model="form" :rules="rules" label-position="top"><div class="form-grid"><el-form-item label="橙园名称" prop="name"><el-input v-model="form.name" maxlength="100" show-word-limit placeholder="请输入橙园名称" /></el-form-item><el-form-item label="负责人工号" prop="managerEmployeeNo"><el-select v-model="form.managerEmployeeNo" clearable filterable remote reserve-keyword :remote-method="searchManagerOptions" :loading="managerLoading" placeholder="请选择已录入员工"><el-option v-for="employee in managerOptions" :key="employee.id" :label="`${employee.employeeNo} · ${employee.name}`" :value="employee.employeeNo" /></el-select></el-form-item><el-form-item label="所在省级行政区" prop="province"><el-input v-model="form.province" maxlength="50" placeholder="例如：重庆市" /></el-form-item><el-form-item label="所在市或区县" prop="city"><el-input v-model="form.city" maxlength="50" placeholder="例如：奉节县" /></el-form-item><el-form-item class="full-row" label="详细地址" prop="address"><el-input v-model="form.address" maxlength="255" placeholder="请输入乡镇、村及具体位置" /></el-form-item><el-form-item label="面积（亩）" prop="areaMu"><el-input-number v-model="form.areaMu" :min="0" :precision="2" :step="1" controls-position="right" /></el-form-item><el-form-item v-if="form.farmId" label="档案状态"><el-switch v-model="form.status" active-value="active" inactive-value="inactive" active-text="启用" inactive-text="停用" /></el-form-item><el-form-item class="full-row" label="备注" prop="note"><el-input v-model="form.note" type="textarea" :rows="3" maxlength="500" show-word-limit resize="none" placeholder="补充橙园档案说明（选填）" /></el-form-item></div></el-form>
       <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveFarm">保存档案</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="plotDialogVisible" :title="plotForm.plotId ? '编辑地块档案' : '新增地块档案'" width="min(620px, calc(100vw - 32px))" destroy-on-close>
-      <el-form ref="plotFormRef" :model="plotForm" :rules="plotRules" label-position="top"><div class="form-grid"><el-form-item class="full-row" label="所属橙园"><el-input :model-value="selectedFarm?.name || selectedFarmId" disabled /></el-form-item><el-form-item label="地块编号" prop="code"><el-input v-model="plotForm.code" maxlength="50" placeholder="全平台唯一，例如 FJ-001" /></el-form-item><el-form-item label="地块名称" prop="name"><el-input v-model="plotForm.name" maxlength="100" placeholder="请输入地块名称" /></el-form-item><el-form-item label="面积（亩）" prop="areaMu"><el-input-number v-model="plotForm.areaMu" :min="0" :precision="2" :step="1" controls-position="right" /></el-form-item><el-form-item label="灌溉方式"><el-select v-model="plotForm.irrigationMethod" clearable placeholder="请选择"><el-option v-for="(label, value) in irrigationLabels" :key="value" :label="label" :value="value" /></el-select></el-form-item><el-form-item class="full-row" label="位置说明"><el-input v-model="plotForm.location" maxlength="255" placeholder="请输入地块所在位置" /></el-form-item><el-form-item v-if="plotForm.plotId" label="档案状态"><el-switch v-model="plotForm.status" active-value="active" inactive-value="inactive" active-text="启用" inactive-text="停用" /></el-form-item></div></el-form>
+      <el-form ref="plotFormRef" :model="plotForm" :rules="plotRules" label-position="top"><div class="form-grid"><el-form-item class="full-row" label="所属橙园"><el-input :model-value="selectedFarm?.name || selectedFarmId" disabled /></el-form-item><el-form-item label="地块编号" prop="code"><el-input v-model="plotForm.code" maxlength="50" placeholder="全平台唯一，例如 FJ-001" /></el-form-item><el-form-item label="地块名称" prop="name"><el-input v-model="plotForm.name" maxlength="100" placeholder="请输入地块名称" /></el-form-item><el-form-item label="面积（亩）" prop="areaMu"><el-input-number v-model="plotForm.areaMu" :min="0" :precision="2" :step="1" controls-position="right" /></el-form-item><el-form-item v-if="plotForm.plotId" label="地块农户工号"><el-input :model-value="plotForm.farmerEmployeeNo || '未分配'" disabled /></el-form-item><el-form-item class="full-row" label="位置说明"><el-input v-model="plotForm.location" maxlength="255" placeholder="请输入地块所在位置" /></el-form-item><el-form-item v-if="plotForm.plotId" label="档案状态"><el-switch v-model="plotForm.status" active-value="active" inactive-value="inactive" active-text="启用" inactive-text="停用" /></el-form-item></div></el-form>
       <template #footer><el-button @click="plotDialogVisible = false">取消</el-button><el-button type="primary" :loading="plotSaving" @click="savePlot">保存档案</el-button></template>
     </el-dialog>
 

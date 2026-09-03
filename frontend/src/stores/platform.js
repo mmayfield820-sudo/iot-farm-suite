@@ -25,6 +25,8 @@ const normalizePlatformPlot = (row = {}) => ({
   location: row.location || '',
   areaMu: row.areaMu ?? row.area_mu ?? null,
   irrigationMethod: row.irrigationMethod ?? row.irrigation_method ?? null,
+  farmerEmployeeNo: row.farmerEmployeeNo || row.farmer_employee_no || '',
+  farmerName: row.farmerName || row.farmer_name || '',
   status: row.status || row.plotStatus || row.plot_status || (row.active === false || row.Active === false ? 'inactive' : 'active'),
   active: (row.status || row.plotStatus || row.plot_status) ? (row.status || row.plotStatus || row.plot_status) === 'active' : row.active ?? row.Active ?? true,
   updatedAt: row.updatedAt || row.updated_at || '',
@@ -117,7 +119,7 @@ export const usePlatformStore = defineStore('platform', () => {
       city: data.city.trim(),
       address: data.address.trim() || null,
       areaMu: data.areaMu === '' || data.areaMu === null ? null : Number(data.areaMu),
-      managerName: data.managerName.trim() || null,
+      managerEmployeeNo: data.managerEmployeeNo?.trim() || null,
       note: data.note.trim() || null,
     }
     if (!isMock) {
@@ -128,14 +130,17 @@ export const usePlatformStore = defineStore('platform', () => {
       else farms.value.unshift(saved)
       return saved
     }
+    const manager = users.value.find((item) => item.employeeNo === payload.managerEmployeeNo)
+    if (payload.managerEmployeeNo && !manager) throw new Error('MANAGER_EMPLOYEE_NOT_FOUND')
+    const mockPayload = { ...payload, managerName: manager?.name || null }
     const current = farms.value.find((item) => item.farmId === data.farmId)
     if (current) {
-      Object.assign(current, payload, { status: data.status, active: data.status === 'active', updatedAt: timeText() })
+      Object.assign(current, mockPayload, { status: data.status, active: data.status === 'active', updatedAt: timeText() })
       log('当前用户', '基础档案', `修改橙园 ${current.farmId}`)
       return current
     }
     const next = Math.max(0, ...farms.value.map((item) => Number(String(item.farmId).replace(/\D/g, '')) || 0)) + 1
-    const saved = normalizeFarm({ id: `F${String(next).padStart(3, '0')}`, ...payload, status: 'active', createdAt: timeText(), updatedAt: timeText() })
+    const saved = normalizeFarm({ id: `F${String(next).padStart(3, '0')}`, ...mockPayload, status: 'active', createdAt: timeText(), updatedAt: timeText() })
     farms.value.unshift(saved)
     log('当前用户', '基础档案', `新增橙园 ${saved.farmId}`)
     return saved
@@ -165,7 +170,6 @@ export const usePlatformStore = defineStore('platform', () => {
       name: data.name.trim(),
       areaMu: data.areaMu === '' || data.areaMu === null ? null : Number(data.areaMu),
       location: data.location.trim() || null,
-      irrigationMethod: data.irrigationMethod || null,
       status: data.status || 'active',
     }
     if (!isMock) {

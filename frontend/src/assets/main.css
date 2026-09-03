@@ -23,7 +23,7 @@ body { min-height: 100vh; font-size: var(--app-font-size); }
 /* 登录后工作区沿用现有浅色底，叠加果园页面的低对比背景层。 */
 .shell .workspace, .shell .content { background: #faf9e8; }
 .shell .content { position: relative; isolation: isolate; }
-.shell .content::before { position: fixed; z-index: 0; inset: 64px 0 0 238px; content: ''; pointer-events: none; opacity: .34; background: url('./orchard-linework.svg') center / cover no-repeat, radial-gradient(circle at 82% 88%, rgba(69, 154, 96,.055), transparent 28%), radial-gradient(circle at 12% 18%, rgba(116, 167, 105,.05), transparent 24%), linear-gradient(135deg, rgba(255,255,255,.18), transparent 42%); }
+.shell .content::before { position: fixed; z-index: 0; inset: 64px 0 0 238px; content: ''; pointer-events: none; opacity: .34; background: url('./new.svg') center / cover no-repeat, radial-gradient(circle at 82% 88%, rgba(69, 154, 96,.055), transparent 28%), radial-gradient(circle at 12% 18%, rgba(116, 167, 105,.05), transparent 24%), linear-gradient(135deg, rgba(255,255,255,.18), transparent 42%); }
 .shell .content > * { position: relative; z-index: 1; }
 .sidebar.collapsed + .workspace .content::before { left: 72px; }
 button, input { font: inherit; }

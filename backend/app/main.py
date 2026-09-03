@@ -130,7 +130,7 @@ class FarmSaveRequest(BaseModel):
     city: str = Field(min_length=1, max_length=50)
     address: str | None = Field(default=None, max_length=255)
     areaMu: float | None = Field(default=None, ge=0)
-    managerName: str | None = Field(default=None, max_length=50)
+    managerEmployeeNo: str | None = Field(default=None, max_length=50)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -417,12 +417,25 @@ def device_payload(row: Any) -> dict[str, Any]:
 
 
 def farm_payload(row: Any) -> dict[str, Any]:
-    return {"id": business_id("F", row["farm_id"]), "name": row["farm_name"], "province": row["province"], "city": row["city"], "address": row["address"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "managerName": row["manager_name"], "note": row["note"], "plantingDate": row.get("planting_date").isoformat() if value_of(row, "planting_date") else None, "plannedPlantingDate": row.get("planned_planting_date").isoformat() if value_of(row, "planned_planting_date") else None, "status": row["farm_status"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+    return {"id": business_id("F", row["farm_id"]), "name": row["farm_name"], "province": row["province"], "city": row["city"], "address": row["address"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "managerEmployeeNo": value_of(row, "manager_employee_no"), "managerName": row["manager_name"], "note": row["note"], "plantingDate": row.get("planting_date").isoformat() if value_of(row, "planting_date") else None, "plannedPlantingDate": row.get("planned_planting_date").isoformat() if value_of(row, "planned_planting_date") else None, "status": row["farm_status"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+
+
+def farm_manager_values(connection: Any, employee_no: str | None) -> dict[str, Any]:
+    normalized = employee_no.strip() if employee_no else ""
+    if not normalized:
+        return {"manager_user_id": None, "manager_name": None}
+    manager = connection.execute(
+        text("SELECT user_id, employee_no, real_name FROM users WHERE employee_no = :employee_no"),
+        {"employee_no": normalized},
+    ).mappings().first()
+    if manager is None:
+        raise HTTPException(status_code=400, detail="MANAGER_EMPLOYEE_NOT_FOUND")
+    return {"manager_user_id": manager["user_id"], "manager_name": manager["real_name"] or manager["employee_no"]}
 
 
 def plot_payload(row: Any) -> dict[str, Any]:
     farmer_user_id = value_of(row, "scoped_farmer_user_id")
-    return {"id": business_id("P", row["plot_id"]), "farmId": business_id("F", row["farm_id"]), "code": row["plot_code"], "name": row["plot_name"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "location": row["location"], "irrigationMethod": row["irrigation_method"], "productionDateOffsetDays": int(value_of(row, "production_date_offset_days") or 0), "status": row["plot_status"], "farmerUserId": business_id("U", farmer_user_id) if farmer_user_id is not None else None, "farmerName": value_of(row, "farmer_name"), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+    return {"id": business_id("P", row["plot_id"]), "farmId": business_id("F", row["farm_id"]), "code": row["plot_code"], "name": row["plot_name"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "location": row["location"], "irrigationMethod": row["irrigation_method"], "productionDateOffsetDays": int(value_of(row, "production_date_offset_days") or 0), "status": row["plot_status"], "farmerUserId": business_id("U", farmer_user_id) if farmer_user_id is not None else None, "farmerEmployeeNo": value_of(row, "farmer_employee_no"), "farmerName": value_of(row, "farmer_name"), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
 
 
 def accessible_farm_ids(user: dict[str, Any]) -> set[int] | None:
@@ -1702,14 +1715,14 @@ def list_farms(status_value: str | None = Query(default=None, alias="status"), u
     with engine.connect() as connection:
         if allowed_farms is None:
             rows = connection.execute(
-                text("SELECT * FROM farm WHERE (:status IS NULL OR farm_status = :status) ORDER BY farm_id"), {"status": status_value}
+                text("SELECT f.*, u.employee_no AS manager_employee_no FROM farm AS f LEFT JOIN users AS u ON u.user_id = f.admin_user_id WHERE (:status IS NULL OR f.farm_status = :status) ORDER BY f.farm_id"), {"status": status_value}
             ).mappings().all()
         elif not allowed_farms:
             rows = []
         else:
             statement = text(
-                "SELECT * FROM farm WHERE farm_id IN :farm_ids "
-                "AND (:status IS NULL OR farm_status = :status) ORDER BY farm_id"
+                "SELECT f.*, u.employee_no AS manager_employee_no FROM farm AS f LEFT JOIN users AS u ON u.user_id = f.admin_user_id WHERE f.farm_id IN :farm_ids "
+                "AND (:status IS NULL OR f.farm_status = :status) ORDER BY f.farm_id"
             ).bindparams(bindparam("farm_ids", expanding=True))
             rows = connection.execute(
                 statement, {"farm_ids": list(allowed_farms), "status": status_value}
@@ -3036,8 +3049,9 @@ def get_plot_production_context(plot_id: str, user: dict[str, Any] = Depends(cur
 def create_farm(request: FarmSaveRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     ensure_system_admin(user)
     with engine.begin() as connection:
-        result = connection.execute(text("INSERT INTO farm (farm_name, province, city, address, area_mu, manager_name, note) VALUES (:name, :province, :city, :address, :area, :manager, :note)"), {"name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "manager": request.managerName, "note": request.note})
-        row = connection.execute(text("SELECT * FROM farm WHERE farm_id = :id"), {"id": result.lastrowid}).mappings().one()
+        manager = farm_manager_values(connection, request.managerEmployeeNo)
+        result = connection.execute(text("INSERT INTO farm (admin_user_id, farm_name, province, city, address, area_mu, manager_name, note) VALUES (:manager_user_id, :name, :province, :city, :address, :area, :manager_name, :note)"), {**manager, "name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "note": request.note})
+        row = connection.execute(text("SELECT f.*, u.employee_no AS manager_employee_no FROM farm AS f LEFT JOIN users AS u ON u.user_id = f.admin_user_id WHERE f.farm_id = :id"), {"id": result.lastrowid}).mappings().one()
         record_audit_log(connection, user, "master_data", "create_farm", target_type="farm", target_id=business_id("F", result.lastrowid), detail=f"Created farm {request.name}")
         return farm_payload(row)
 
@@ -3046,7 +3060,7 @@ def create_farm(request: FarmSaveRequest, user: dict[str, Any] = Depends(current
 def get_farm(farm_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     numeric_id = parse_resource_id(farm_id, "F"); ensure_farm_access(user, numeric_id)
     with engine.connect() as connection:
-        row = connection.execute(text("SELECT * FROM farm WHERE farm_id = :id"), {"id": numeric_id}).mappings().first()
+        row = connection.execute(text("SELECT f.*, u.employee_no AS manager_employee_no FROM farm AS f LEFT JOIN users AS u ON u.user_id = f.admin_user_id WHERE f.farm_id = :id"), {"id": numeric_id}).mappings().first()
         if row is None: raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
         return farm_payload(row)
 
@@ -3056,10 +3070,11 @@ def update_farm(farm_id: str, request: FarmUpdateRequest, user: dict[str, Any] =
     ensure_system_admin(user); numeric_id = parse_resource_id(farm_id, "F")
     if request.status is not None and request.status not in {"active", "inactive"}: raise HTTPException(status_code=400, detail="INVALID_REQUEST")
     with engine.begin() as connection:
-        result = connection.execute(text("UPDATE farm SET farm_name=:name, province=:province, city=:city, address=:address, area_mu=:area, manager_name=:manager, note=:note, farm_status=COALESCE(:status, farm_status) WHERE farm_id=:id"), {"id": numeric_id, "name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "manager": request.managerName, "note": request.note, "status": request.status})
+        manager = farm_manager_values(connection, request.managerEmployeeNo)
+        result = connection.execute(text("UPDATE farm SET admin_user_id=:manager_user_id, farm_name=:name, province=:province, city=:city, address=:address, area_mu=:area, manager_name=:manager_name, note=:note, farm_status=COALESCE(:status, farm_status) WHERE farm_id=:id"), {**manager, "id": numeric_id, "name": request.name, "province": request.province, "city": request.city, "address": request.address, "area": request.areaMu, "note": request.note, "status": request.status})
         if result.rowcount == 0: raise HTTPException(status_code=404, detail="FARM_NOT_FOUND")
         record_audit_log(connection, user, "master_data", "update_farm", target_type="farm", target_id=business_id("F", numeric_id), detail="Updated farm profile or status")
-        return farm_payload(connection.execute(text("SELECT * FROM farm WHERE farm_id=:id"), {"id": numeric_id}).mappings().one())
+        return farm_payload(connection.execute(text("SELECT f.*, u.employee_no AS manager_employee_no FROM farm AS f LEFT JOIN users AS u ON u.user_id = f.admin_user_id WHERE f.farm_id=:id"), {"id": numeric_id}).mappings().one())
 
 
 @app.get("/api/plots")
@@ -3071,7 +3086,7 @@ def list_plots(page: int = Query(default=1, ge=1), page_size: int = Query(defaul
     if status_value: clauses.append("p.plot_status=:status"); params["status"] = status_value
     if keyword: clauses.append("(p.plot_code LIKE :keyword OR p.plot_name LIKE :keyword)"); params["keyword"] = f"%{keyword}%"
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    select = "SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id"
+    select = "SELECT p.*, s.user_id AS scoped_farmer_user_id, u.employee_no AS farmer_employee_no, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id"
     with engine.connect() as connection:
         total = connection.execute(text(f"SELECT COUNT(*) FROM plot p {where}"), params).scalar_one()
         rows = connection.execute(text(f"{select} {where} ORDER BY p.plot_id LIMIT :limit OFFSET :offset"), params).mappings().all()
@@ -3087,14 +3102,14 @@ def create_plot(request: PlotSaveRequest, user: dict[str, Any] = Depends(current
         try: result = connection.execute(text("INSERT INTO plot (farm_id, plot_code, plot_name, area_mu, location, irrigation_method, plot_status) VALUES (:farm,:code,:name,:area,:location,:method,:status)"), {"farm": parse_resource_id(request.farmId, "F"), "code": request.code, "name": request.name, "area": request.areaMu, "location": request.location, "method": request.irrigationMethod, "status": request.status})
         except IntegrityError as error: raise HTTPException(status_code=409, detail="PLOT_CODE_EXISTS") from error
         record_audit_log(connection, user, "master_data", "create_plot", target_type="plot", target_id=business_id("P", result.lastrowid), detail=f"Created plot {request.name}")
-        row = connection.execute(text("SELECT p.*, NULL AS scoped_farmer_user_id, NULL AS farmer_name FROM plot p WHERE p.plot_id=:id"), {"id": result.lastrowid}).mappings().one(); return plot_payload(row)
+        row = connection.execute(text("SELECT p.*, NULL AS scoped_farmer_user_id, NULL AS farmer_employee_no, NULL AS farmer_name FROM plot p WHERE p.plot_id=:id"), {"id": result.lastrowid}).mappings().one(); return plot_payload(row)
 
 
 @app.get("/api/plots/{plot_id}")
 def get_plot(plot_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     numeric_id = parse_resource_id(plot_id, "P"); plot_scope(numeric_id, user)
     with engine.connect() as connection:
-        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one(); return plot_payload(row)
+        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.employee_no AS farmer_employee_no, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one(); return plot_payload(row)
 
 
 @app.put("/api/plots/{plot_id}/production-offset")
@@ -3106,7 +3121,7 @@ def update_plot_production_offset(plot_id: str, request: PlotProductionOffsetReq
             raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
         ensure_farm_admin_access(user, farm_id)
         connection.execute(text("UPDATE plot SET production_date_offset_days=:offset WHERE plot_id=:plot"), {"offset": request.offsetDays, "plot": numeric_id})
-        row = connection.execute(text("SELECT p.*,s.user_id AS scoped_farmer_user_id,u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:plot"), {"plot": numeric_id}).mappings().one()
+        row = connection.execute(text("SELECT p.*,s.user_id AS scoped_farmer_user_id,u.employee_no AS farmer_employee_no,u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:plot"), {"plot": numeric_id}).mappings().one()
         record_audit_log(connection, user, "production_plan", "update_plot_date_offset", target_type="plot", target_id=business_id("P", numeric_id), detail=f"Set production schedule offset to {request.offsetDays} days")
         return plot_payload(row)
 
@@ -3143,7 +3158,7 @@ def update_plot(plot_id: str, request: PlotUpdateRequest, user: dict[str, Any] =
             raise HTTPException(status_code=409, detail="PLOT_CODE_EXISTS") from error
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="PLOT_NOT_FOUND")
-        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one()
+        row = connection.execute(text("SELECT p.*, s.user_id AS scoped_farmer_user_id, u.employee_no AS farmer_employee_no, u.real_name AS farmer_name FROM plot p LEFT JOIN farmer_plot_scope s ON s.plot_id=p.plot_id LEFT JOIN users u ON u.user_id=s.user_id WHERE p.plot_id=:id"), {"id": numeric_id}).mappings().one()
         record_audit_log(connection, user, "master_data", "update_plot", target_type="plot", target_id=business_id("P", numeric_id), detail="Updated plot profile, ownership, or status")
         return plot_payload(row)
 
