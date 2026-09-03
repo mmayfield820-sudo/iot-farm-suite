@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppShell from '@/components/AppShell.vue'
 import { usePlatformStore } from '@/stores/platform'
@@ -19,13 +19,16 @@ const farmIds = computed(() => {
   const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
   return scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
 })
-const contextLabel = computed(() => {
-  const farms = platformStore.farms.filter((farm) => farmIds.value.includes(String(farm.farmId)))
-  return farms.length === 1 ? farms[0].farmName || farms[0].name : `已授权 ${farms.length || farmIds.value.length} 个农场`
-})
-const scopedDevices = computed(() => platformStore.devices.filter((device) => farmIds.value.includes(String(device.farmId))))
-const scopedPlotIds = computed(() => platformStore.plots.filter((plot) => farmIds.value.includes(String(plot.farmId))).map((plot) => plot.plotNo))
+const contextOptions = computed(() => platformStore.farms.filter((farm) => farmIds.value.includes(String(farm.farmId))).map((farm) => ({ value: String(farm.farmId), label: `${farm.farmName || farm.name}${farm.city ? ` · ${farm.city}` : ''}` })))
+const currentFarmId = computed(() => contextOptions.value.some((farm) => farm.value === String(platformStore.selectedFarmId)) ? String(platformStore.selectedFarmId) : contextOptions.value[0]?.value || '')
+const currentFarm = computed(() => platformStore.farms.find((farm) => String(farm.farmId) === currentFarmId.value))
+const contextLabel = computed(() => currentFarm.value?.farmName || currentFarm.value?.name || '暂无可用农场')
+const scopedDevices = computed(() => platformStore.devices.filter((device) => String(device.farmId) === currentFarmId.value))
+const scopedPlotIds = computed(() => platformStore.plots.filter((plot) => String(plot.farmId) === currentFarmId.value).map((plot) => plot.plotNo))
 const hasUnhandledAlert = computed(() => platformStore.alerts.some((alert) => scopedPlotIds.value.includes(alert.plotId) && alert.status === '未处理'))
 const contextStatus = computed(() => scopedDevices.value.some((device) => ['离线', '异常'].includes(device.status)) ? '存在离线设备' : hasUnhandledAlert.value ? '存在未处理告警' : '运行正常')
+watch(contextOptions, (options) => {
+  if (options.length && !options.some((farm) => farm.value === String(platformStore.selectedFarmId))) platformStore.selectFarm(options[0].value)
+}, { immediate: true })
 </script>
-<template><AppShell title="智慧农业平台" subtitle="FARM MANAGEMENT" :menu="menu" :context-label="contextLabel" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" accent="#1f7a5b" /></template>
+<template><AppShell title="橙心如意" subtitle="智慧农业管理平台" :menu="menu" :context-label="contextLabel" :context-options="contextOptions" :context-value="currentFarmId" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" accent="#1f7a5b" @context-change="platformStore.selectFarm" /></template>

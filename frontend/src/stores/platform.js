@@ -47,6 +47,7 @@ const normalizePlatformUser = (row = {}) => {
 
 export const usePlatformStore = defineStore('platform', () => {
   const farms = ref(isMock ? clone(platformFarms) : [])
+  const selectedFarmId = ref(normalizeId(farms.value[0]?.farmId))
   const plots = ref(isMock ? clone(platformPlots) : [])
   const devices = ref(isMock ? clone(platformDevices) : [])
   const users = ref(isMock ? clone(platformUsers) : [])
@@ -69,6 +70,7 @@ export const usePlatformStore = defineStore('platform', () => {
     try {
       const farmResponse = await getFarmList()
       farms.value = unwrapList(farmResponse).map(normalizeFarm)
+      if (!farms.value.some((farm) => farm.farmId === selectedFarmId.value)) selectedFarmId.value = farms.value[0]?.farmId || ''
       const results = await Promise.allSettled([Promise.allSettled(farms.value.map((farm) => getFarmOverview(farm.farmId))), getAllDevices(), getUserList(), getAlertList()])
       const [overviewResult, deviceResult, userResult, alertResult] = results
       if (overviewResult.status === 'fulfilled') {
@@ -95,6 +97,7 @@ export const usePlatformStore = defineStore('platform', () => {
   }
 
   function log(user, module, action, result = '成功') { auditLogs.value.unshift({ id: `LOG${Date.now()}`, time: timeText(), user, module, action, result, ip: '-' }) }
+  function selectFarm(farmId) { selectedFarmId.value = normalizeId(farmId) }
   async function addDevice(data) {
     if (!isMock) {
       const response = await createDevice({ deviceNo: data.deviceNo, deviceUuid: data.deviceUuid, type: deviceTypeCode[data.type] || data.type, plotId: data.plotNo })
@@ -141,5 +144,5 @@ export const usePlatformStore = defineStore('platform', () => {
     alert.status = '处理中'; alert.handledAt = timeText(); alert.process ||= []; alert.process.push(`${timeText()} 确认告警`); log('当前用户', '全局告警', `确认告警 ${alertId}`)
   }
 
-  return { farms, plots, devices, users, alerts, auditLogs, params, loading, initialized, loadError, capabilities, onlineDevices, offlineDevices, unhandledAlerts, commandSuccessRate, loadData, addDevice, bindDevice, unbindDevice, toggleUser, resetPassword, saveUser, saveParams, handleAlert }
+  return { farms, selectedFarmId, plots, devices, users, alerts, auditLogs, params, loading, initialized, loadError, capabilities, onlineDevices, offlineDevices, unhandledAlerts, commandSuccessRate, loadData, selectFarm, addDevice, bindDevice, unbindDevice, toggleUser, resetPassword, saveUser, saveParams, handleAlert }
 })

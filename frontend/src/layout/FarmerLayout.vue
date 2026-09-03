@@ -67,29 +67,11 @@ const contextStatusTone = computed(() => {
 <style scoped>
 :global(.farmer-shell) { --accent: #237a43 !important; --el-color-primary: #237a43 !important; background: #faf9e8; }
 :global(.farmer-shell .workspace), :global(.farmer-shell .content) { background: #faf9e8; }
-:global(.farmer-shell .sidebar) { background: linear-gradient(180deg, #064d39 0%, #013f30 100%); }
-:global(.farmer-shell .brand) { height: 88px; padding: 0 20px; }
-:global(.farmer-shell .brand-mark) { width: 54px; height: 54px; flex-basis: 54px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-:global(.farmer-shell .brand-mark img) { display: block; width: 100%; height: 100%; object-fit: contain; }
-:global(.farmer-shell .brand strong) { font-size: 20px; letter-spacing: 0; }
-:global(.farmer-shell .brand span) { color: #dcebe4; font-size: 13px; letter-spacing: 0; }
 :global(.farmer-shell .nav) { padding: 12px 12px; }
 :global(.farmer-shell .nav .el-menu-item) { height: 46px; margin-bottom: 3px; border-radius: 7px; color: #e8f1ed; font-size: 14px; font-weight: 600; }
 :global(.farmer-shell .nav .el-menu-item .el-icon) { font-size: 18px; }
 :global(.farmer-shell .nav .el-menu-item.is-active) { background: #3e954d; }
 :global(.farmer-shell .collapse-btn) { height: 58px; padding: 0 30px; color: #e1efe9; font-size: 14px; font-weight: 600; }
-:global(.farmer-shell .topbar) { height: 83px; padding: 0 34px; color: #16231d; background: rgba(250, 249, 232, .78); backdrop-filter: blur(10px); }
-:global(.farmer-shell .topbar > div:first-child) { color: #18251f; font-size: 16px; font-weight: 700; }
-:global(.farmer-shell .farm-context-select) { width: 168px; }
-:global(.farmer-shell .farm-context-select .el-select__wrapper) { background: transparent; }
-:global(.farmer-shell .online) { display: none; }
-:global(.farmer-shell .user-area) { gap: 14px; }
-:global(.farmer-shell .font-trigger) { display: none; }
-:global(.farmer-shell .notification-btn) { width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: #17231e; font-size: 22px; }
-:global(.farmer-shell .single-role) { color: #217746; background: #f0f7ed; font-weight: 700; }
-:global(.farmer-shell .avatar) { width: 45px; height: 45px; background: #d4a43d; font-size: 17px; font-weight: 700; }
-:global(.farmer-shell .display-name) { color: #15241d; font-size: 16px; font-weight: 700; }
-:global(.farmer-shell .user-area .el-button) { color: #293d34; font-size: 15px; }
 :global(.farmer-shell .content) { max-width: 1480px; width: 100%; padding: 28px 32px 36px; margin: 0 auto; }
 :global(.farmer-shell .farmer-page) { max-width: none; }
 :global(.farmer-shell .page-title) { color: #134b35; font-size: 30px !important; }
@@ -103,12 +85,9 @@ const contextStatusTone = computed(() => {
 :global(.farmer-shell .compact-table .el-table__cell) { padding: 10px 0; }
 
 @media (max-width: 900px) {
-  :global(.farmer-shell .brand) { height: 82px; padding: 0; }
-  :global(.farmer-shell .brand-mark) { width: 48px; height: 48px; flex-basis: 48px; }
   :global(.farmer-shell .nav) { padding: 16px 10px; }
   :global(.farmer-shell .nav .el-menu-item) { height: 52px; }
   :global(.farmer-shell .collapse-btn) { height: 62px; padding: 0; justify-content: center; }
-  :global(.farmer-shell .topbar) { height: 64px; padding: 0 18px; }
   :global(.farmer-shell .content) { padding: 20px 18px 30px; }
 }
 </style>
