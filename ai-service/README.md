@@ -1,26 +1,20 @@
-# AI 服务
+# AI 服务（RAG 智能体）
 
-当前 AI 服务以 `app/main.py` 为唯一入口，提供农业知识库检索、地块上下文问答、Ollama 模型调用和可选的博查联网搜索。
+该目录基于提交 `316e45c` 的农业知识库、RAG 编排、联网搜索、多轮对话与长期记忆实现，并兼容当前智慧农场前端/主后端接口。
 
-## 启动
-
-在项目根目录完成 `.env` 配置后运行：
+模型通过 OpenAI 兼容环境变量配置。真实密钥只放在仓库根目录 `.env` 或 `ai-service/.env`，不要提交到 Git。
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir ai-service
+cd ai-service
+..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+..\.venv\Scripts\python.exe app.py
 ```
 
-也可以使用项目根目录的 `start-all.cmd` 一键启动全部服务。
+服务默认监听 `http://127.0.0.1:8000`：
 
-## 联网搜索
+- `GET /health`：模型与检索状态
+- `POST /chat`：原提交接口
+- `POST /chat/sessions/{session_id}/messages`：当前主后端兼容接口
+- `GET /docs`：OpenAPI 调试页面
 
-在根目录 `.env` 中填写：
-
-```dotenv
-BOCHA_API_KEY=你的博查API密钥
-BOCHA_TIMEOUT_SECONDS=20
-```
-
-包含“今天、明天、最新、天气、降雨、价格、行情、新闻”等时效关键词的问题会触发搜索。没有配置密钥、搜索超时或服务报错时，问答会继续执行，并明确说明本次回答已降级为仅使用农田数据和本地知识库。
-
-详细接口、数据流和排障说明见 [docs/README.md](docs/README.md)。
+未构建 `vector_db/chroma` 时，服务会使用随仓库提供的本地农业知识文本检索；需要向量检索时运行 `python build_vector_db.py`。详细配置见 [docs/README.md](docs/README.md)。

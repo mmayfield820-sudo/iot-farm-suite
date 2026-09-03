@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine, URL
+from sqlalchemy.engine import Engine
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,8 +27,13 @@ _engine_options = {
 }
 if _url.startswith("mysql+pymysql://"):
     # DATETIME values are intentionally naive in MySQL, so keep every
-    # connection's session clock in UTC for CURRENT_TIMESTAMP defaults.
-    _engine_options["connect_args"] = {"init_command": "SET time_zone = '+00:00'"}
+    # connection's session clock in UTC for CURRENT_TIMESTAMP defaults. Force
+    # UTF-8 as well: an inherited latin1 client charset turns Chinese template
+    # content into mojibake before FastAPI serializes it.
+    _engine_options["connect_args"] = {
+        "init_command": "SET time_zone = '+00:00'",
+        "charset": "utf8mb4",
+    }
 
 engine: Engine = create_engine(_url, **_engine_options)
 

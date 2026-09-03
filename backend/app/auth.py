@@ -6,7 +6,7 @@ from typing import Any
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
@@ -15,6 +15,13 @@ from .db import engine
 
 _ALGORITHM = "HS256"
 _bearer = HTTPBearer(auto_error=False)
+_ROLE_ALIASES = {
+    "farmer": "farmer",
+    "farm_admin": "farm_admin",
+    "farmAdmin": "farm_admin",
+    "system_admin": "system_admin",
+    "systemAdmin": "system_admin",
+}
 
 
 def _jwt_secret() -> str:
@@ -65,33 +72,57 @@ def _role_for(connection: Any, user_id: int) -> str:
     return "farmer"
 
 
-def authenticate(username: str, password: str) -> dict[str, Any] | None:
+def resolve_active_role(requested_role: str | None, roles: list[str], fallback_role: str) -> str:
+    if not requested_role:
+        return fallback_role
+    active_role = _ROLE_ALIASES.get(requested_role)
+    assigned_roles = roles or [fallback_role]
+    if active_role is None or active_role not in assigned_roles:
+        raise HTTPException(status_code=403, detail="ROLE_NOT_ASSIGNED")
+    return active_role
+
+
+def authenticate(employee_no: str, password: str) -> dict[str, Any] | None:
     with engine.connect() as connection:
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username, password_hash, activation_status
+                SELECT user_id, employee_no, password_hash
                 FROM users
-                WHERE username = :username AND user_status = 'active'
+                WHERE employee_no = :employee_no AND user_status = 'active'
                 """
             ),
-            {"username": username},
+            {"employee_no": employee_no},
         ).mappings().first()
 
         if user is None or not verify_password(password, user["password_hash"]):
             return None
 
-        # A pre-created employee account may already have a temporary password,
-        # but it must not be usable until the employee finishes activation.
-        if user["activation_status"] != "ACTIVATED":
-            raise HTTPException(status_code=403, detail="ACCOUNT_NOT_ACTIVATED")
-
         return {
             "user_id": user["user_id"],
-            "username": user["username"],
+            "employee_no": user["employee_no"],
             "role": _role_for(connection, user["user_id"]),
             "roles": _role_codes_for(connection, user["user_id"]),
         }
+
+
+def authenticate_initial_password(employee_no: str, password: str) -> dict[str, Any] | None:
+    """Verify a pending account without granting a business-access token."""
+    with engine.connect() as connection:
+        user = connection.execute(
+            text(
+                """
+                SELECT user_id, employee_no, password_hash
+                FROM users
+                WHERE employee_no = :employee_no
+                  AND user_status = 'pending_activation'
+                """
+            ),
+            {"employee_no": employee_no},
+        ).mappings().first()
+        if user is None or not verify_password(password, user["password_hash"]):
+            return None
+        return {"user_id": user["user_id"], "employee_no": user["employee_no"]}
 
 
 def create_access_token(user: dict[str, Any]) -> str:
@@ -104,8 +135,33 @@ def create_access_token(user: dict[str, Any]) -> str:
     return jwt.encode(payload, _jwt_secret(), algorithm=_ALGORITHM)
 
 
+def create_profile_setup_token(user_id: int) -> str:
+    now = datetime.now(UTC)
+    return jwt.encode(
+        {
+            "sub": str(user_id),
+            "purpose": "profile_setup",
+            "iat": now,
+            "exp": now + timedelta(minutes=15),
+        },
+        _jwt_secret(),
+        algorithm=_ALGORITHM,
+    )
+
+
+def profile_setup_user_id(token: str) -> int:
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=[_ALGORITHM])
+        if payload.get("purpose") != "profile_setup":
+            raise ValueError("invalid purpose")
+        return int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED") from error
+
+
 def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    active_role: str | None = Header(default=None, alias="X-Active-Role"),
 ) -> dict[str, Any]:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="UNAUTHORIZED")
@@ -120,11 +176,9 @@ def current_user(
         user = connection.execute(
             text(
                 """
-                SELECT user_id, username
+                SELECT user_id, employee_no
                 FROM users
-                WHERE user_id = :user_id
-                  AND user_status = 'active'
-                  AND activation_status = 'ACTIVATED'
+                WHERE user_id = :user_id AND user_status = 'active'
                 """
             ),
             {"user_id": user_id},
@@ -133,9 +187,11 @@ def current_user(
         if user is None:
             raise HTTPException(status_code=401, detail="UNAUTHORIZED")
 
+        roles = _role_codes_for(connection, user["user_id"])
+        fallback_role = _role_for(connection, user["user_id"])
         return {
             "user_id": user["user_id"],
-            "username": user["username"],
-            "role": _role_for(connection, user["user_id"]),
-            "roles": _role_codes_for(connection, user["user_id"]),
+            "employee_no": user["employee_no"],
+            "role": resolve_active_role(active_role, roles, fallback_role),
+            "roles": roles,
         }

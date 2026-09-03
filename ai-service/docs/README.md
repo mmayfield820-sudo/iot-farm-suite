@@ -1,120 +1,86 @@
-# AI 服务使用与维护说明
+# 农业灌溉 RAG 服务说明
 
-## 1. 当前结构
+## 配置
 
-```text
-ai-service/
-├── app/
-│   ├── main.py       # FastAPI 接口、会话和模型调用
-│   ├── knowledge.py  # 本地农业知识库检索
-│   └── search.py     # 博查联网搜索及触发规则
-├── knowledge-base/   # 当前运行时读取的知识库
-├── requirements.txt
-└── README.md
+服务按顺序读取仓库根目录 `.env` 和 `ai-service/.env`，后者可覆盖前者。最小配置：
+
+```dotenv
+AI_MODEL_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+AI_MODEL_API_KEY=replace-with-your-api-key
+AI_MODEL_NAME=qwen3.8-27b
+AI_MODEL_TIMEOUT_SECONDS=120
+AI_MODEL_ENABLE_THINKING=false
 ```
 
-旧版根目录 `app.py` 已移除，不再维护第二套接口。
+不要把真实 API Key 写进源码、示例文件或 Git。`ai-service/.env.example` 提供了完整变量清单。
 
-## 2. 环境变量
+## 启动
 
-环境变量统一放在项目根目录 `.env`：
+```powershell
+cd ai-service
+..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+..\.venv\Scripts\python.exe app.py
+```
 
-| 变量 | 必需 | 作用 |
-|---|---:|---|
-| `AI_MODEL_BASE_URL` | 是 | OpenAI 兼容模型地址，当前为本地 Ollama |
-| `AI_MODEL_API_KEY` | 是 | Ollama 可使用占位值 `ollama` |
-| `AI_MODEL_NAME` | 是 | 当前模型名称 |
-| `AI_MODEL_TIMEOUT_SECONDS` | 否 | AI 服务等待模型回答的秒数 |
-| `BOCHA_API_KEY` | 联网时是 | 博查搜索密钥；留空时关闭联网搜索 |
-| `BOCHA_TIMEOUT_SECONDS` | 否 | 搜索请求超时，默认 20 秒 |
-| `AI_LOCAL_TIMEZONE` | 否 | 展开“今天/明天”所用时区，默认 `Asia/Shanghai` |
+主后端使用仓库根目录的 `AI_SERVICE_URL`（默认 `http://localhost:8000`）调用该服务。云模型响应可能超过 10 秒，主后端默认等待 120 秒，也可用 `AI_SERVICE_TIMEOUT_SECONDS` 调整。
 
-不要把真实 API Key 提交到 Git。
+## 接口
 
-## 3. 接口
-
-### 健康检查
+原提交接口：
 
 ```http
-GET /health
-```
+POST /chat
+Content-Type: application/json
 
-示例：
-
-```json
 {
-  "status": "ok",
-  "knowledgeDocuments": 4,
-  "modelEnabled": true,
-  "searchEnabled": false
+  "question": "番茄怎么浇水",
+  "session_id": "conversation-1",
+  "user_id": "U001",
+  "plot_id": "P001"
 }
 ```
 
-`searchEnabled=false` 表示没有配置博查密钥，不影响普通知识库问答。
-
-### 发送问题
+当前系统兼容接口：
 
 ```http
-POST /chat/sessions/{sessionId}/messages
+POST /chat/sessions/conversation-1/messages
 Content-Type: application/json
-```
 
-请求示例：
-
-```json
 {
-  "message": "今天东区温室会下雨吗？",
+  "message": "现在需要浇水吗？",
+  "userId": "U001",
   "plotId": "P001",
-  "userId": "U002",
   "context": {
-    "plotName": "一号田地",
-    "location": "东区温室",
-    "soilMoisture": 36,
-    "soilMoistureThreshold": 35
+    "plotName": "1号温室",
+    "soilMoisture": 62,
+    "soilMoistureThreshold": 70
   }
 }
 ```
 
-响应示例：
+第二个接口由主后端调用，`context` 是主后端完成用户鉴权后查询的真实地块数据。响应中的 `sources` 可直接供前端展示。
 
-```json
-{
-  "sessionId": "WEB123",
-  "answer": "……",
-  "sources": [
-    "知识库：灌溉决策",
-    "https://example.com/weather"
-  ]
-}
+## 检索模式
+
+仓库没有提交生成物 `vector_db/chroma`。服务因此具备两种模式：
+
+- `local`：默认从 `农业知识来源/农业知识库.md` 做本地文本检索，无需 embedding API。
+- `chroma`：运行 `python build_vector_db.py` 后自动启用向量检索。
+
+向量服务使用以下可选变量；未配置时复用 `AI_MODEL_BASE_URL` 和 `AI_MODEL_API_KEY`：
+
+```dotenv
+AI_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+AI_EMBEDDING_API_KEY=replace-with-your-api-key
+AI_EMBEDDING_MODEL=text-embedding-v3
 ```
 
-正常业务中由 8080 后端补充经过权限检查的地块上下文，前端不应直接向 8000 发送敏感业务数据。
+更换 embedding 模型后必须重建向量库，否则新查询向量与已有数据不在同一向量空间。
 
-## 4. 联网与降级流程
+## 可选联网搜索
 
-```text
-用户问题
-  → 本地知识库检索
-  → 判断是否包含时效关键词
-      → 否：地块数据 + 知识库 → Ollama
-      → 是：调用博查搜索
-          → 成功：地块数据 + 知识库 + 搜索结果/网址/查询时间 → Ollama
-          → 失败：地块数据 + 知识库 → Ollama，并追加降级说明
-```
+设置 `BOCHA_API_KEY` 后，涉及最新信息或知识库不足的首轮问题会调用博查搜索；未配置时会向模型明确提供“联网搜索未配置”的信息，不影响普通知识库问答。
 
-网页内容只作为外部资料，不作为系统指令。灌溉开关仍必须由用户在业务页面二次确认。
+## 数据与隐私
 
-## 5. 配置联网搜索
-
-1. 在博查开放平台创建 API Key，并确认账号有可用额度。
-2. 将 Key 写入根目录 `.env` 的 `BOCHA_API_KEY`。
-3. 重启 AI 服务。
-4. 访问 `http://127.0.0.1:8000/health`，确认 `searchEnabled` 为 `true`。
-5. 用包含“今天”或“最新”的问题测试，检查响应 `sources` 是否包含网页地址。
-
-## 6. 常见问题
-
-- `searchEnabled=false`：没有设置 `BOCHA_API_KEY`，或 AI 服务尚未重启。
-- 回答带“联网搜索暂不可用”：查看密钥、额度、网络和 `BOCHA_TIMEOUT_SECONDS`。
-- 普通灌溉问题没有搜索：这是预期行为；只有时效问题才调用搜索。
-- 回答较慢：本地 7B 模型通常需要数十秒，前端智能体请求已单独设置较长超时。
+用户档案和长期记忆分别写入 `user_profile_{user_id}.json` 与 `user_memories_{user_id}.json`。这些文件以及 `.env`、向量库均已在 `ai-service/.gitignore` 中排除。

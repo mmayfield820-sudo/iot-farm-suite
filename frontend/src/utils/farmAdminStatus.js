@@ -21,6 +21,7 @@ export const getHumidityStatus = (humidity, threshold) => {
 export const ALERT_TYPE_CONFIG = {
   '超过阈值': { color: '#F56C6C', type: 'danger' },
   '湿度过低': { color: '#F56C6C', type: 'danger' },
+  '湿度偏高': { color: '#E6A23C', type: 'warning' },
   '长期没被访问': { color: '#909399', type: 'info' },
   '设备故障': { color: '#E6A23C', type: 'warning' },
   '设备离线': { color: '#E6A23C', type: 'warning' },
@@ -32,11 +33,7 @@ export const ALERT_STATUS_CONFIG = {
   '未处理': { type: 'danger' },
   '处理中': { type: 'warning' },
   '已处理': { type: 'success' },
-  '已忽略': { type: 'info' },
-  '待生成新计划': { type: 'info' },
-  '待管理员确认': { type: 'warning' },
-  '已确认新计划': { type: 'success' },
-  '已退回原状态': { type: 'warning' }
+  '已忽略': { type: 'info' }
 }
 
 export const IRRIGATION_STATUS = {

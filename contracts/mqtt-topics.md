@@ -100,7 +100,7 @@
 | `reason` | 是 | `local` / `remote` / `auto` / `heartbeat` |
 | `values` | 是 | 当前业务值对象；马达为空对象 `{}` |
 
-数据库映射：后端以 `deviceId` 找到设备，更新 `device.status = 'online'`、`device.last_heartbeat = ts`，并将 `switch=on/off` 映射为 `device.work_status = running/stopped`。
+数据库映射：后端以 `deviceId` 找到设备，更新 `device.status = 'online'`、`device.last_heartbeat = ts`、`device.switch_state = switch` 和 `device.switch_changed_at = ts`。灌溉设备以该状态作为实时真相源；`reason = local/auto` 的实际状态变化还会生成成功的灌溉开关记录，远程控制广播则由原命令 ACK 结算，避免重复记录。
 
 ## 6. 信息流 D：心跳快照
 
@@ -229,12 +229,8 @@ MQTT Broker 接受发布只表示指令已经送出，`irrigation_record` 保持
 | `P001-TEMP` | `temperature` | `3b8dcefd-3a51-4adc-b452-47c184c0951d` |
 | `P001-MOIST` | `humidity` | `814621f7-2561-49ad-9766-72d3fcd18d86` |
 | `P001-IRRIG` | `irrigation` | `435106ba-01e7-4745-9646-3907d15b28df` |
-| `P002-TEMP` | `temperature` | `77448f68-baa9-46f1-b380-d835d4e2dda6` |
-| `P002-MOIST` | `humidity` | `8e52cfa5-9106-45c2-8645-2a26f9d0e554` |
-| `P002-IRRIG` | `irrigation` | `b0242636-5e56-4c0f-9b82-5a407e6e23ea` |
-| `P003-TEMP` | `temperature` | `4ae3704f-4ef1-42f2-9301-4af74fcf6454` |
-| `P003-MOIST` | `humidity` | `ff8706d0-2058-48fa-aa90-b95a4f61553c` |
-| `P003-IRRIG` | `irrigation` | `1b8a4d7c-5e9c-4788-b8d1-3c02b0505664` |
-| `P004-TEMP` | `temperature` | `db1f753b-c70b-42cf-86da-7f04ba793505` |
+| `P002-TEMP` | `temperature` | `5b0a7464-a7db-449b-ae30-26063977c708` |
+| `P002-MOIST` | `humidity` | `f2ac7d43-6c0d-4fb3-9b1a-5404bc51299a` |
+| `P002-IRRIG` | `irrigation` | `b4d49779-b744-4096-898a-433b2d231839` |
 
-温度和湿度设备的业务 Topic 都填 `sensor/${deviceId}/data`；控制 Topic 都填 `sensor/cmd`。温度、湿度分别使用第 3、4 节的模板；灌溉马达业务 Payload 必须留空，不能定时向 `sensor/state` 发布写死的开关状态。
+在 6 个模拟器中，温度和湿度设备的业务 Topic 都填 `sensor/${deviceId}/data`；控制 Topic 都填 `sensor/cmd`。温度、湿度分别使用第 3、4 节的模板；灌溉马达业务 Payload 留空。

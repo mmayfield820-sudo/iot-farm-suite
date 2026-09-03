@@ -4,7 +4,6 @@
 流程：farming book.txt → ①加载 → ②切块 → ③embedding → ④存入 Chroma → ⑤检索测试
 运行一次即可，向量库会持久化到 vector_db/chroma/
 """
-import os
 import sys
 from pathlib import Path
 
@@ -21,14 +20,6 @@ except Exception:
     pass
 
 # ===== ① 配置 =====
-# 真 key 在 local_secrets.py（本地，不入 Git）；没建就在环境变量里设
-try:
-    from local_secrets import SILICONFLOW_API_KEY as API_KEY
-except ImportError:
-    API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
-BASE_URL = "https://api.siliconflow.cn/v1"
-EMBED_MODEL = "BAAI/bge-m3"
-
 BOOK_PATH = Path(__file__).parent / "农业知识来源" / "farming book.txt"
 PERSIST_DIR = Path(__file__).parent / "vector_db" / "chroma"
 
@@ -49,7 +40,7 @@ splitter = RecursiveCharacterTextSplitter(
 splits = splitter.split_documents(docs)
 print(f"[2/5] 切块：{len(splits)} 块")
 
-# ===== ④ embedding =====
+# ===== ④ embedding（使用 AI_EMBEDDING_*，未配置时复用 AI_MODEL_*）=====
 embeddings = SiliconFlowEmbeddings()
 
 # ===== ⑤ 建库 + 持久化 =====

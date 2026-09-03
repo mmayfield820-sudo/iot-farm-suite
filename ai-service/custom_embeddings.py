@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-自定义 Embeddings：内部直接调原生 openai client（和 app.py 的 .kb_cache 用的同一个调用）。
+自定义 Embeddings：内部直接调用 OpenAI 兼容 embedding 接口。
 
 为什么需要它：
-    langchain_openai.OpenAIEmbeddings 发给硅基流动的请求和原生 client 不一致，
-    导致同一个句子出来两套不同的向量（余弦相似度只有 0.248，正常应接近 1.0），
-    检索结果自然就乱了。
-    这里包一层，让 Chroma 也走原生 client，保证向量和 numpy 基线版完全一致。
+    这里包一层，让建库和 Chroma 查询都走同一个原生 client，保证向量一致。
 
 用法：把本文件的 SiliconFlowEmbeddings 传给 Chroma：
     from custom_embeddings import SiliconFlowEmbeddings
@@ -14,7 +11,9 @@
 """
 import os
 import sys
+from pathlib import Path
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from langchain_core.embeddings import Embeddings
 
@@ -23,22 +22,21 @@ try:
 except Exception:
     pass
 
-# 真 key 在 local_secrets.py（本地，不入 Git）；没建就在环境变量里设
-try:
-    from local_secrets import SILICONFLOW_API_KEY
-except ImportError:
-    SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
-API_KEY = SILICONFLOW_API_KEY
-BASE_URL = "https://api.siliconflow.cn/v1"
-EMBED_MODEL = "BAAI/bge-m3"
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+API_KEY = os.getenv("AI_EMBEDDING_API_KEY") or os.getenv("AI_MODEL_API_KEY", "")
+BASE_URL = os.getenv("AI_EMBEDDING_BASE_URL") or os.getenv("AI_MODEL_BASE_URL", "")
+EMBED_MODEL = os.getenv("AI_EMBEDDING_MODEL", "text-embedding-v3")
 
 BATCH_SIZE = 32  # 每次请求最多送多少段文字
 
 
 class SiliconFlowEmbeddings(Embeddings):
-    """把原生 openai client 包成 langchain 能用的 Embeddings 接口。"""
+    """将任意 OpenAI 兼容 embedding 服务包装为 LangChain 接口。"""
 
     def __init__(self, model: str = EMBED_MODEL):
+        if not API_KEY or not BASE_URL:
+            raise RuntimeError("AI embedding service is not configured")
         self.model = model
         self._client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 

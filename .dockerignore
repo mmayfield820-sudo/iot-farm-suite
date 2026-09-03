@@ -11,7 +11,7 @@ __pycache__/
 hardware/
 device-simulator/
 docs/UI/
+UI/
+frontend/famer_pic/
 database/backups/
-*.md
 *.mp4
-*.png

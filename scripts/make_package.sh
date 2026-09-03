@@ -43,19 +43,22 @@ declare -A IMAGES=(
 # 包内只带运行必需文件，避免踩"包内带源码"红线，也让包更小。
 # 各文件的用途（启动.bat / docker-compose.yml 直接依赖，缺了老师跑不起来）：
 #   - .env.example                             启动.bat 首次运行 copy 成 .env（含 JWT 密钥占位）
-#   - infra/docker-compose.yml                 启动.bat cd 进来执行 docker compose up -d
-#   - database/schema + seed 的 3 个 .sql      MySQL 容器首次启动自动建库建表 + 预置演示数据（compose 挂载）
+#   - infra/docker-compose.yml + 迁移脚本      启动.bat cd 进来执行 docker compose up -d
+#   - database/schema 全部 SQL + seed          首次建库并在更新时执行增量迁移
 #   - device-simulator/鸿蒙模拟器/*            交付的传感器模拟器：jar 成品 + 预置 sensors.dat + 使用文档
 RUNTIME_FILES=(
   ".env.example"
   "infra/docker-compose.yml"
-  "database/schema/001_schema.sql"
-  "database/schema/002_reference_data.sql"
+  "infra/apply-migrations.sh"
   "database/seed/001_demo_data.sql"
   "device-simulator/鸿蒙模拟器/javafx-demo-1.0-SNAPSHOT.jar"
   "device-simulator/鸿蒙模拟器/sensors.dat"
   "device-simulator/鸿蒙模拟器/使用文档.md"
 )
+
+while IFS= read -r migration; do
+  RUNTIME_FILES+=("${migration#"$PROJECT_ROOT/"}")
+done < <(find "$PROJECT_ROOT/database/schema" -maxdepth 1 -type f -name '*.sql' | sort)
 
 log()  { echo -e "\033[1;36m[打包]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[错误]\033[0m $*" >&2; exit 1; }

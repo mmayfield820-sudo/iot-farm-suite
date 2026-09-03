@@ -99,7 +99,7 @@ if ($Mode -ne "All") {
         "AI" {
             $Host.UI.RawUI.WindowTitle = "智慧农业 - AI 服务 8000"
             Set-Location -LiteralPath (Join-Path $projectRoot "ai-service")
-            & $pythonExe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+            & $pythonExe -m uvicorn app:app --host 127.0.0.1 --port 8000
         }
         "Frontend" {
             $Host.UI.RawUI.WindowTitle = "智慧农业 - 前端 5173"

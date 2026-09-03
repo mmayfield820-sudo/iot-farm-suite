@@ -1,40 +1,34 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppShell from '@/components/AppShell.vue'
 import { usePlatformStore } from '@/stores/platform'
-import { useFarmAdminStore } from '@/stores/farmAdmin'
+import { useUserStore } from '@/stores/user'
 const platformStore = usePlatformStore()
-const farmAdminStore = useFarmAdminStore()
+const userStore = useUserStore()
 onMounted(() => platformStore.loadData().catch(() => ElMessage.error(platformStore.loadError || '农场数据加载失败')))
 const menu = [
-  { label: '多地块总览', path: '/farm/dashboard', icon: 'DataLine' },
-  { label: '设备状态', path: '/farm/status', icon: 'Monitor' },
-  { label: '设备管理', path: '/farm/devices', icon: 'Cpu' },
+  { label: '地块总览', path: '/farm/dashboard', icon: 'DataLine' },
+  { label: '设备监测与管理', path: '/farm/device-monitoring-management', icon: 'Monitor' },
   { label: '告警日志', path: '/farm/alerts', icon: 'Bell' },
+  { label: '生产档案', path: '/farm/records', icon: 'Document' },
+  { label: '年度生产管理计划', path: '/farm/production', icon: 'Calendar' },
+  { label: '下一年度管理计划', path: '/farm/cycle-draft', icon: 'EditPen' },
 ]
-const contextLabel = computed(() => farmAdminStore.selectedFarmLabel)
-const scopedDevices = computed(() => farmAdminStore.visibleDevices)
-const scopedPlotIds = computed(() => farmAdminStore.visiblePlots.map((plot) => plot.plotNo))
+const farmIds = computed(() => {
+  const scoped = (userStore.user?.roleScopes?.farmAdmin?.farmIds || []).map(String)
+  return scoped.length ? scoped : platformStore.farms.map((farm) => String(farm.farmId))
+})
+const contextOptions = computed(() => platformStore.farms.filter((farm) => farmIds.value.includes(String(farm.farmId))).map((farm) => ({ value: String(farm.farmId), label: `${farm.farmName || farm.name}${farm.city ? ` · ${farm.city}` : ''}` })))
+const currentFarmId = computed(() => contextOptions.value.some((farm) => farm.value === String(platformStore.selectedFarmId)) ? String(platformStore.selectedFarmId) : contextOptions.value[0]?.value || '')
+const currentFarm = computed(() => platformStore.farms.find((farm) => String(farm.farmId) === currentFarmId.value))
+const contextLabel = computed(() => currentFarm.value?.farmName || currentFarm.value?.name || '暂无可用农场')
+const scopedDevices = computed(() => platformStore.devices.filter((device) => String(device.farmId) === currentFarmId.value))
+const scopedPlotIds = computed(() => platformStore.plots.filter((plot) => String(plot.farmId) === currentFarmId.value).map((plot) => plot.plotNo))
 const hasUnhandledAlert = computed(() => platformStore.alerts.some((alert) => scopedPlotIds.value.includes(alert.plotId) && alert.status === '未处理'))
 const contextStatus = computed(() => scopedDevices.value.some((device) => ['离线', '异常'].includes(device.status)) ? '存在离线设备' : hasUnhandledAlert.value ? '存在未处理告警' : '运行正常')
+watch(contextOptions, (options) => {
+  if (options.length && !options.some((farm) => farm.value === String(platformStore.selectedFarmId))) platformStore.selectFarm(options[0].value)
+}, { immediate: true })
 </script>
-<template>
-  <AppShell title="橙心如意" subtitle="ORCHARD MANAGEMENT" :menu="menu" :context-label="contextLabel" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" accent="#df741b">
-    <template #context>
-      <div class="farm-context">
-        <span class="farm-dot"></span>
-        <el-select v-if="farmAdminStore.accessibleFarms.length > 1" :model-value="farmAdminStore.selectedFarmId" class="farm-switch" size="small" aria-label="切换当前农场" @change="farmAdminStore.selectFarm">
-          <el-option :label="`全部农场（${farmAdminStore.accessibleFarms.length}）`" value="all" />
-          <el-option v-for="farm in farmAdminStore.accessibleFarms" :key="farm.farmId" :label="farm.farmName || farm.name" :value="String(farm.farmId)" />
-        </el-select>
-        <span v-else class="single-farm-name">{{ contextLabel }}</span>
-        <span :class="['context-state', contextStatus === '运行正常' ? 'success' : 'warning']">{{ contextStatus }}</span>
-      </div>
-    </template>
-  </AppShell>
-</template>
-
-<style scoped>
-.farm-context{display:flex;align-items:center;gap:8px}.farm-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#e98227;box-shadow:0 0 0 4px #fff0df}.farm-switch{width:200px}.farm-switch :deep(.el-select__wrapper){border:0;background:#fff7ee;box-shadow:0 0 0 1px #efddce inset}.single-farm-name{color:#69452d;font-weight:600}.context-state{padding:4px 8px;border-radius:9px;font-size:12px}.context-state.success{color:#8a4d1c;background:#fff0df}.context-state.warning{color:#a46823;background:#fff3df}
-</style>
+<template><AppShell title="橙心如意" subtitle="智慧农业管理平台" :menu="menu" :context-label="contextLabel" :context-options="contextOptions" :context-value="currentFarmId" :context-status="contextStatus" :context-status-tone="contextStatus === '运行正常' ? 'success' : 'warning'" accent="#1f7a5b" @context-change="platformStore.selectFarm" /></template>

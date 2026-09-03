@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import socket
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -14,12 +15,15 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import text
 
 from .db import engine, utc_isoformat
+from .irrigation_recommendations import target_moisture_reached
+from .moisture_alerts import current_moisture_rule, evaluate_moisture_alerts
 
 
 logger = logging.getLogger(__name__)
 _TELEMETRY_TYPES = {"temperature", "humidity"}
 _CONTROL_ACK_RESULTS = {"ok", "failed"}
 _SWITCH_VALUES = {"on", "off"}
+_MIN_PLAUSIBLE_UNIX_MILLISECONDS = 946684800000  # 2000-01-01 UTC
 
 
 @dataclass(frozen=True)
@@ -37,11 +41,11 @@ class MqttService:
         self.pair_timeout_seconds = int(
             os.getenv("TELEMETRY_PAIR_TIMEOUT_SECONDS", "30")
         )
-        self.offline_timeout_seconds = int(
-            os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "90")
-        )
         self.command_ack_timeout_seconds = int(
             os.getenv("COMMAND_ACK_TIMEOUT_SECONDS", "30")
+        )
+        self.client_id = os.getenv("MQTT_CLIENT_ID") or (
+            f"smart-farm-backend-{socket.gethostname()}-{os.getpid()}"
         )
         self._readings: dict[int, dict[str, Reading]] = {}
         self._reading_lock = threading.Lock()
@@ -50,7 +54,7 @@ class MqttService:
         self._sweeper: threading.Thread | None = None
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
-            client_id="smart-farm-backend",
+            client_id=self.client_id,
         )
         username = os.getenv("MQTT_USERNAME", "")
         if username:
@@ -61,6 +65,7 @@ class MqttService:
 
     def start(self) -> None:
         self._stop_event.clear()
+        self._expire_pending_commands(datetime.now(UTC).replace(tzinfo=None))
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.client.connect_async(self.host, self.port, keepalive=60)
         self.client.loop_start()
@@ -136,24 +141,54 @@ class MqttService:
 
     def _handle_state(self, payload: dict[str, Any]) -> None:
         device_uuid = self._parse_device_uuid(payload["deviceId"])
-        self._parse_sequence(payload["seq"], "seq")
-        timestamp = self._parse_timestamp(payload["ts"])
+        sequence = self._parse_sequence(payload["seq"], "seq")
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["ts"], received_at)
         switch = self._parse_switch(payload["switch"])
-        if payload.get("reason") not in {"local", "remote", "auto", "heartbeat"}:
+        reason = payload.get("reason")
+        if reason not in {"local", "remote", "auto", "heartbeat"}:
             raise ValueError("unsupported state reason")
         if not isinstance(payload.get("values"), dict):
             raise ValueError("state values must be an object")
         with engine.begin() as connection:
-            self._touch_device(
-                connection,
-                device_uuid,
-                timestamp,
-                work_status=self._work_status(switch),
+            device = self._find_device(connection, device_uuid)
+            if device is None:
+                logger.warning("Ignored state from unknown device %s", device_uuid)
+                return
+            self._touch_device(connection, device_uuid, timestamp, device)
+            state_is_current = (
+                device["switch_changed_at"] is None
+                or timestamp >= device["switch_changed_at"]
             )
+            changed = state_is_current and device["switch_state"] != switch
+            self._update_switch_state(connection, device["device_id"], switch, timestamp)
+            if changed and device["device_type"] == "irrigation" and reason in {"local", "auto"}:
+                connection.execute(
+                    text(
+                        """
+                        INSERT IGNORE INTO irrigation_record (
+                            command_id, plot_id, device_id, action_type,
+                            activation_type, requested_at, executed_at, status
+                        ) VALUES (
+                            :command_id, :plot_id, :device_id, :action_type,
+                            :activation_type, :timestamp, :timestamp, 'success'
+                        )
+                        """
+                    ),
+                    {
+                        "command_id": f"state-{device['device_id']}-{sequence}",
+                        "plot_id": device["plot_id"],
+                        "device_id": device["device_id"],
+                        "action_type": switch,
+                        "activation_type": "manual" if reason == "local" else "auto",
+                        "timestamp": timestamp,
+                    },
+                )
 
     def _handle_heartbeat(self, payload: dict[str, Any]) -> None:
         self._parse_sequence(payload["seq"], "seq")
-        timestamp = self._parse_timestamp(payload["ts"])
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["ts"], received_at)
         if payload.get("type") != "snapshot":
             raise ValueError("heartbeat type must be snapshot")
         sensors = payload["sensors"]
@@ -170,12 +205,14 @@ class MqttService:
                     raise ValueError("heartbeat sensor name is required")
                 if not isinstance(snapshot.get("values"), dict):
                     raise ValueError("heartbeat sensor values must be an object")
-                self._touch_device(
+                device_uuid = self._parse_device_uuid(snapshot["deviceId"])
+                device = self._touch_device(
                     connection,
-                    self._parse_device_uuid(snapshot["deviceId"]),
+                    device_uuid,
                     timestamp,
-                    work_status=self._work_status(switch),
                 )
+                if device is not None:
+                    self._update_switch_state(connection, device["device_id"], switch, timestamp)
 
     def _handle_telemetry(self, device_uuid: str, payload: dict[str, Any]) -> None:
         payload_device_uuid = self._parse_device_uuid(payload["deviceId"])
@@ -187,7 +224,8 @@ class MqttService:
         if not math.isfinite(value):
             raise ValueError("telemetry metric must be finite")
         message_id = self._parse_message_id(payload["msgId"])
-        timestamp = self._parse_timestamp(payload["timestamp"])
+        received_at = datetime.now(UTC).replace(tzinfo=None)
+        timestamp = self._parse_device_timestamp(payload["timestamp"], received_at)
 
         with engine.begin() as connection:
             device = self._find_device(
@@ -211,25 +249,13 @@ class MqttService:
             if inserted.rowcount == 0:
                 return
 
-            connection.execute(
-                text(
-                    """
-                    UPDATE device
-                    SET status = 'online', work_status = 'running',
-                        last_heartbeat = :last_heartbeat
-                    WHERE device_id = :device_id
-                    """
-                ),
-                {
-                    "last_heartbeat": timestamp,
-                    "device_id": device["device_id"],
-                },
-            )
+            self._touch_device(connection, device_uuid, timestamp, device)
+
         reading = Reading(
             device_id=device["device_id"],
             value=value,
             timestamp=timestamp,
-            received_at=datetime.now(UTC).replace(tzinfo=None),
+            received_at=received_at,
         )
         self._store_reading(device["plot_id"], metric_type, reading)
 
@@ -261,19 +287,21 @@ class MqttService:
             if device is None:
                 logger.warning("Ignored command result from unknown device %s", device_uuid)
                 return
-            self._touch_device(
-                connection,
-                device_uuid,
-                timestamp,
-                device,
-                work_status=self._work_status(switch),
-            )
+            self._touch_device(connection, device_uuid, timestamp, device)
 
             updated = connection.execute(
                 text(
                     """
                     UPDATE irrigation_record
-                    SET status = :status, executed_at = :executed_at
+                    SET status = :status,
+                        executed_at = :executed_at,
+                        scheduled_stop_at = CASE
+                            WHEN :status = 'success'
+                             AND action_type = 'on'
+                             AND planned_duration_minutes IS NOT NULL
+                            THEN DATE_ADD(:executed_at, INTERVAL planned_duration_minutes MINUTE)
+                            ELSE scheduled_stop_at
+                        END
                     WHERE command_id = :command_id
                       AND device_id = :device_id
                       AND action_type = :action_type
@@ -291,6 +319,9 @@ class MqttService:
             if updated.rowcount == 0:
                 logger.warning("Ignored result for unknown or completed command %s", command_id)
                 return
+
+            if result == "ok":
+                self._update_switch_state(connection, device["device_id"], switch, timestamp)
 
             if result == "failed":
                 self._open_alert(
@@ -316,6 +347,13 @@ class MqttService:
         switch = self._parse_switch(switch)
         if activation_type not in {"manual", "auto"}:
             raise ValueError("activation_type must be manual or auto")
+        if switch == "on":
+            if isinstance(planned_duration_minutes, bool) or not isinstance(planned_duration_minutes, int):
+                raise ValueError("planned_duration_minutes is required for irrigation on")
+            if not 1 <= planned_duration_minutes <= 1440:
+                raise ValueError("planned_duration_minutes must be between 1 and 1440")
+        elif planned_duration_minutes is not None:
+            raise ValueError("planned_duration_minutes is only valid for irrigation on")
         requested_at = datetime.now(UTC).replace(tzinfo=None)
 
         with self._command_lock, engine.begin() as connection:
@@ -338,12 +376,12 @@ class MqttService:
                     """
                     INSERT INTO irrigation_record (
                         command_id, plot_id, device_id, action_type,
-                        activation_type, operator_id, planned_duration_minutes,
-                        requested_at, status
+                        activation_type, operator_id, requested_at, status,
+                        planned_duration_minutes
                     ) VALUES (
                         :command_id, :plot_id, :device_id, :action_type,
-                        :activation_type, :operator_id, :planned_duration_minutes,
-                        :requested_at, 'pending'
+                        :activation_type, :operator_id, :requested_at, 'pending',
+                        :planned_duration_minutes
                     )
                     """
                 ),
@@ -354,8 +392,8 @@ class MqttService:
                     "action_type": switch,
                     "activation_type": activation_type,
                     "operator_id": operator_id,
-                    "planned_duration_minutes": planned_duration_minutes if switch == "on" else None,
                     "requested_at": requested_at,
+                    "planned_duration_minutes": planned_duration_minutes,
                 },
             )
 
@@ -379,7 +417,8 @@ class MqttService:
                     {"command_id": command_id, "executed_at": datetime.now(UTC).replace(tzinfo=None)},
                 )
             raise RuntimeError(f"MQTT publish failed: {result.rc}")
-        result.wait_for_publish()
+        # Target-based stops can be issued from on_message. Waiting here would
+        # block Paho's network loop and prevent the publish and ACK themselves.
         return {
             "commandId": command_id,
             "seq": sequence,
@@ -393,13 +432,12 @@ class MqttService:
         self._parse_sequence(payload["seq"], "seq")
         device_uuid = self._parse_device_uuid(payload["deviceId"])
         self._parse_sequence(payload["cmdSeq"], "cmdSeq")
-        switch = self._parse_switch(payload["switch"])
+        self._parse_switch(payload["switch"])
         with engine.begin() as connection:
             self._touch_device(
                 connection,
                 device_uuid,
                 datetime.now(UTC).replace(tzinfo=None),
-                work_status=self._work_status(switch),
             )
 
     def _handle_query_all_ack(self, payload: dict[str, Any]) -> None:
@@ -413,12 +451,10 @@ class MqttService:
             for sensor in sensors:
                 if not isinstance(sensor, dict):
                     continue
-                switch = self._parse_switch(sensor["switch"])
                 self._touch_device(
                     connection,
                     self._parse_device_uuid(sensor["deviceId"]),
                     timestamp,
-                    work_status=self._work_status(switch),
                 )
 
     def _store_reading(self, plot_id: int, metric_type: str, reading: Reading) -> None:
@@ -439,6 +475,7 @@ class MqttService:
         self, plot_id: int, temperature: Reading, humidity: Reading
     ) -> None:
         report_time = max(temperature.timestamp, humidity.timestamp)
+        target_stop_device_uuid: str | None = None
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -463,28 +500,6 @@ class MqttService:
                 },
             )
 
-            # A complete temperature/humidity report proves that the two
-            # sensors for this plot are publishing compatible readings again.
-            # Pairing timeout alerts are operational faults, so recover them
-            # automatically instead of requiring a farmer to acknowledge a
-            # condition that has already cleared itself.
-            connection.execute(
-                text(
-                    """
-                    UPDATE alert
-                    SET alert_status = 'recovered', handled_at = :handled_at
-                    WHERE plot_id = :plot_id
-                      AND alert_type = 'device_fault'
-                      AND alert_status IN ('active', 'acknowledged')
-                      AND alert_description IN (
-                          '缺少配对的温度传感器数据',
-                          '缺少配对的湿度传感器数据'
-                      )
-                    """
-                ),
-                {"plot_id": plot_id, "handled_at": report_time},
-            )
-
             threshold = connection.execute(
                 text(
                     """
@@ -496,30 +511,90 @@ class MqttService:
                 {"plot_id": plot_id},
             ).scalar()
 
-            if threshold is not None and humidity.value < float(threshold):
-                self._open_alert(
-                    connection,
-                    plot_id=plot_id,
-                    device_id=humidity.device_id,
-                    alert_type="low_moisture",
-                    description="土壤湿度低于设定阈值",
-                    timestamp=report_time,
-                    value=humidity.value,
-                    threshold=float(threshold),
+            evaluate_moisture_alerts(
+                connection,
+                plot_id=plot_id,
+                device_id=humidity.device_id,
+                moisture=humidity.value,
+                fallback_threshold=float(threshold) if threshold is not None else None,
+                timestamp=report_time,
+            )
+            target_stop_device_uuid = self._target_stop_device(
+                connection,
+                plot_id=plot_id,
+                fallback_threshold=float(threshold) if threshold is not None else None,
+                timestamp=report_time,
+            )
+
+        if target_stop_device_uuid is not None:
+            try:
+                self.publish_control_command(
+                    device_uuid=target_stop_device_uuid,
+                    switch="off",
+                    activation_type="auto",
                 )
-            else:
-                connection.execute(
-                    text(
-                        """
-                        UPDATE alert
-                        SET alert_status = 'recovered', handled_at = :handled_at
-                        WHERE plot_id = :plot_id
-                          AND alert_type = 'low_moisture'
-                          AND alert_status IN ('active', 'acknowledged')
-                        """
-                    ),
-                    {"plot_id": plot_id, "handled_at": report_time},
-                )
+                logger.info("Stopped target-based irrigation for plot %s", plot_id)
+            except (RuntimeError, ValueError):
+                logger.exception("Failed to stop target-based irrigation for plot %s", plot_id)
+
+    def _target_stop_device(
+        self,
+        connection: Any,
+        *,
+        plot_id: int,
+        fallback_threshold: float | None,
+        timestamp: datetime,
+    ) -> str | None:
+        pending_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            seconds=self.command_ack_timeout_seconds
+        )
+        active = connection.execute(
+            text(
+                """
+                SELECT irrigation.record_id, irrigation.executed_at, device.device_uuid
+                FROM irrigation_record AS irrigation
+                JOIN device ON device.device_id = irrigation.device_id
+                WHERE irrigation.plot_id = :plot_id
+                  AND irrigation.action_type = 'on'
+                  AND irrigation.activation_type = 'auto'
+                  AND irrigation.status = 'success'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM irrigation_record AS newer
+                      WHERE newer.device_id = irrigation.device_id
+                        AND newer.record_id > irrigation.record_id
+                        AND (
+                            newer.status = 'success'
+                            OR (newer.status = 'pending' AND newer.requested_at >= :pending_cutoff)
+                        )
+                  )
+                ORDER BY irrigation.record_id DESC
+                LIMIT 1
+                """
+            ),
+            {"plot_id": plot_id, "pending_cutoff": pending_cutoff},
+        ).mappings().first()
+        if active is None:
+            return None
+        rule = current_moisture_rule(
+            connection,
+            plot_id=plot_id,
+            fallback_threshold=fallback_threshold,
+            as_of=timestamp.date(),
+        )
+        lower = rule["lower"]
+        if lower is None:
+            return None
+        readings = connection.execute(
+            text(
+                "SELECT plot_moisture FROM plot_report WHERE plot_id = :plot_id "
+                "AND report_datetime >= :started_at "
+                "ORDER BY report_datetime DESC, report_id DESC LIMIT 2"
+            ),
+            {"plot_id": plot_id, "started_at": active["executed_at"]},
+        ).scalars().all()
+        if not target_moisture_reached(readings, lower):
+            return None
+        return str(active["device_uuid"])
 
     def _expire_unpaired_readings(self) -> None:
         while not self._stop_event.wait(5):
@@ -540,31 +615,14 @@ class MqttService:
                         "humidity" if metric_type == "temperature" else "temperature"
                     )
                     self._record_missing_reading_alert(plot_id, missing_type, now)
+                self._mark_stale_devices(now)
                 self._expire_pending_commands(now)
-                self._close_expired_irrigations(now)
-                self._expire_offline_devices(now)
+                self._dispatch_due_irrigation_stops(now)
             except Exception:
                 logger.exception("Failed to run MQTT timeout checks")
 
-    def _expire_offline_devices(self, timestamp: datetime) -> None:
-        cutoff = timestamp - timedelta(seconds=self.offline_timeout_seconds)
-        with engine.begin() as connection:
-            connection.execute(
-                text(
-                    """
-                    UPDATE device
-                    SET status = 'offline', work_status = 'stopped'
-                    WHERE status = 'online'
-                      AND last_heartbeat IS NOT NULL
-                      AND last_heartbeat < :cutoff
-                    """
-                ),
-                {"cutoff": cutoff},
-            )
-
     def _expire_pending_commands(self, timestamp: datetime) -> None:
-        cutoff = timestamp.timestamp() - self.command_ack_timeout_seconds
-        cutoff_datetime = datetime.fromtimestamp(cutoff, UTC).replace(tzinfo=None)
+        cutoff_datetime = timestamp - timedelta(seconds=self.command_ack_timeout_seconds)
         with engine.begin() as connection:
             pending = connection.execute(
                 text(
@@ -597,62 +655,51 @@ class MqttService:
                         timestamp=timestamp,
                     )
 
-    def _close_expired_irrigations(self, timestamp: datetime) -> None:
-        """Issue an automatic OFF command when a confirmed timed irrigation expires."""
-        retry_cutoff = timestamp - timedelta(seconds=60)
+    def _dispatch_due_irrigation_stops(self, timestamp: datetime) -> None:
         with engine.connect() as connection:
             due = connection.execute(
                 text(
                     """
-                    SELECT started.device_id, device.device_uuid
-                    FROM irrigation_record AS started
-                    JOIN device ON device.device_id=started.device_id
-                    WHERE started.action_type='on'
-                      AND started.status='success'
-                      AND started.planned_duration_minutes IS NOT NULL
-                      AND started.planned_duration_minutes > 0
-                      AND device.status='online'
-                      AND DATE_ADD(
-                        COALESCE(started.executed_at, started.requested_at),
-                        INTERVAL started.planned_duration_minutes MINUTE
-                      ) <= :timestamp
+                    SELECT irrigation.record_id, device.device_uuid
+                    FROM irrigation_record AS irrigation
+                    JOIN device ON device.device_id = irrigation.device_id
+                    WHERE irrigation.action_type = 'on'
+                      AND irrigation.status = 'success'
+                      AND irrigation.scheduled_stop_at <= :timestamp
                       AND NOT EXISTS (
-                        SELECT 1 FROM irrigation_record AS newer_on
-                        WHERE newer_on.device_id=started.device_id
-                          AND newer_on.action_type='on'
-                          AND newer_on.status='success'
-                          AND newer_on.requested_at > started.requested_at
+                          SELECT 1
+                          FROM irrigation_record AS newer
+                            WHERE newer.device_id = irrigation.device_id
+                              AND newer.record_id > irrigation.record_id
+                              AND (
+                                  newer.status = 'success'
+                                  OR (newer.status = 'pending' AND newer.requested_at >= :pending_cutoff)
+                              )
                       )
-                      AND NOT EXISTS (
-                        SELECT 1 FROM irrigation_record AS stopped
-                        WHERE stopped.device_id=started.device_id
-                          AND stopped.action_type='off'
-                          AND stopped.requested_at > started.requested_at
-                          AND (
-                            stopped.status IN ('pending','success')
-                            OR stopped.requested_at >= :retry_cutoff
-                          )
-                      )
+                    ORDER BY irrigation.scheduled_stop_at, irrigation.record_id
                     """
                 ),
-                {"timestamp": timestamp, "retry_cutoff": retry_cutoff},
+                {
+                    "timestamp": timestamp,
+                    "pending_cutoff": timestamp - timedelta(seconds=self.command_ack_timeout_seconds),
+                },
             ).mappings().all()
+
         for irrigation in due:
             try:
                 self.publish_control_command(
                     device_uuid=irrigation["device_uuid"],
                     switch="off",
-                    operator_id=None,
                     activation_type="auto",
                 )
                 logger.info(
-                    "Issued timed automatic irrigation stop for device %s",
-                    irrigation["device_id"],
+                    "Dispatched scheduled irrigation stop for record %s",
+                    irrigation["record_id"],
                 )
             except (RuntimeError, ValueError):
                 logger.exception(
-                    "Failed to issue timed automatic irrigation stop for device %s",
-                    irrigation["device_id"],
+                    "Failed to dispatch scheduled irrigation stop for record %s",
+                    irrigation["record_id"],
                 )
 
     def _record_missing_reading_alert(
@@ -677,6 +724,32 @@ class MqttService:
                 description=f"缺少配对的{'湿度' if missing_type == 'humidity' else '温度'}传感器数据",
                 timestamp=timestamp,
             )
+
+    def _mark_stale_devices(self, timestamp: datetime) -> None:
+        offline_minutes = max(1, int(os.getenv("DEVICE_OFFLINE_MINUTES", "30")))
+        cutoff = timestamp - timedelta(minutes=offline_minutes)
+        with engine.begin() as connection:
+            devices = connection.execute(
+                text(
+                    "SELECT device_id, device_code, plot_id FROM device "
+                    "WHERE plot_id IS NOT NULL AND status = 'online' "
+                    "AND (last_heartbeat IS NULL OR last_heartbeat < :cutoff)"
+                ),
+                {"cutoff": cutoff},
+            ).mappings().all()
+            for device in devices:
+                connection.execute(
+                    text("UPDATE device SET status = 'offline' WHERE device_id = :device"),
+                    {"device": device["device_id"]},
+                )
+                self._open_alert(
+                    connection,
+                    plot_id=device["plot_id"],
+                    device_id=device["device_id"],
+                    alert_type="device_offline",
+                    description=f"设备 {device['device_code']} 超过 {offline_minutes} 分钟未上报心跳",
+                    timestamp=timestamp,
+                )
 
     def _open_alert(
         self,
@@ -734,6 +807,19 @@ class MqttService:
             )
 
     @staticmethod
+    def _recover_device_offline_alert(
+        connection: Any, *, plot_id: int, device_id: int, timestamp: datetime
+    ) -> None:
+        connection.execute(
+            text(
+                "UPDATE alert SET alert_status = 'recovered', handled_at = :timestamp "
+                "WHERE plot_id = :plot AND device_id = :device AND alert_type = 'device_offline' "
+                "AND alert_status IN ('active', 'acknowledged')"
+            ),
+            {"plot": plot_id, "device": device_id, "timestamp": timestamp},
+        )
+
+    @staticmethod
     def _find_device(
         connection: Any,
         device_uuid: str,
@@ -742,7 +828,8 @@ class MqttService:
         device = connection.execute(
             text(
                 """
-                SELECT device_id, device_code, device_type, plot_id
+                SELECT device_id, device_code, device_type, plot_id, status,
+                       switch_state, switch_changed_at
                 FROM device
                 WHERE device_uuid = :device_uuid
                 """
@@ -756,12 +843,38 @@ class MqttService:
         return device
 
     @staticmethod
+    def _update_switch_state(
+        connection: Any, device_id: int, switch: str, timestamp: datetime
+    ) -> None:
+        connection.execute(
+            text(
+                """
+                UPDATE device
+                SET switch_state = :switch, switch_changed_at = :timestamp
+                WHERE device_id = :device_id
+                  AND (switch_changed_at IS NULL OR switch_changed_at <= :timestamp)
+                """
+            ),
+            {"switch": switch, "timestamp": timestamp, "device_id": device_id},
+        )
+
+    @staticmethod
     def _parse_timestamp(value: Any) -> datetime:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("ts/timestamp must be a Unix milliseconds timestamp")
         if value <= 0:
             raise ValueError("ts/timestamp must be positive")
         return datetime.fromtimestamp(value / 1000, UTC).replace(tzinfo=None)
+
+    @staticmethod
+    def _parse_device_timestamp(value: Any, received_at: datetime) -> datetime:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("timestamp must be milliseconds")
+        if value <= 0:
+            raise ValueError("timestamp must be positive")
+        if value < _MIN_PLAUSIBLE_UNIX_MILLISECONDS:
+            return received_at
+        return MqttService._parse_timestamp(value)
 
     @staticmethod
     def _parse_device_uuid(value: Any) -> str:
@@ -783,10 +896,6 @@ class MqttService:
         if value not in _SWITCH_VALUES:
             raise ValueError("switch must be on or off")
         return value
-
-    @staticmethod
-    def _work_status(switch: str) -> str:
-        return "running" if switch == "on" else "stopped"
 
     @staticmethod
     def _parse_message_id(value: Any) -> str:
@@ -817,26 +926,27 @@ class MqttService:
         device_uuid: str,
         timestamp: datetime,
         device: Any = None,
-        work_status: str | None = None,
     ) -> Any:
         device = device or self._find_device(connection, device_uuid)
         if device is None:
             logger.warning("Ignored message from unknown device %s", device_uuid)
             return None
+        was_offline = device["status"] == "offline"
         connection.execute(
             text(
                 """
                 UPDATE device
-                SET status = 'online',
-                    work_status = COALESCE(:work_status, work_status),
-                    last_heartbeat = :last_heartbeat
+                SET status = 'online', last_heartbeat = :last_heartbeat
                 WHERE device_id = :device_id
                 """
             ),
-            {
-                "last_heartbeat": timestamp,
-                "work_status": work_status,
-                "device_id": device["device_id"],
-            },
+            {"last_heartbeat": timestamp, "device_id": device["device_id"]},
         )
+        if was_offline and device["plot_id"] is not None:
+            self._recover_device_offline_alert(
+                connection,
+                plot_id=device["plot_id"],
+                device_id=device["device_id"],
+                timestamp=timestamp,
+            )
         return device

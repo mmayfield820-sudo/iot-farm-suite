@@ -45,6 +45,23 @@ services:
       retries: 20
       start_period: 30s
 
+  # ─── 数据库增量迁移（每次部署安全重复执行）───
+  db-migrate:
+    image: mysql:8.0
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-farm}
+      MYSQL_USER: ${MYSQL_USER:-farm}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-farm}
+    volumes:
+      - ../database:/migrations:ro
+      - ./apply-migrations.sh:/usr/local/bin/apply-migrations.sh:ro
+    entrypoint: ["/bin/bash", "/usr/local/bin/apply-migrations.sh"]
+
   # ─── 后端业务服务（FastAPI :8080）───
   backend:
     image: smart-farm/backend:latest   # 固定名：预构建镜像包 load 后可直接用，不在才构建
@@ -56,6 +73,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       emqx:
         condition: service_started
       ai-service:
@@ -67,6 +86,7 @@ services:
       MQTT_USERNAME: ""
       MQTT_PASSWORD: ""
       JWT_SECRET: ${JWT_SECRET}
+      PII_HASH_SECRET: ${PII_HASH_SECRET:-}
       JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES:-1440}
       AI_SERVICE_URL: http://ai-service:8001
       # 清掉 Docker Desktop 注入的代理：容器内 127.0.0.1 指向容器自己，代理不生效，
@@ -105,6 +125,9 @@ services:
       AI_MODEL_API_KEY: ${AI_MODEL_API_KEY}
       AI_MODEL_NAME: ${AI_MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
       AI_MODEL_TIMEOUT_SECONDS: ${AI_MODEL_TIMEOUT_SECONDS:-15}
+      AI_MODEL_ENABLE_THINKING: ${AI_MODEL_ENABLE_THINKING:-false}
+      API_BASE_URL: http://backend:8080
+      AI_ENABLE_FARM_API: ${AI_ENABLE_FARM_API:-false}
       # 联网搜索（博查，可留空关闭）
       BOCHA_API_KEY: ${BOCHA_API_KEY:-}
       # 同上：ai-service 需直连硅基流动/博查，清掉 Docker 注入的失效代理

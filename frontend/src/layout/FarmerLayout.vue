@@ -24,23 +24,26 @@ onMounted(async () => {
   } catch {
     ElMessage.error(farmerStore.loadError || '农户数据加载失败')
   }
-  refreshTimer = window.setInterval(() => refreshRealtimeData().catch(() => {}), 10000)
+  refreshTimer = window.setInterval(() => refreshRealtimeData().catch(() => {}), 2000)
 })
 
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
 const menu = [
-  { label: '我的果园', path: '/farmer/dashboard', icon: 'House' }, { label: '地块管理', path: '/farmer/management', icon: 'DataAnalysis' },
-  { label: '管理计划', path: '/farmer/plan', icon: 'List' },
-  { label: '农事日历', path: '/farmer/calendar', icon: 'Calendar' },
+  { label: '农场首页', path: '/farmer/dashboard', icon: 'House' }, { label: '地块管理', path: '/farmer/management', icon: 'DataAnalysis' },
+  { label: '管理计划', path: '/farmer/plan', icon: 'Notebook' },
+  { label: '我的农事', path: '/farmer/tasks', icon: 'List' },
   { label: '智慧灌溉', path: '/farmer/irrigation', icon: 'Drizzling' },
-  { label: '告警中心', path: '/farmer/alarm', icon: 'Warning' },
+  { label: '告警中心', path: '/farmer/alarm', icon: 'BellFilled' },
   { label: '小橙子·农事助手', path: '/farmer/ai', icon: 'ChatDotRound' },
 ]
 
 const contextLabel = computed(() => {
-  const plot = farmerStore.currentPlot
-  return plot ? `${plot.farmName || '未命名农场'} · ${plot.plotName}` : '暂无可用地块'
+  return farmerStore.currentFarm?.farmName || '暂无可用农场'
 })
+const contextOptions = computed(() => farmerStore.accessibleFarms.map((farm) => ({
+  label: farm.farmName,
+  value: farm.farmId,
+})))
 
 const contextStatus = computed(() => {
   const plot = farmerStore.currentPlot
@@ -59,4 +62,32 @@ const contextStatusTone = computed(() => {
   return 'success'
 })
 </script>
-<template><AppShell title="橙心如意" subtitle="FENGJIE ORANGE" :menu="menu" :context-label="contextLabel" :context-status="contextStatus" :context-status-tone="contextStatusTone" /></template>
+<template><AppShell class="farmer-shell" title="橙心如意" subtitle="智慧农业管理平台" :menu="menu" :context-label="contextLabel" :context-options="contextOptions" :context-value="farmerStore.currentFarm?.farmId || ''" :context-status="contextStatus" :context-status-tone="contextStatusTone" :allow-role-switch="false" @context-change="farmerStore.selectFarm" /></template>
+
+<style scoped>
+:global(.farmer-shell) { --accent: #237a43 !important; --el-color-primary: #237a43 !important; background: #faf9e8; }
+:global(.farmer-shell .workspace), :global(.farmer-shell .content) { background: #faf9e8; }
+:global(.farmer-shell .nav) { padding: 12px 12px; }
+:global(.farmer-shell .nav .el-menu-item) { height: 46px; margin-bottom: 3px; border-radius: 7px; color: #e8f1ed; font-size: 14px; font-weight: 600; }
+:global(.farmer-shell .nav .el-menu-item .el-icon) { font-size: 18px; }
+:global(.farmer-shell .nav .el-menu-item.is-active) { background: #3e954d; }
+:global(.farmer-shell .collapse-btn) { height: 58px; padding: 0 30px; color: #e1efe9; font-size: 14px; font-weight: 600; }
+:global(.farmer-shell .content) { max-width: 1480px; width: 100%; padding: 28px 32px 36px; margin: 0 auto; }
+:global(.farmer-shell .farmer-page) { max-width: none; }
+:global(.farmer-shell .page-title) { color: #134b35; font-size: 30px !important; }
+:global(.farmer-shell .page-subtitle) { margin-bottom: 24px; color: #606f69; font-size: 15px !important; }
+:global(.farmer-shell .content-panel), :global(.farmer-shell .panel) { border-color: #e7ebe6; border-radius: 10px; box-shadow: 0 7px 20px rgba(24, 65, 45, .045); }
+:global(.farmer-shell .farmer-stat) { min-height: 112px; border-color: #e7ebe6; border-radius: 10px; box-shadow: 0 7px 20px rgba(24, 65, 45, .045); }
+:global(.farmer-shell .filter-control .plot-select .el-select__wrapper), :global(.farmer-shell .el-select__wrapper) { min-height: 42px; border-radius: 7px; }
+:global(.farmer-shell .el-button--success) { --el-button-bg-color: #16733a; --el-button-border-color: #16733a; --el-button-hover-bg-color: #25854c; --el-button-hover-border-color: #25854c; }
+:global(.farmer-shell .compact-table.el-table) { border: 1px solid #edf0eb; border-radius: 8px; }
+:global(.farmer-shell .compact-table .el-table__header-wrapper th) { height: 46px; color: #20523d; background: #f5f8f3 !important; }
+:global(.farmer-shell .compact-table .el-table__cell) { padding: 10px 0; }
+
+@media (max-width: 900px) {
+  :global(.farmer-shell .nav) { padding: 16px 10px; }
+  :global(.farmer-shell .nav .el-menu-item) { height: 52px; }
+  :global(.farmer-shell .collapse-btn) { height: 62px; padding: 0; justify-content: center; }
+  :global(.farmer-shell .content) { padding: 20px 18px 30px; }
+}
+</style>

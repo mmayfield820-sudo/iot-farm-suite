@@ -1,7 +1,6 @@
 import request from './request'
 
 export const getChatHealth = () => request.get('/chat/health')
-
 export const sendChatMessage = (sessionId, data) => request.post(
   `/chat/sessions/${sessionId}/messages`,
   data,
