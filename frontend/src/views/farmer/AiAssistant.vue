@@ -98,7 +98,21 @@ function initSpeech() {
     transcript.value = text.trim()
     input.value = transcript.value
   }
-  engine.onerror = () => { listening.value = false; ElMessage.warning('小橙子没有听清，请再说一次') }
+  engine.onerror = (event) => {
+  listening.value = false
+  console.error('语音识别失败：', event.error, event.message)
+
+  const tips = {
+    'not-allowed': '麦克风权限被拒绝，请检查浏览器权限或 HTTPS',
+    'service-not-allowed': '浏览器语音识别服务不可用',
+    'network': '语音识别服务连接失败',
+    'no-speech': '没有检测到声音',
+    'audio-capture': '无法使用麦克风',
+    'language-not-supported': '当前语言不受支持'
+  }
+
+  ElMessage.warning(tips[event.error] || `语音识别失败：${event.error}`)
+}
   engine.onend = () => {
     listening.value = false
     const text = transcript.value.trim()
