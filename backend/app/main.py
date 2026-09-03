@@ -43,6 +43,7 @@ from .plan_adjustment_reminders import (
     shanghai_day_utc_bounds,
     sync_weather_reminders,
 )
+from .text_encoding import display_text
 from .weather import WeatherProviderError, open_meteo_forecast
 
 
@@ -417,7 +418,7 @@ def device_payload(row: Any) -> dict[str, Any]:
 
 
 def farm_payload(row: Any) -> dict[str, Any]:
-    return {"id": business_id("F", row["farm_id"]), "name": row["farm_name"], "province": row["province"], "city": row["city"], "address": row["address"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "managerEmployeeNo": value_of(row, "manager_employee_no"), "managerName": row["manager_name"], "note": row["note"], "plantingDate": row.get("planting_date").isoformat() if value_of(row, "planting_date") else None, "plannedPlantingDate": row.get("planned_planting_date").isoformat() if value_of(row, "planned_planting_date") else None, "status": row["farm_status"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+    return {"id": business_id("F", row["farm_id"]), "name": display_text(row["farm_name"]), "province": display_text(row["province"]), "city": display_text(row["city"]), "address": display_text(row["address"]), "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "managerEmployeeNo": value_of(row, "manager_employee_no"), "managerName": display_text(row["manager_name"]), "note": display_text(row["note"]), "plantingDate": row.get("planting_date").isoformat() if value_of(row, "planting_date") else None, "plannedPlantingDate": row.get("planned_planting_date").isoformat() if value_of(row, "planned_planting_date") else None, "status": row["farm_status"], "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
 
 
 def farm_manager_values(connection: Any, employee_no: str | None) -> dict[str, Any]:
@@ -435,7 +436,7 @@ def farm_manager_values(connection: Any, employee_no: str | None) -> dict[str, A
 
 def plot_payload(row: Any) -> dict[str, Any]:
     farmer_user_id = value_of(row, "scoped_farmer_user_id")
-    return {"id": business_id("P", row["plot_id"]), "farmId": business_id("F", row["farm_id"]), "code": row["plot_code"], "name": row["plot_name"], "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "location": row["location"], "irrigationMethod": row["irrigation_method"], "productionDateOffsetDays": int(value_of(row, "production_date_offset_days") or 0), "status": row["plot_status"], "farmerUserId": business_id("U", farmer_user_id) if farmer_user_id is not None else None, "farmerEmployeeNo": value_of(row, "farmer_employee_no"), "farmerName": value_of(row, "farmer_name"), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
+    return {"id": business_id("P", row["plot_id"]), "farmId": business_id("F", row["farm_id"]), "code": row["plot_code"], "name": display_text(row["plot_name"]), "areaMu": float(row["area_mu"]) if row["area_mu"] is not None else None, "location": display_text(row["location"]), "irrigationMethod": display_text(row["irrigation_method"]), "productionDateOffsetDays": int(value_of(row, "production_date_offset_days") or 0), "status": row["plot_status"], "farmerUserId": business_id("U", farmer_user_id) if farmer_user_id is not None else None, "farmerEmployeeNo": value_of(row, "farmer_employee_no"), "farmerName": display_text(value_of(row, "farmer_name")), "createdAt": iso(row["created_at"]), "updatedAt": iso(row["updated_at"])}
 
 
 def accessible_farm_ids(user: dict[str, Any]) -> set[int] | None:
@@ -3256,12 +3257,12 @@ def farm_overview(
                     "plot": {
                         "id": business_id("P", plot.plot_id),
                         "farmId": business_id("F", plot.farm_id),
-                        "name": plot.plot_name,
+                        "name": display_text(plot.plot_name),
                         "areaMu": float(plot.area_mu) if plot.area_mu is not None else None,
-                        "location": plot.location,
-                        "irrigationMethod": plot.irrigation_method,
-                        "crop": plot.crop_name,
-                        "description": plot.description,
+                        "location": display_text(plot.location),
+                        "irrigationMethod": display_text(plot.irrigation_method),
+                        "crop": display_text(plot.crop_name),
+                        "description": display_text(plot.description),
                     },
                     "latestMetrics": metrics,
                     "devices": [device_payload(device) for device in devices],

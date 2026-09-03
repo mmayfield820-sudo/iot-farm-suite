@@ -6,12 +6,12 @@ sequence decodes as UTF-8 and the result contains CJK characters.
 
 from __future__ import annotations
 
-import unicodedata
 from typing import Any
 
 from sqlalchemy import text
 
 from backend.app.db import engine
+from backend.app.text_encoding import restored_text
 
 
 TEXT_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -27,18 +27,6 @@ TEXT_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("management_task", "task_id", "title"),
     ("management_task", "task_id", "note"),
 )
-
-
-def restored_text(value: str | None) -> str | None:
-    if not value or not any(0x80 <= ord(char) <= 0xFF for char in value):
-        return None
-    try:
-        repaired = value.encode("latin1").decode("utf-8")
-    except UnicodeError:
-        return None
-    if repaired == value or not any("CJK" in unicodedata.name(char, "") for char in repaired):
-        return None
-    return repaired
 
 
 def repair_template_text_encoding(connection: Any) -> int:

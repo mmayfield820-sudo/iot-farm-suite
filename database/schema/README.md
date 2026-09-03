@@ -21,3 +21,5 @@ mysql -h 127.0.0.1 -P 3306 -u farm -p farm < database/schema/001_schema.sql
 015_phase2_plan_adjustment_reminders.sql adds the requirement 4-5 reminders created for low moisture, continuous rain, and offline devices, together with snapshots of affected irrigation or patrol tasks.
 
 016_phase2_plan_adjustment_disposition.sql adds the requirement 4-6 farmer decision and note for each plan-adjustment reminder.
+
+036_repair_demo_plot_encoding.sql repairs the legacy second demo plot name that was omitted by the Fengjie presentation-data migration, without overwriting user-renamed plots.
